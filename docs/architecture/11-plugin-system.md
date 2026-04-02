@@ -179,9 +179,9 @@ The `Player.__final_current_media` property detects when the active source is a 
 
 The `in_use_by` field tracks which player is currently consuming a plugin source. Important constraints:
 
-- **Always a physical player ID**, not a group ID. When a group player is using a plugin source, `in_use_by` holds the group player's ID — individual child players are not tracked.
+- **Single player ID**: `in_use_by` holds the ID of whichever player selected the source — this can be a physical player or a group player. Only one ID is stored at a time.
 - **Single-player exclusivity**: A plugin source can only be used by one player at a time. Selecting the source on a different player stops the current consumer first.
-- **Volume callback gap**: Because `in_use_by` points to the group player, the `on_volume` callback only fires for volume commands targeting the group — individual member volume changes do not trigger it. This is the feedback loop problem documented in [07-volume.md](07-volume.md#plugin-volume-callbacks).
+- **Group member gap**: When a group player selects a plugin source, `in_use_by` holds the group player's ID. Individual child players within the group are not tracked. This means the `on_volume` callback only fires for volume commands targeting the group player — individual member volume changes do not trigger it. This is the feedback loop problem documented in [07-volume.md](07-volume.md#plugin-volume-callbacks).
 
 ---
 
