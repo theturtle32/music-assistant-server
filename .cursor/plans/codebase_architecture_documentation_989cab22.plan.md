@@ -1,36 +1,42 @@
 ---
 name: Codebase Architecture Documentation
-overview: Orchestrate 5 sub-plans that systematically explore the Music Assistant server codebase and produce a comprehensive developer architecture guide. Each sub-plan explores code fresh, writes docs, then reconciles with prior output — revising in both directions.
+overview: Orchestrate 6 sub-plans that systematically explore the Music Assistant server codebase and produce a comprehensive developer architecture guide. Each sub-plan explores code fresh, writes docs, then reconciles with prior output — revising in both directions. Sub-plan 6 is a dedicated final convergence review.
 todos:
   - id: sp1-write
     content: Write Sub-plan 1 (Core Architecture) to docs/architecture/plans/sub-plan-1-core.md
-    status: pending
+    status: completed
   - id: sp1-exec
     content: Execute Sub-plan 1 [200k] — produce 00-overview.md, 01-event-system.md, 02-configuration.md, 15-provider-lifecycle.md
-    status: pending
+    status: completed
   - id: sp2-write
     content: Write Sub-plan 2 (Player Model and Controller) to docs/architecture/plans/sub-plan-2-player.md
-    status: pending
+    status: completed
   - id: sp2-exec
     content: Execute Sub-plan 2 [200k] — produce 03-player-model.md, 04-player-controller.md, 05-protocol-linking.md; reconcile with Sub-plan 1 docs
-    status: pending
+    status: completed
   - id: sp3-write
     content: Write Sub-plan 3 (Grouping and Volume) to docs/architecture/plans/sub-plan-3-grouping-volume.md
-    status: pending
+    status: completed
   - id: sp3-exec
     content: Execute Sub-plan 3 [1M] — produce 06-grouping.md, 07-volume.md; reconcile with Sub-plan 1-2 docs (deepest cross-cutting concerns)
-    status: pending
+    status: completed
   - id: sp4-write
     content: Write Sub-plan 4 (Media, Queues, Streaming) to docs/architecture/plans/sub-plan-4-media-streaming.md
-    status: pending
+    status: completed
   - id: sp4-exec
     content: Execute Sub-plan 4 [200k] — produce 08-media-library.md, 09-player-queues.md, 10-streaming-pipeline.md; reconcile with prior docs
-    status: pending
+    status: completed
   - id: sp5-write
-    content: Write Sub-plan 5 (Plugins, Infrastructure, Final Review) to docs/architecture/plans/sub-plan-5-plugins-infra.md
-    status: pending
+    content: Write Sub-plan 5 (Plugins, Infrastructure) to docs/architecture/plans/sub-plan-5-plugins-infra.md
+    status: completed
   - id: sp5-exec
-    content: Execute Sub-plan 5 [1M] — produce 11-plugin-system.md, 12-webserver-api.md, 13-discovery.md, 14-metadata.md; full convergence review of all docs
+    content: Execute Sub-plan 5 [1M] — produce 11-plugin-system.md, 12-webserver-api.md, 13-discovery.md, 14-metadata.md; reconcile with prior docs
+    status: completed
+  - id: sp6-write
+    content: Write Sub-plan 6 (Final Convergence Review) to docs/architecture/plans/sub-plan-6-convergence.md
+    status: pending
+  - id: sp6-exec
+    content: Execute Sub-plan 6 [1M] — full convergence review of all 16 docs; produce docs/architecture/README.md
     status: pending
 isProject: false
 ---
@@ -60,7 +66,9 @@ Execution requires manual coordination between Plan mode and Agent mode in Curso
 - Phase 4 write — Plan mode, any model — Write `sub-plan-4-media-streaming.md`
 - Phase 4 exec — Agent mode, **200k model** — Produce `08-media-library.md`, `09-player-queues.md`, `10-streaming-pipeline.md`; reconcile with phases 1-3
 - Phase 5 write — Plan mode, any model — Write `sub-plan-5-plugins-infra.md`
-- Phase 5 exec — Agent mode, **1M model** — Produce `11-plugin-system.md`, `12-webserver-api.md`, `13-discovery.md`, `14-metadata.md`; full convergence review
+- Phase 5 exec — Agent mode, **1M model** — Produce `11-plugin-system.md`, `12-webserver-api.md`, `13-discovery.md`, `14-metadata.md`; reconcile with prior docs
+- Phase 6 write — Plan mode, any model — Write `sub-plan-6-convergence.md`
+- Phase 6 exec — Agent mode, **1M model** — Full convergence review of all 16 docs; produce `docs/architecture/README.md`
 
 ## Context
 

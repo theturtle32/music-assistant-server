@@ -140,7 +140,7 @@ class APICommandHandler:
     alias: bool = False
 ```
 
-The `parse` classmethod introspects the handler function to extract its signature and type hints. This metadata powers the JSON-RPC argument parsing (`parse_arguments`) and the auto-generated API schema — clients can discover available commands, their parameters, and return types at runtime.
+The `parse` classmethod introspects the handler function to extract its signature and type hints. This metadata powers the JSON-RPC argument parsing (`parse_arguments`) and the auto-generated API schema — clients can discover available commands, their parameters, and return types at runtime. For the full WebSocket and HTTP transport layer that delivers these commands, see [12-webserver-api.md](12-webserver-api.md).
 
 The `alias` flag marks backward-compatibility commands that remain functional but are hidden from API documentation.
 

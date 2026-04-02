@@ -167,12 +167,12 @@ The base class provides:
 - **Feature system**: `supported_features` set, `supports_feature()`, `check_feature()` (raises `UnsupportedFeaturedException`)
 - **Lifecycle hooks**: `handle_async_init()`, `loaded_in_mass()`, `unload(is_removed)`
 - **Config handling**: `update_config()` — by default, reloads the provider on any non-log-level value change via `call_later(1, mass.load_provider_config, ...)`
-- **Discovery callbacks**: `on_mdns_service_state_change()`, `on_upnp_service_discovered()`
+- **Discovery callbacks**: `on_mdns_service_state_change()`, `on_upnp_service_discovered()` (see [13-discovery.md](13-discovery.md))
 - **Logging**: logger configured per-provider with configurable log level
 
 ### `MusicProvider` (`music_assistant/models/music_provider.py`)
 
-Adds the full media browsing/search/library API surface. Distinguishes between "streaming" providers (Spotify, Tidal — have shared catalogs) and "unique" providers (local filesystem — have unique data). This distinction affects how the music controller handles provider failover and library deduplication. (~1459 lines, covered in detail in Sub-plan 4.)
+Adds the full media browsing/search/library API surface. Distinguishes between "streaming" providers (Spotify, Tidal — have shared catalogs) and "unique" providers (local filesystem — have unique data). This distinction affects how the music controller handles provider failover and library deduplication. (~1459 lines, covered in detail in [08-media-library.md](08-media-library.md).)
 
 ### `PlayerProvider` (`music_assistant/models/player_provider.py`)
 
@@ -188,7 +188,7 @@ Adds metadata resolution: `get_artist_metadata()`, `get_album_metadata()`, `get_
 
 ### `PluginProvider` (`music_assistant/models/plugin.py`)
 
-Adds audio source capabilities via `PluginSource` — a model for live audio streams (microphone input, AUX, custom streams). The `PluginSource` dataclass carries the PCM audio format, stream type, and optional playback control callbacks (`on_play`, `on_pause`, `on_volume`, etc.).
+Adds audio source capabilities via `PluginSource` — a model for bridging external audio sources into the MA player model. Receiver plugins (Spotify Connect, AirPlay, AriaCast, VBAN) inject audio from external apps; scrobbler plugins (Last.fm, ListenBrainz) report plays to external services; feature plugins (Party) provide UI/access extensions. The `PluginSource` dataclass carries the PCM audio format, stream type, and optional playback control callbacks (`on_play`, `on_pause`, `on_volume`, etc.). See [11-plugin-system.md](11-plugin-system.md) for the full plugin architecture.
 
 ## Loading Flow
 

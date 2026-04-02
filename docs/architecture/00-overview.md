@@ -57,7 +57,7 @@ class MusicAssistant:
 
 Each controller inherits from `CoreController` (`music_assistant/models/core_controller.py`), which provides `setup()`, `post_setup()`, `close()`, `reload()`, and `update_config()` lifecycle hooks. Controllers that appear in `CONFIGURABLE_CORE_CONTROLLERS` also get a `ProviderManifest` registered so the UI can display their settings.
 
-For details on the event system, see [01-event-system.md](01-event-system.md). For configuration and persistence, see [02-configuration.md](02-configuration.md).
+For details on the event system, see [01-event-system.md](01-event-system.md). For configuration and persistence, see [02-configuration.md](02-configuration.md). For the webserver, API, and authentication, see [12-webserver-api.md](12-webserver-api.md). For network discovery, see [13-discovery.md](13-discovery.md). For metadata enrichment, see [14-metadata.md](14-metadata.md). For the provider loading lifecycle, see [15-provider-lifecycle.md](15-provider-lifecycle.md).
 
 ## Startup Lifecycle
 

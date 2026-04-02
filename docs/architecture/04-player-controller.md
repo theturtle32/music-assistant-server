@@ -78,7 +78,7 @@ Separate from the decorator's protocol redirect, this method handles *playback* 
 - If `player.state.synced_to` → redirect to the **sync leader**
 - If `player.state.active_group` → redirect to the **group player**
 
-Used by transport commands (`cmd_stop`, `cmd_play`, `cmd_pause`, `cmd_seek`, `cmd_next_track`, `cmd_previous_track`), `play_media`, and `_handle_cmd_resume`. This ensures a play command on a group child ends up controlling the group leader.
+Used by transport commands (`cmd_stop`, `cmd_play`, `cmd_pause`, `cmd_seek`, `cmd_next_track`, `cmd_previous_track`), `play_media`, and `_handle_cmd_resume`. This ensures a play command on a group child ends up controlling the sync leader or group player.
 
 ### Full Command Surface
 
@@ -202,7 +202,7 @@ For GROUP players (sync groups, universal groups), `_handle_set_members` delegat
    - If the source is a queue ID → sets the active MA source.
    - Otherwise → validates against `source_list`, calls `player.select_source()`.
 
-Forward reference: plugin source internals are covered in Sub-plan 5; queue management in Sub-plan 4.
+Plugin source internals are covered in [11-plugin-system.md](11-plugin-system.md); queue management in [09-player-queues.md](09-player-queues.md).
 
 ## Concurrency Controls
 

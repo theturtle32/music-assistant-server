@@ -61,7 +61,7 @@ This runs **in addition to** the normal volume handling — it's not either/or. 
 - `plugin_source.in_use_by == player.player_id`, or
 - `player.state.active_source == plugin_source.id`
 
-**Known limitation — the `in_use_by` gap for groups**: `in_use_by` stores a single `player_id`. For group players, this is set to the group player's ID. Individual child players within the group don't have `in_use_by` set to them — the plugin doesn't know about individual children. This means plugin volume callbacks only fire for the group player, not for individual member volume changes within a group. This is a known architectural limitation (see [Sub-plan 5 scope] for the full plugin architecture).
+**Known limitation — the `in_use_by` gap for groups**: `in_use_by` stores a single `player_id`. For group players, this is set to the group player's ID. Individual child players within the group don't have `in_use_by` set to them — the plugin doesn't know about individual children. This means plugin volume callbacks only fire for the group player, not for individual member volume changes within a group. This is a known architectural limitation — see [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
 
 ## Group Volume — The Additive-Delta Algorithm
 

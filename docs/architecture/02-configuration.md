@@ -200,7 +200,7 @@ Located in `storage_path`, this is the primary data store for the media library:
 | `DB_TABLE_GENRE_MEDIA_ITEM_MAPPING` | `genre_media_item_mapping` | Genre ↔ media item links |
 | `DB_TABLE_THUMBS` | `thumbnails` | Cached image thumbnails |
 
-The library database is covered in more detail in a later architecture document (Sub-plan 4).
+The library database is covered in more detail in [08-media-library.md](08-media-library.md).
 
 ### Cache Database (`cache.db`)
 

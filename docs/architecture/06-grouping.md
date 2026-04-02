@@ -146,7 +146,7 @@ Universal groups solve the cross-protocol problem. Any player that can receive H
 
 ### Server-Side Multicast
 
-Unlike sync groups that delegate to a vendor's native sync protocol, universal groups use `UGPStream` for server-side audio distribution. The MA server reads the audio source, converts it to PCM, then multicasts it to each member as an independent HTTP stream.
+Unlike sync groups that delegate to a vendor's native sync protocol, universal groups use `UGPStream` for server-side audio distribution. The MA server reads the audio source, converts it to PCM, then multicasts it to each member as an independent HTTP stream. For the full audio processing pipeline that feeds these streams, see [10-streaming-pipeline.md](10-streaming-pipeline.md).
 
 ```mermaid
 flowchart LR
@@ -416,7 +416,7 @@ Returns all GROUP players a given player belongs to, with optional availability 
 
 ### `_get_player_with_redirect`
 
-Redirects playback commands from grouped children to their group leader:
+Redirects playback commands from grouped children to their sync leader or group player:
 1. If `synced_to` is set → redirect to sync leader
 2. If `active_group` is set → redirect to group player
 
