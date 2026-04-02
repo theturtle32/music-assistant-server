@@ -175,8 +175,9 @@ sequenceDiagram
     participant WS as WebSocket Client
     participant PQ as PlayerQueuesController
 
-    PP->>PC: cmd_update_state(player)
-    PC->>MA: signal_event(PLAYER_UPDATED, player_id, player_state)
+    PP->>PP: player.update_state()
+    PP->>PC: signal_player_state_update(player, changed_values)
+    PC->>MA: signal_event(PLAYER_UPDATED, player_id, player)
     MA->>MA: match subscribers against event_filter + id_filter
     MA->>WS: create_task(ws_callback, event)
     MA->>PQ: create_task(pq_callback, event)
