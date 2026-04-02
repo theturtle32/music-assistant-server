@@ -49,13 +49,13 @@ All callbacks are `Callable[..., Awaitable[None]] | None`, defaulting to `None`.
 
 | Callback | Signature | Invoked by |
 |---|---|---|
-| `on_play` | `() -> None` | `_handle_cmd_play` |
-| `on_pause` | `() -> None` | `_handle_cmd_pause` |
-| `on_next` | `() -> None` | `cmd_next_track` |
-| `on_previous` | `() -> None` | `cmd_previous_track` |
-| `on_seek` | `(position: int) -> None` | `cmd_seek` (position in seconds) |
-| `on_volume` | `(volume: int) -> None` | `_handle_cmd_volume_set` (see [07-volume.md](07-volume.md)) |
-| `on_select` | `() -> None` | `_handle_select_plugin_source` |
+| `on_play` | `Awaitable[None]` | `_handle_cmd_play` |
+| `on_pause` | `Awaitable[None]` | `_handle_cmd_pause` |
+| `on_next` | `Awaitable[None]` | `cmd_next_track` |
+| `on_previous` | `Awaitable[None]` | `cmd_previous_track` |
+| `on_seek` | `(int) -> Awaitable[None]` | `cmd_seek` (position in seconds) |
+| `on_volume` | `(int) -> Awaitable[None]` | `_handle_cmd_volume_set` (see [07-volume.md](07-volume.md)) |
+| `on_select` | `Awaitable[None]` | `_handle_select_plugin_source` |
 
 ### `as_player_source()`
 
@@ -109,7 +109,9 @@ If either matches, that `PluginSource` is returned. This method is called by eve
 The `Player.__final_source_list` property (in `models/player.py`) builds the complete source list a user sees:
 1. Start with the player's native `source_list` (provider-reported sources)
 2. Always add "Music Assistant Queue" if not already present
-3. Append all non-passive plugin sources (converted via `as_player_source()`)
+3. Append all plugin sources (converted via `as_player_source()`) — no passive filter is applied
+
+**Exception**: `PlayerType.PROTOCOL` players return early from `__final_source_list` with only their native source list — they never receive the MA Queue entry or plugin sources. Plugin audio can still be routed through control logic, but protocol players won't offer plugin sources in their UI.
 
 ### Active Source Detection
 
@@ -137,8 +139,8 @@ sequenceDiagram
     Note over PC: Check if source is in_use_by another player
     PC->>Streams: get_plugin_source_url(source, player_id)
     Streams-->>PC: HTTP stream URL
-    PC->>Plugin: plugin_source.on_select()
     PC->>PC: plugin_source.in_use_by = player_id
+    PC->>Plugin: plugin_source.on_select()
     PC->>Player: play_media(stream_url)
 
     Note over User: Later: play command
@@ -154,7 +156,7 @@ When a user selects a plugin source on a player:
 1. If the source is already `in_use_by` another player, that player is stopped first (single-player exclusivity)
 2. The streams controller generates a URL for the plugin source audio
 3. `plugin_source.in_use_by` is set to the target player ID
-4. `plugin_source.on_select()` callback fires (if defined)
+4. `plugin_source.on_select()` callback fires (if defined) — note that `in_use_by` is already set when `on_select` runs
 5. `play_media()` is called with a `PlayerMedia` containing `media_type=MediaType.PLUGIN_SOURCE`
 
 ### Command Routing to Plugin Callbacks
@@ -194,7 +196,7 @@ Receiver plugins deliver audio via one of two mechanisms:
 
 Named pipes are simpler — the plugin just manages the subprocess and pipe lifecycle. Custom streams give the plugin more control over buffering and backpressure but require implementing the async generator.
 
-The streams controller serves plugin source audio at `/pluginsource/{source_id}/{player_id}` on the streams HTTP server (port 8097). See [10-streaming-pipeline.md](10-streaming-pipeline.md) for the full pipeline.
+The streams controller serves plugin source audio at `/pluginsource/{source_id}/{player_id}.{fmt}` on the streams HTTP server (port 8097), where `{fmt}` is the audio format suffix (e.g., `.wav`, `.flac`). See [10-streaming-pipeline.md](10-streaming-pipeline.md) for the full pipeline.
 
 ---
 

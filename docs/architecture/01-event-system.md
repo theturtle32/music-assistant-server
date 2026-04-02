@@ -11,7 +11,7 @@ Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with 23 me
 | **Player** | `PLAYER_ADDED`, `PLAYER_UPDATED`, `PLAYER_REMOVED`, `PLAYER_CONFIG_UPDATED`, `PLAYER_DSP_CONFIG_UPDATED`, `PLAYER_OPTIONS_UPDATED`, `DSP_PRESETS_UPDATED` | `player_id` |
 | **Queue** | `QUEUE_ADDED`, `QUEUE_UPDATED`, `QUEUE_ITEMS_UPDATED`, `QUEUE_TIME_UPDATED` | `queue_id` |
 | **Media** | `MEDIA_ITEM_PLAYED`, `MEDIA_ITEM_ADDED`, `MEDIA_ITEM_UPDATED`, `MEDIA_ITEM_DELETED` | URI or item identifier |
-| **Provider/Sync** | `PROVIDERS_UPDATED`, `SYNC_TASKS_UPDATED`, `TASKS_UPDATED`, `MUSIC_SYNC_COMPLETED` | (varies) |
+| **Provider/Sync** | `PROVIDERS_UPDATED`, `TASKS_UPDATED`, `MUSIC_SYNC_COMPLETED` | (varies) |
 | **System** | `AUTH_SESSION`, `CORE_STATE_UPDATED`, `SHUTDOWN` (deprecated) | — |
 
 The `UNKNOWN` member is the fallback via `_missing_()`. `SHUTDOWN` (value `"application_shutdown"`) is deprecated in favor of `CORE_STATE_UPDATED`.

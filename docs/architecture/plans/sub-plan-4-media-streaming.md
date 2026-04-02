@@ -25,7 +25,7 @@ The unified media library that aggregates content from all music providers.
   - `audiobooks` → `AudiobooksController`
   - `podcasts` → `PodcastsController`
   - `genres` → `GenreController`
-  
+
   Each sub-controller lives in `music_assistant/controllers/media/` and inherits from `MediaControllerBase` in `base.py`.
 
 - **`MediaControllerBase`** (`controllers/media/base.py`, ~1191 lines): The ABC for all media type controllers. Key methods: `get`, `get_library_item`, `get_provider_item`, `add_item_to_library`, `remove_item_from_library`, `set_favorite`, `browse`, and the library sync machinery. Understand the general pattern — media items are fetched from providers, matched against existing library items, and stored in SQLite.

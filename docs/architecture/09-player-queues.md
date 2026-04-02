@@ -155,7 +155,7 @@ Radio refill is triggered in `_update_queue_from_player` when fewer than 5 track
 
 ### `play_index` — Starting a Track
 
-`play_index(queue_id, index, seek_position, fade_in)` is the core playback driver:
+`play_index(queue_id, index, seek_position, fade_in)` is the core playback driver. For podcast episodes and audiobooks, if no explicit `seek_position` is provided, the resume position is restored from `resume_position_ms`. On failure (`MediaNotFoundError` or `AudioError`), the item is marked unavailable and the queue advances to the next index with `allow_repeat=False` (preventing infinite loops even with repeat-all enabled):
 
 ```mermaid
 sequenceDiagram
@@ -217,7 +217,11 @@ def _prepare_next_audio_buffer(self, queue_id: str) -> None:
 
 **2. Preloading stream details and enqueuing**
 
-After a track is loaded into the buffer (`track_loaded_in_buffer`), `_preload_next_item` waits until that item becomes the `current_item`, then calls `load_next_queue_item()` to resolve the next item's stream details. It then schedules `_enqueue_next_item()`, which calls `PlayerController.enqueue_next_media()` to tell the player about the upcoming track.
+After a track is loaded into the buffer (`track_loaded_in_buffer`), `_preload_next_item` waits until that item becomes the `current_item` (with a 120-second timeout to guard against race conditions), then calls `load_next_queue_item()` to resolve the next item's stream details. It then schedules `_enqueue_next_item()`, which calls `PlayerController.enqueue_next_media()` to tell the player about the upcoming track.
+
+**3. Flow stream recovery**
+
+After a flow stream finishes, `queue_buffer_completed` polls for up to 60 seconds waiting for the player to go idle. If the original session is still active and new items have been appended to the queue, it calls `play_index` to resume playback automatically.
 
 ### `load_next_queue_item` — Advancing the Queue
 
@@ -292,13 +296,24 @@ When `on_player_update` fires for a transitioning player, the handler returns ea
 
 ## Playback Progress Reporting
 
-Every 30 seconds (`PLAYBACK_REPORT_INTERVAL_SECONDS`), `_update_queue_from_player` calls `_handle_playback_progress_report`, which emits an `EventType.MEDIA_ITEM_PLAYED` event carrying a `MediaItemPlaybackProgressReport`. This report includes:
+`_update_queue_from_player` calls `_handle_playback_progress_report` on three triggers: when `state` changes, when `current_item_id` changes, or on the 30-second cadence (`PLAYBACK_REPORT_INTERVAL_SECONDS`). The report emits an `EventType.MEDIA_ITEM_PLAYED` event carrying a `MediaItemPlaybackProgressReport` that includes:
 
 - URI, media type, name, artists, album
 - Duration, `seconds_played`, `fully_played`
 - `is_playing`, `userid`
 
 This event drives scrobbling (Last.fm, ListenBrainz) and playlog updates.
+
+## Queue Resolution: `get_active_queue`
+
+When a command or stream request needs the active queue for a player, `PlayerController.get_active_queue(player)` resolves it through a 4-step chain:
+
+1. **Sync leader** — if `player.state.synced_to` points to another player, recurse into that player's queue.
+2. **Active GROUP** — if `player.state.active_group` points to a group player, recurse into the group player's queue.
+3. **Active source / player ID** — look up `player.state.active_source` (or fall back to `player.player_id`) as a queue ID.
+4. **Protocol parent** — if the player is `PlayerType.PROTOCOL` with a `protocol_parent_id`, recurse into the parent player's queue.
+
+This resolution chain ensures that grouped players, sync children, and protocol wrappers all find the correct queue — the one owned by their effective leader or parent. It is used throughout the streaming pipeline (e.g., `_prepare_next_audio_buffer` pre-warms based on the resolved queue, not the individual player's naive queue).
 
 ## Queue as Active Source
 

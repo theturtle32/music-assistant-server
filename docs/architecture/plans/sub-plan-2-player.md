@@ -31,7 +31,7 @@ The Player model is the most complex single class in the codebase (~2142 lines).
   - `__final_supported_features` — merges features from linked output protocols
   - `__final_can_group_with` — which other players this one can group with
   - `__final_active_source` — resolves the effective active source
-  
+
   Focus on the **resolution chain** — what data source takes precedence over what. Use a table or diagram.
 
 - **PlayerType taxonomy**: `PLAYER` (native vendor device), `PROTOCOL` (generic protocol endpoint, hidden in UI), `GROUP` (multi-speaker group), `STEREO_PAIR`. Explain what code paths branch on type — e.g., `synced_to` returns None for GROUP, protocol players are excluded from `all_players()` by default.
@@ -102,7 +102,7 @@ How multiple protocol endpoints for the same physical device are unified into a 
   4. `CAST_UUID` / `AIRPLAY_ID` — protocol-specific stable IDs
   5. `IP_ADDRESS` — last resort, only when strong identifiers are unavailable
   6. `player_id` — fallback device key for players without identifiers (e.g., Sendspin)
-  
+
   Key constraint: Players from the **same protocol domain** are never matched, even with identical identifiers (handles multiple software instances on the same host).
 
 - **The linking flows** (3 distinct scenarios):

@@ -67,6 +67,16 @@ This runs **in addition to** the normal volume handling — it's not either/or. 
 
 Group volume applies a uniform delta to all powered members, preserving their relative volume relationships.
 
+### Sync Leader Redirect
+
+Before the algorithm runs, `cmd_group_volume` performs routing:
+
+- **GROUP type or has group_members** → call `set_group_volume` directly
+- **Synced to another player** → redirect to `set_group_volume` on the sync leader
+- **Neither** → fall back to `cmd_volume_set` (treat as individual volume)
+
+Note the asymmetry: `cmd_group_volume_mute` does **not** redirect to the sync leader. It only handles GROUP-type players and players with group_members. Calling group mute on a sync follower is a no-op.
+
 ### The Algorithm
 
 `set_group_volume(group_player, volume_level)` in the player controller:
@@ -113,7 +123,7 @@ Computed on the `Player` model, not stored. The calculation:
 Also computed, not stored:
 
 - **No group members**: return `state.volume_muted`
-- **Has group members**: `True` only if *all* powered members are muted. `False` if at least one is unmuted. `None` if no members support mute.
+- **Has group members**: `True` if all powered members are muted. `False` if all powered members are unmuted. `None` if the state is mixed (some muted, some unmuted) or if no members support mute.
 
 ## Volume Up/Down
 

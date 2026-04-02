@@ -53,7 +53,7 @@ flowchart TD
     PROTO --> THROTTLE["Per-player throttle"]
     THROTTLE --> ROUTE{"Route decision"}
     ROUTE -->|"Queue active?"| QUEUE["player_queues.stop/pause/resume"]
-    ROUTE -->|"Plugin active?"| PLUGIN["plugin.on_stop/on_pause/..."]
+    ROUTE -->|"Plugin active?"| PLUGIN["plugin.on_pause/on_play/..."]
     ROUTE -->|"Direct"| HANDLE["_handle_cmd_*(player_id)"]
     HANDLE --> PLAYER["player.stop()/play()/pause()/..."]
 ```
@@ -87,7 +87,7 @@ Used by transport commands (`cmd_stop`, `cmd_play`, `cmd_pause`, `cmd_seek`, `cm
 | API route | Method | Implementation |
 |---|---|---|
 | `players/cmd/stop` | `cmd_stop` | Queue → `player_queues.stop` / else → `_handle_cmd_stop` |
-| `players/cmd/play` | `cmd_play` | If paused with queue → `player_queues.resume` / else → `_handle_cmd_play` |
+| `players/cmd/play` | `cmd_play` | If not paused and queue exists → `player_queues.resume` / if paused → `_handle_cmd_play` (native unpause) |
 | `players/cmd/pause` | `cmd_pause` | Queue → `player_queues.pause` / else → `_handle_cmd_pause` |
 | `players/cmd/play_pause` | `cmd_play_pause` | Dispatches to `cmd_pause` or `cmd_play` |
 | `players/cmd/resume` | `cmd_resume` | → `_handle_cmd_resume` (handles source restore, auto-play) |
@@ -236,17 +236,15 @@ Player config values are organized into five categories (see [02-configuration.m
 
 ## Event Signaling
 
-The controller signals three player events (all excluding PROTOCOL players):
+The controller signals several player events:
 
-| Event | When | Data |
-|---|---|---|
-| `PLAYER_ADDED` | During `register()` | `Player` instance |
-| `PLAYER_UPDATED` | Via `signal_player_state_update()` | `Player` instance |
-| `PLAYER_REMOVED` | During `unregister(permanent=True)` | `player_id` only |
-
-Additionally, `signal_player_state_update()` emits:
-- `PLAYER_CONFIG_UPDATED` — when supported features or config-visible state changed
-- `PLAYER_OPTIONS_UPDATED` — when player options changed
+| Event | When | Data | PROTOCOL excluded? |
+|---|---|---|---|
+| `PLAYER_ADDED` | During `register()` | `Player` instance | Yes |
+| `PLAYER_UPDATED` | Via `signal_player_state_update()` | `Player` instance | Yes |
+| `PLAYER_REMOVED` | During `unregister(permanent=True)` | `player_id` only | Yes |
+| `PLAYER_CONFIG_UPDATED` | When supported features or config-visible state changed | `PlayerConfig` | No — fires for all types |
+| `PLAYER_OPTIONS_UPDATED` | When player options changed | options dict | No — fires for all types |
 
 The method also handles side effects: notifies `player_queues.on_player_update()`, triggers DSP reloads on group membership changes, detects external source takeover, and cleans up memberships when a player becomes unavailable.
 

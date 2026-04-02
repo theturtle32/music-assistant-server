@@ -92,7 +92,7 @@ flowchart TD
 - **Step 3**: Manifest loading scans `music_assistant/providers/*/manifest.json` in parallel via `TaskManager`. Directories prefixed with `_` are skipped unless `dev_mode` is active.
 - **Step 7**: The seven controllers (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`) are set up in parallel inside an `asyncio.TaskGroup`. Each receives its `CoreConfig` from the config controller.
 - **Step 12**: Builtin providers (like `sync_group`, `universal_group`, `theaudiodb`) are loaded synchronously via `TaskGroup` — if any fails, startup aborts.
-- **Step 13**: Regular providers are loaded via `TaskManager(self, 2)` (concurrency limit of 2) as background tasks. Failures trigger auto-retry after 120 seconds for `MusicAssistantError` subclasses.
+- **Step 13**: Regular providers are loaded concurrently as background tasks via `TaskManager`. Failures trigger auto-retry after 120 seconds for `MusicAssistantError` subclasses.
 
 ## Shutdown Lifecycle
 

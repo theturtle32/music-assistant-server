@@ -205,7 +205,7 @@ The `Player` class defines abstract methods that provider implementations overri
 | `power(powered)` | `POWER` | Turn on/off |
 | `volume_set(volume_level)` | `VOLUME_SET` | Set volume 0–100 |
 | `volume_mute(muted)` | `VOLUME_MUTE` | Mute/unmute |
-| `play()` | *(always available)* | Resume playback |
+| `play()` | *(required — must implement)* | Resume playback |
 | `stop()` | `PLAY_MEDIA` | Stop playback |
 | `pause()` | `PAUSE` | Pause playback |
 | `next_track()` | `NEXT_PREVIOUS` | Skip to next track |

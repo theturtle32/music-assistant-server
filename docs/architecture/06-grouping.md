@@ -236,7 +236,7 @@ Compared to sync groups, the universal group manages its own state more directly
 | `current_media` | Stored on group itself (deepcopy of media) |
 | `group_members` | Internal `_attr_group_members` |
 | `synced_to` | Always `None` (GROUP type) |
-| `can_group_with` | Static→static members; Dynamic→all non-UGP provider instances |
+| `can_group_with` | Static→static member list; Dynamic→`instance_id` of every `PlayerProvider` except the UGP provider itself |
 
 ## Ad-hoc Sync
 

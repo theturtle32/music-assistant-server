@@ -72,7 +72,7 @@ class MusicController(CoreController):
 
 1. **Cache check** — key built from query, media types, limit, and sorted unique provider IDs.
 2. **Shareable URL detection** — if the query is a parseable URI (`parse_uri`), the item is fetched directly and returned as a single-result `SearchResults`.
-3. **Library search** — `search_library()` queries each sub-controller's `library_items(search=...)` against SQLite.
+3. **Library search** — `search_library()` queries each sub-controller's `library_items(search=...)` against SQLite. Note: genres are not included in library search results (`MediaType.GENRE` is not populated by `search_library`).
 4. **Provider fan-out** — `asyncio.gather` runs `_search_provider` for each unique provider instance in parallel. Library hits are tracked as `(media_type, provider_domain, item_id)` tuples; provider results that already appear in the library set are deduplicated.
 5. **Interleave and rank** — per-media-type results from each source are interleaved via `zip_longest` (first result from each provider alternated), then sorted by `_sort_search_result` which boosts exact matches and library items. Final list is capped to `limit`.
 
@@ -85,7 +85,7 @@ Every media item in Music Assistant has a canonical URI of the form `provider://
 | Format | Example | Resolution |
 |--------|---------|------------|
 | MA native | `spotify://track/abc123` | Split on `://` and `/` |
-| Spotify HTTPS | `https://open.spotify.com/track/abc123` | Domain → provider, path → type + ID |
+| Shareable HTTPS | `https://open.spotify.com/track/abc123` | Any `https://open.*` URL — domain → provider, path → type + ID (supports Spotify, Qobuz, and others) |
 | Tidal HTTPS | `https://tidal.com/browse/track/12345` | Path segments → type + ID |
 | Colon-separated | `spotify:track:abc123` | Split on `:` |
 | Generic HTTP/RTSP | `http://stream.example.com/live` | `builtin` provider, `MediaType.UNKNOWN` |

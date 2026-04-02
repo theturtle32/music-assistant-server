@@ -34,11 +34,11 @@ graph LR
     end
 
     subgraph "Delivery"
-        SHTTP[HTTP Response<br/>port 8097]
+        HTTPOUT[HTTP Response<br/>port 8097]
         DPCM[Direct PCM<br/>get_stream]
     end
 
-    MP & HTTP & ICY & HLS --> GMS --> AB --> GQS --> SF --> FFO --> SHTTP & DPCM
+    MP & HTTP & ICY & HLS --> GMS --> AB --> GQS --> SF --> FFO --> HTTPOUT & DPCM
 ```
 
 ## Network Architecture
@@ -120,7 +120,7 @@ Per-player `CONF_HTTP_PROFILE` controls response behavior:
 Before a queue item can be streamed, the system must know where its audio comes from, what format it's in, and what processing is needed:
 
 1. **Reuse check** — if the queue item already has valid `streamdetails` with an active buffer, reuse them.
-2. **Provider walk** — iterate `provider_mappings` sorted by quality, calling `MusicProvider.get_stream_details(item_id)` on each until one succeeds. An optional per-player `provider_filter` restricts which providers are tried.
+2. **Provider walk** — iterate `provider_mappings` sorted by quality, calling `MusicProvider.get_stream_details(item_id)` on each until one succeeds. The current playback user's `provider_filter` restricts which providers are tried, evaluated in a two-phase loop (preferred/filtered providers first, then remaining providers as fallback).
 3. **Radio resolution** — for radio streams, resolve playlist URLs (M3U, PLS), detect ICY vs in-band metadata vs HLS; HLS radio may attach a metadata update callback.
 4. **Loudness lookup** — load stored EBU R128 loudness from the database (`mass.music.get_loudness`).
 5. **Normalization mode** — determine `VolumeNormalizationMode` based on player and core config.
@@ -152,6 +152,7 @@ Streams a single queue item from the `AudioBuffer` with optional per-item filter
    - **MEASUREMENT_ONLY** → static `volume=XdB` from stored loudness vs target
    - **FIXED_GAIN** → constant dB from config
    - **FALLBACK_DYNAMIC** → measurement if available, otherwise falls back to dynamic
+   - **FALLBACK_FIXED_GAIN** → measurement if available, otherwise fixed gain from config
 3. Optional `atempo` for playback speed adjustment.
 4. Optional `afade` for fade-in on resume.
 
@@ -246,6 +247,7 @@ Volume normalization ensures consistent perceived loudness across tracks from di
 | **DYNAMIC** | Real-time loudness analysis and leveling | `loudnorm=I=target:TP=-1:LRA=14` |
 | **MEASUREMENT_ONLY** | Static gain from stored loudness measurement | `volume=XdB` where X = target - measured |
 | **FALLBACK_DYNAMIC** | Use measurement if available, otherwise dynamic | Depends on availability |
+| **FALLBACK_FIXED_GAIN** | Use measurement if available, otherwise fixed gain from config | Depends on availability |
 | **FIXED_GAIN** | Constant dB adjustment from config | `volume=XdB` from `CONF_VOLUME_NORMALIZATION_FIXED_GAIN_*` |
 
 Mode selection (`get_normalization_mode` in `helpers/audio.py`) considers:
@@ -291,7 +293,9 @@ Two crossfade strategies:
 | **STANDARD_CROSSFADE** | Strip silence, apply `StandardCrossFade` |
 | **SMART_CROSSFADE** | Load intro/outro analysis; if both exist and confidence > 0.3, apply `SmartCrossFade`; on failure, fall back to `StandardCrossFade` |
 
-The `CONF_ALLOW_CROSSFADE_SAME_ALBUM` setting (default false) prevents crossfading consecutive tracks from the same album, preserving intended album flow.
+The `CONF_ALLOW_CROSSFADE_SAME_ALBUM` setting (default false) prevents crossfading consecutive tracks from the same album, preserving intended album flow. Crossfading can also be skipped when adjacent tracks have different sample rates, unless `CONF_ENTRY_CROSSFADE_DIFFERENT_SAMPLE_RATES` is enabled.
+
+For flow streams targeting Chromecast-style clients, FFmpeg uses `-readrate 1` and `-readrate_initial_burst 6` to throttle output to real-time speed, preventing the player from buffering too far ahead.
 
 ## DSP Chain
 
@@ -301,6 +305,8 @@ Per-player DSP is applied in the final FFmpeg encoding stage via `get_player_fil
 2. **Custom DSP filters** — per-player filter chain from `filter_to_ffmpeg_params`.
 3. **Channel selection** — mono pan from `CONF_OUTPUT_CHANNELS`.
 4. **Output limiter** — `alimiter` when limiter is enabled.
+
+**Grouping interaction**: `is_grouping_preventing_dsp` (in `helpers/audio.py`) checks whether the player is in a multi-device group that doesn't support `PlayerFeature.MULTI_DEVICE_DSP`. If so, DSP is disabled entirely (`DSPState.DISABLED_BY_UNSUPPORTED_GROUP`) because per-device DSP filters would produce different audio on each group member, breaking synchronization.
 
 `get_player_dsp_details` provides DSP state for the UI, including gains, active filters, limiter status, and output format.
 

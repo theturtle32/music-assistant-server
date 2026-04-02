@@ -60,7 +60,7 @@ The three grouping models, membership, formation/dissolution lifecycle, and the 
   - `group_members` (list of player_ids): On a sync leader or group player, lists all members including self (for non-GROUP types). On a regular player, empty unless ad-hoc synced.
   - `synced_to` (str | None): On a child player synced to a leader, points to the leader. GROUP type always returns None.
   - `active_group` (str | None): On any player, the ID of the currently active (playing/paused) GROUP player this player belongs to. Computed by scanning all GROUP players.
-  
+
   Explain how these three interact. A player can have `synced_to` set (synced to an ad-hoc leader) AND `active_group` set (part of a playing GROUP). But `synced_to` and `group_members` are from different perspectives — `synced_to` is the child's view, `group_members` is the leader's view.
 
 - **`__final_group_members`**: How it resolves the final group member list — translates protocol player IDs to visible player IDs via `_translate_protocol_ids_to_visible`, includes active output protocol's group members, ensures self is first for non-GROUP types.
@@ -91,7 +91,7 @@ Individual and group volume, the additive-delta algorithm, plugin volume callbac
   - `FAKE` → stores in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`
   - `NONE` → raises `UnsupportedFeaturedException`
   - Specific player/control ID → delegates to that entity
-  
+
   Before setting: auto-unmutes if muted (unless `ATTR_MUTE_LOCK` is set). Always resets fake mute.
 
 - **Group volume — the additive-delta algorithm** (`set_group_volume` in controller):
@@ -100,11 +100,11 @@ Individual and group volume, the additive-delta algorithm, plugin volume callbac
   3. Apply `volume_dif` to each powered member: `new_child_volume = cur_child_volume + volume_dif`
   4. Clamp to [0, 100]
   5. Execute all child volume sets concurrently via `asyncio.gather`
-  
+
   **Why additive-delta**: Preserves relative volume differences between speakers. If living room is at 60 and kitchen at 40, setting group volume to 55 (from 50 average) adds +5 to both → 65 and 45.
-  
+
   **Clamping/drift behavior**: If a child is at 95 and delta is +10, it clamps to 100 — losing 5 units. The inverse operation won't restore the original ratio. The maintainer considers this acceptable for the use case. Note this as a known characteristic.
-  
+
   Skips members with `volume_control == PLAYER_CONTROL_NONE`.
 
 - **`group_volume` property** (in Player model): Computed, not stored. For non-group players with no group_members, returns `self.state.volume_level`. For group/sync leaders, computes average of powered members' volume levels (via `iter_group_members`). Returns None if no members support volume.
@@ -116,11 +116,11 @@ Individual and group volume, the additive-delta algorithm, plugin volume callbac
 - **Group mute** (`cmd_group_volume_mute`): Iterates powered group members, sets `ATTR_MUTE_LOCK` on each (to prevent auto-unmute during subsequent volume changes), then mutes/unmutes each member.
 
 - **Plugin volume callbacks**: When `_handle_cmd_volume_set` runs, before handling native/fake/delegate volume, it checks `_get_active_plugin_source(player)`. If a `PluginSource` is active for this player AND it has an `on_volume` callback, the callback is invoked with the volume level. This runs IN ADDITION TO the normal volume handling — it's not either/or.
-  
+
   The `PluginSource.on_volume` callback (defined in `music_assistant/models/plugin.py`) is `Callable[[int], Awaitable[None]] | None`.
-  
+
   `_get_active_plugin_source` matches by `in_use_by == player.player_id` OR `player.state.active_source == plugin_source.id`.
-  
+
   **The `in_use_by` gap for groups**: `in_use_by` stores a single `player_id`. For group players, the group player ID is set, but individual child players within the group don't have `in_use_by` set to them — the plugin doesn't know about individual children. This means plugin volume callbacks only fire for the group player, not for individual member volume changes. This is a known architectural limitation.
 
 - **Volume during announcements**: The announcement flow saves current volume, adjusts to announcement volume (via `get_announcement_volume` — supports absolute, relative, percentual strategies with min/max clamping), plays the announcement, then restores the previous volume. The announcement volume strategy is per-player config.
@@ -162,7 +162,7 @@ Same as prior sub-plans:
    - `group_volume`, `group_volume_muted` (computed properties)
    - `__final_group_members`, `__final_synced_to`, `__final_active_group` (final computed properties)
 10. **Read `models/plugin.py`** — `PluginSource` dataclass, especially the callback fields (`on_volume`, `on_play`, `on_pause`, etc.) and `in_use_by`.
-11. **Git history**: 
+11. **Git history**:
     - `git log --oneline -20 music_assistant/providers/sync_group/player.py`
     - `git log --oneline -20 music_assistant/providers/universal_group/player.py`
     - `git log --oneline -20 music_assistant/controllers/players/controller.py` (look for group/volume changes)

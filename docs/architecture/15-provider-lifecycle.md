@@ -120,7 +120,6 @@ classDiagram
         +available: bool
         +logger: Logger
         +supported_features: set~ProviderFeature~
-        +setup()
         +handle_async_init()
         +loaded_in_mass()
         +unload(is_removed)
@@ -213,8 +212,8 @@ flowchart TD
     L --> M["provider.handle_async_init()"]
     M --> N["Register in _providers dict"]
     N --> O["provider.available = True"]
-    O --> P["Post-load task: loaded_in_mass() + run_provider_discovery()"]
-    P --> Q["Signal PROVIDERS_UPDATED"]
+    O --> P["Background task via create_task(): loaded_in_mass() + run_provider_discovery()"]
+    P --> Q["Signal PROVIDERS_UPDATED (before background task completes)"]
     Q --> R{"MusicProvider?"}
     R -- Yes --> S["music.on_provider_loaded()"]
     R -- No --> T{"PlayerProvider?"}
@@ -241,7 +240,7 @@ This function handles dynamic import and dependency management:
 | Aspect | Builtin | Regular |
 |---|---|---|
 | `manifest.builtin` | `True` | `False` |
-| Loading | `_load_builtin_providers()` — via `asyncio.TaskGroup`, fully awaited | `_load_providers()` — via `TaskManager(self, 2)`, background tasks |
+| Loading | `_load_builtin_providers()` — via `asyncio.TaskGroup`, fully awaited | `_load_providers()` — via `TaskManager`, concurrent background tasks |
 | Failure impact | Fatal — server startup aborts | Non-fatal — error logged, auto-retry scheduled |
 | Auto-retry | Yes (via `allow_retry=True`) | Yes — after 120 seconds for `MusicAssistantError` subclasses |
 | Safe mode | Loaded | Skipped |
@@ -276,6 +275,8 @@ The `depends_on` field in `ProviderManifest` creates a soft dependency chain:
 - During `_load_provider`, if `depends_on` is set and the dependency provider is not loaded, the load **silently returns** (no error).
 - When a provider successfully loads, `load_provider_config` iterates all enabled provider configs and re-triggers loading for any that `depends_on` the just-loaded provider's domain.
 - When a provider unloads, `unload_provider` recursively unloads all providers that depend on it.
+
+Additionally, after a successful `load_provider`, the server iterates all currently loaded providers. Any that are loaded but *unavailable* and whose `depends_on` matches the just-loaded provider's domain are unloaded — this triggers them to retry loading now that their dependency is available.
 
 This creates an eventually-consistent loading model — providers load (and retry) until their dependencies are satisfied, without requiring explicit ordering.
 

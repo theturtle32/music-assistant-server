@@ -120,7 +120,7 @@ The decorator sets three attributes on the function:
 
 ### `APICommandHandler` Dataclass
 
-During initialization, `MusicAssistant` scans all controllers for methods with `api_cmd` attributes, creates an `APICommandHandler` for each, and stores them in `mass.command_handlers: dict[str, APICommandHandler]`:
+During initialization, `MusicAssistant._register_api_commands()` scans a fixed list of class instances — `self` (MusicAssistant), `config`, `metadata`, `tasks`, `music`, `players`, `player_queues`, `webserver`, and `webserver.auth` — for methods with `api_cmd` attributes. Each match creates an `APICommandHandler` stored in `mass.command_handlers: dict[str, APICommandHandler]`. Additional commands (e.g., party mode, genre APIs) are registered dynamically at runtime via `mass.register_api_command()`:
 
 ```python
 @dataclass
@@ -208,7 +208,7 @@ The HTTP endpoint accepts POST requests with a `CommandMessage` body. The dispat
 2. Parse body as `CommandMessage`
 3. Look up handler in `command_handlers`
 4. Authenticate via `Authorization: Bearer <token>` header
-5. `parse_arguments` → execute → return `SuccessResultMessage`
+5. `parse_arguments` → execute → return raw JSON result via `web.json_response(result)` (no `SuccessResultMessage` envelope — that wrapper is WebSocket-only)
 
 For async generators, results are collected into a list before returning.
 

@@ -156,7 +156,7 @@ Purely image-focused — no text metadata. Requires MBIDs for all lookups. Optio
 
 ## Image Proxy System
 
-The image proxy handles serving, resizing, and caching images for the frontend. It sits at `/imageproxy` on the streams server (port 8097).
+The image proxy handles serving, resizing, and caching images for the frontend. The `/imageproxy` endpoint is mounted on **both** the streams server (port 8097) and the main webserver (port 8095) — `get_image_url()` selects which base URL to use via the `prefer_stream_server` parameter (webserver by default, streams server when `prefer_stream_server=True`).
 
 ### URL Generation
 

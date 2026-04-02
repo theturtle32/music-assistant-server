@@ -157,8 +157,10 @@ When a config value is updated (via the API's `save_provider_config` or `save_pl
 
 1. `Config.update(values)` compares new values against current ones, returns a `set[str]` of changed keys (prefixed with `values/` for value entries, bare for root fields like `enabled` or `name`).
 2. If keys changed, the controller/provider's `update_config(config, changed_keys)` is called.
-3. The default `update_config` in both `CoreController` and `Provider` checks if any changed entry has `requires_reload=True`. If so, it schedules a reload via `call_later(1, self.reload, ...)` — the 1-second debounce prevents rapid-fire reloads when multiple settings change at once.
-4. Log level changes (`values/log_level`) are applied immediately without a reload.
+3. The controller/provider's `update_config` determines whether a reload is needed:
+   - **`CoreController`**: checks if any changed entry has `requires_reload=True`. If so, schedules a reload via `call_later(1, self.reload, ...)` — the 1-second debounce prevents rapid-fire reloads when multiple settings change at once.
+   - **`Provider`**: reloads on *any* non-log-level `values/*` change, without consulting `requires_reload`. This is because provider reloads are lightweight (unload + re-load) and most providers cache config values at setup time.
+4. Log level changes (`values/log_level`) are applied immediately without a reload in both cases.
 
 For providers, reloading means unloading and re-loading the provider instance (calling `mass.load_provider_config`). For core controllers, it means calling `close()` then `setup()` again.
 
@@ -198,6 +200,7 @@ Located in `storage_path`, this is the primary data store for the media library:
 | `DB_TABLE_SMART_FADES_ANALYSIS` | `smart_fades_analysis` | Beat detection / crossfade analysis |
 | `DB_TABLE_GENRES` | `genres` | Genre taxonomy |
 | `DB_TABLE_GENRE_MEDIA_ITEM_MAPPING` | `genre_media_item_mapping` | Genre ↔ media item links |
+| `DB_TABLE_GENRE_MEDIA_ITEM_EXCLUSION` | `genre_media_item_exclusion` | User-excluded genre ↔ media item pairs |
 | `DB_TABLE_THUMBS` | `thumbnails` | Cached image thumbnails |
 
 The library database is covered in more detail in [08-media-library.md](08-media-library.md).
@@ -216,15 +219,17 @@ Located in `cache_path`, managed by `CacheController`:
 The `DatabaseConnection` class wraps `aiosqlite` with convenience methods (`get_rows`, `get_row`, `insert`, `update`, `delete`, `upsert`, `search`, `iter_items`, `vacuum`). On setup, it configures SQLite for performance:
 
 ```sql
-PRAGMA journal_mode=WAL;
+PRAGMA analysis_limit=10000;
 PRAGMA locking_mode=exclusive;
+PRAGMA journal_mode=WAL;
+PRAGMA journal_size_limit=6144000;
 PRAGMA synchronous=normal;
 PRAGMA temp_store=memory;
 PRAGMA mmap_size=30000000000;
 PRAGMA cache_size=-64000;
 ```
 
-These settings trade durability for speed — appropriate for a music library where data can always be re-synced from providers.
+These settings trade durability for speed — appropriate for a music library where data can always be re-synced from providers. On close, `PRAGMA optimize` is called to update query planner statistics.
 
 The class also supports list parameters in queries: a list value in `params` is automatically expanded to `(:_param_0, :_param_1, ...)` SQL syntax via the `query_params` helper.
 
