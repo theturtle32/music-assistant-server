@@ -39,6 +39,29 @@ isProject: false
 
 This is the **master plan**. It does not contain the exploration or writing work itself — that lives in 5 sub-plans, each saved as a markdown file and executed in a dedicated conversation with fresh context. This plan's job is to define the sub-plans, their sequencing, their deliverables, and the reconciliation loop between them.
 
+## Manual Coordination Workflow
+
+Execution requires manual coordination between Plan mode and Agent mode in Cursor. Each sub-plan has two steps:
+
+**Step 1 — Write the sub-plan (Plan mode).** Open a conversation with this master plan visible. Ask for the next sub-plan to be written. Review the resulting markdown file and request adjustments if needed.
+
+**Step 2 — Execute the sub-plan (Agent mode, new conversation).** Start a **new conversation** in Agent mode. Select the recommended model for that phase (see table). Reference the sub-plan file (e.g., `@docs/architecture/plans/sub-plan-1-core.md`) and ask for it to be executed. The fresh conversation gives the agent clean context for independent exploration.
+
+**Between phases:** Return to the master plan (Plan mode) to write the next sub-plan. This is the opportunity to adjust scope based on what prior phases discovered.
+
+**Execution sequence:**
+
+- Phase 1 write — Plan mode, any model — Write `sub-plan-1-core.md`
+- Phase 1 exec — Agent mode, **200k model** — Produce `00-overview.md`, `01-event-system.md`, `02-configuration.md`, `15-provider-lifecycle.md`
+- Phase 2 write — Plan mode, any model — Write `sub-plan-2-player.md`
+- Phase 2 exec — Agent mode, **200k model** — Produce `03-player-model.md`, `04-player-controller.md`, `05-protocol-linking.md`; reconcile with phase 1
+- Phase 3 write — Plan mode, any model — Write `sub-plan-3-grouping-volume.md`
+- Phase 3 exec — Agent mode, **1M model** — Produce `06-grouping.md`, `07-volume.md`; reconcile with phases 1-2
+- Phase 4 write — Plan mode, any model — Write `sub-plan-4-media-streaming.md`
+- Phase 4 exec — Agent mode, **200k model** — Produce `08-media-library.md`, `09-player-queues.md`, `10-streaming-pipeline.md`; reconcile with phases 1-3
+- Phase 5 write — Plan mode, any model — Write `sub-plan-5-plugins-infra.md`
+- Phase 5 exec — Agent mode, **1M model** — Produce `11-plugin-system.md`, `12-webserver-api.md`, `13-discovery.md`, `14-metadata.md`; full convergence review
+
 ## Context
 
 The Music Assistant server has ~494 Python files across 79 providers, 10+ controllers, and 9 model files. Existing documentation is scattered across in-tree READMEs (streams, players, tasks, discovery, webserver, sync group, spotify connect), DEVELOPMENT.md, CLAUDE.md, and the external [developers.music-assistant.io](https://developers.music-assistant.io/). Major gaps exist in the player model internals, media controllers, plugin architecture, event system, configuration, and cross-cutting concerns like grouping and volume.
