@@ -11,7 +11,7 @@ Music Assistant supports three distinct grouping models for multi-room audio: **
 | **Persistent entity** | Yes | Yes | No |
 | **Queue ownership** | Group player | Group player | Parent player (sync leader) |
 | **Cross-protocol** | No — same protocol only | Yes — any player | No — same protocol only |
-| **Audio delivery** | Delegated to sync leader's native protocol | Server-side multicast (HTTP per member) | Native protocol sync |
+| **Audio delivery** | Delegated to sync leader's native protocol | Server-side fan-out (independent HTTP stream per member) | Native protocol sync |
 | **Player ID format** | `syncgroup_{random_8}` | `ugp_{random_8}` | N/A |
 | **Dissolves on stop** | After 5s delay | No (persistent power state) | Immediately |
 | **Dynamic membership** | Optional (`CONF_DYNAMIC_GROUP_MEMBERS`) | Optional | Always |
@@ -144,9 +144,9 @@ Universal groups solve the cross-protocol problem. Any player that can receive H
 
 **Key class:** `UniversalGroupPlayer` (`music_assistant/providers/universal_group/player.py`)
 
-### Server-Side Multicast
+### Server-Side Fan-Out
 
-Unlike sync groups that delegate to a vendor's native sync protocol, universal groups use `UGPStream` for server-side audio distribution. The MA server reads the audio source, converts it to PCM, then multicasts it to each member as an independent HTTP stream. For the full audio processing pipeline that feeds these streams, see [10-streaming-pipeline.md](10-streaming-pipeline.md).
+Unlike sync groups that delegate to a vendor's native sync protocol, universal groups use `UGPStream` for server-side audio distribution. The MA server reads the audio source, converts it to PCM, then fans it out to each member as an independent unicast HTTP stream (one connection per member, not IP multicast). For the full audio processing pipeline that feeds these streams, see [10-streaming-pipeline.md](10-streaming-pipeline.md).
 
 ```mermaid
 flowchart LR
@@ -171,9 +171,9 @@ The `player_id` query parameter identifies the requesting member, enabling per-p
 
 ### UGPStream Internals
 
-The `UGPStream` class (`music_assistant/providers/universal_group/ugp_stream.py`) manages the multicast:
+The `UGPStream` class (`music_assistant/providers/universal_group/ugp_stream.py`) manages the fan-out:
 
-1. **`_runner()`**: The core loop. Reads from the audio source through FFmpeg (with readrate limiting at 1.1x to prevent excessive buffering), converts to the base PCM format, and multicasts each chunk to all subscribers via `asyncio.gather`
+1. **`_runner()`**: The core loop. Reads from the audio source through FFmpeg (with readrate limiting at 1.1x to prevent excessive buffering), converts to the base PCM format, and pushes each chunk to all subscribers via `asyncio.gather`
 2. **`subscribe_raw()`**: Each connecting client gets an `asyncio.Queue(10)` as its subscriber callback. The runner pushes chunks to all queues. An empty `b""` chunk signals stream end.
 3. **`get_stream()`**: Wraps `subscribe_raw()` through a second FFmpeg process for per-client transcoding with custom filter parameters (player-specific DSP)
 
@@ -429,9 +429,9 @@ This ensures commands like play/stop/pause always reach the entity that owns the
 | `music_assistant/providers/sync_group/player.py` | `SyncGroupPlayer` — sync leader delegation, formation/dissolution |
 | `music_assistant/providers/sync_group/provider.py` | `SyncGroupProvider` — create/remove/discover |
 | `music_assistant/providers/sync_group/constants.py` | `SGP_PREFIX`, `EXTRA_FEATURES_FROM_MEMBERS`, `CONF_MEMBERS_FILTER` |
-| `music_assistant/providers/universal_group/player.py` | `UniversalGroupPlayer` — server-side multicast, power management |
+| `music_assistant/providers/universal_group/player.py` | `UniversalGroupPlayer` — server-side fan-out, power management |
 | `music_assistant/providers/universal_group/provider.py` | `UniversalGroupProvider` — create/remove/discover |
-| `music_assistant/providers/universal_group/ugp_stream.py` | `UGPStream` — multicast subscriber model |
+| `music_assistant/providers/universal_group/ugp_stream.py` | `UGPStream` — fan-out subscriber model |
 | `music_assistant/providers/universal_group/constants.py` | `UGP_PREFIX`, `UGP_FORMAT`, `CONFIG_ENTRY_UGP_NOTE` |
 | `music_assistant/controllers/players/controller.py` | `cmd_set_members`, `_handle_set_members`, `_handle_set_members_with_protocols`, `iter_group_members`, `_get_player_groups` |
 | `music_assistant/models/player.py` | `group_members`, `synced_to`, `__final_group_members`, `__final_synced_to`, `__final_active_group` |

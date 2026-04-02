@@ -344,7 +344,7 @@ For flow mode, picks the highest internal rate from 192000 down to 44100 that th
 
 ## UGP Stream Integration
 
-Universal group players serve the same audio source to multiple members via individual HTTP streams. Each UGP registers dynamic routes (`/ugp/{player_id}.{codec}`) through `register_dynamic_route`. The `UGPStream` class manages a single flow-mode audio source and multicasts it to each member's individual request. See [06-grouping.md](06-grouping.md) for the full UGP architecture.
+Universal group players serve the same audio source to multiple members via individual HTTP streams. Each UGP registers dynamic routes (`/ugp/{player_id}.{codec}`) through `register_dynamic_route`. The `UGPStream` class manages a single flow-mode audio source and fans it out to each member's individual HTTP request. See [06-grouping.md](06-grouping.md) for the full UGP architecture.
 
 ## OGG Stream Stitching
 
