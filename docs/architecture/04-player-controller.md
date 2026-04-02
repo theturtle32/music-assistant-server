@@ -241,7 +241,7 @@ The controller signals several player events:
 | Event | When | Data | PROTOCOL excluded? |
 |---|---|---|---|
 | `PLAYER_ADDED` | During `register()` | `Player` instance | Yes |
-| `PLAYER_UPDATED` | Via `signal_player_state_update()` | `Player` instance | Yes |
+| `PLAYER_UPDATED` | Via `signal_player_state_update()` | `Player` instance (temporary unregister emits `PlayerState` snapshot instead) | Yes |
 | `PLAYER_REMOVED` | During `unregister(permanent=True)` | `player_id` only | Yes |
 | `PLAYER_CONFIG_UPDATED` | When supported features or config-visible state changed | `PlayerConfig` | No — fires for all types |
 | `PLAYER_OPTIONS_UPDATED` | When player options changed | options dict | No — fires for all types |

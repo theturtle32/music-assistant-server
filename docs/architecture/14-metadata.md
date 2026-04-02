@@ -150,7 +150,7 @@ Purely image-focused — no text metadata. Requires MBIDs for all lookups. Optio
 
 ### Lyrics Providers
 
-**LRCLIB** is preferred for synced lyrics (LRC format with timestamps). Requires track duration for matching. **Genius** provides plain text lyrics via the `lyricsgenius` library (blocking, wrapped in `asyncio.to_thread`). The controller tries existing metadata first, then LRCLIB, then Genius. The `get_track_lyrics()` method (API: `metadata/get_track_lyrics`) orchestrates the full fallback chain.
+**LRCLIB** provides synced lyrics (LRC format with timestamps) and requires track duration for matching. **Genius** provides plain text lyrics via the `lyricsgenius` library (blocking, wrapped in `asyncio.to_thread`). The `get_track_lyrics()` method (API: `metadata/get_track_lyrics`) resolves lyrics through a multi-step chain: (1) check existing track metadata, (2) for library tracks, trigger a metadata update, (3) try the track's own music provider (if it supports `ProviderFeature.LYRICS`), (4) iterate all loaded metadata providers with `LYRICS` support in load order. The order of LRCLIB vs Genius in step 4 depends on provider load order, not a hardcoded sequence.
 
 ---
 

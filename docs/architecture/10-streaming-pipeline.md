@@ -244,7 +244,7 @@ Volume normalization ensures consistent perceived loudness across tracks from di
 | Mode | Behavior | FFmpeg Filter |
 |------|----------|---------------|
 | **DISABLED** | No normalization | None |
-| **DYNAMIC** | Real-time loudness analysis and leveling | `loudnorm=I=target:TP=-1:LRA=14` |
+| **DYNAMIC** | Real-time loudness analysis and leveling | `loudnorm=I=target:TP=-2.0:LRA=10.0:offset=0.0` |
 | **MEASUREMENT_ONLY** | Static gain from stored loudness measurement | `volume=XdB` where X = target - measured |
 | **FALLBACK_DYNAMIC** | Use measurement if available, otherwise dynamic | Depends on availability |
 | **FALLBACK_FIXED_GAIN** | Use measurement if available, otherwise fixed gain from config | Depends on availability |

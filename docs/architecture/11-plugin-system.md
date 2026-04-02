@@ -115,7 +115,7 @@ The `Player.__final_source_list` property (in `models/player.py`) builds the com
 
 ### Active Source Detection
 
-The `Player.__final_active_source` property checks whether any plugin source has `in_use_by == player.player_id` and returns that source's ID if so. This overrides whatever the provider reports as the active source.
+The `Player.__final_active_source` property resolves the active source in priority order: (1) group/sync parent's active source, (2) protocol parent's active source, (3) plugin source with `in_use_by == player.player_id`, (4) the player's own active MA source or provider-reported source. The plugin check at step 3 means that if the player is synced, grouped, or a protocol child, the plugin override is never reached — the parent's source takes precedence.
 
 ---
 

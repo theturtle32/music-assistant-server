@@ -164,7 +164,7 @@ Two additional computed properties are included in `PlayerState` but are not `__
 | Property | Returns | Description |
 |---|---|---|
 | `group_volume` | `int \| None` | No group → own `volume_level`. With group → average of powered members' volume. See [07-volume.md](07-volume.md) |
-| `group_volume_muted` | `bool \| None` | No group → own `volume_muted`. With group → `True` if all powered members muted, `False` if any unmuted, `None` if no members support mute |
+| `group_volume_muted` | `bool \| None` | No group → own `volume_muted`. With group → `True` if all powered members muted, `False` if all unmuted, `None` if mixed (some muted, some not) or no members support mute. See [07-volume.md](07-volume.md) |
 
 ### Feature Sets from Protocols
 

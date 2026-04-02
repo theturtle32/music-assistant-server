@@ -279,7 +279,7 @@ flowchart TD
     E --> F[Filter additions: availability, can_group_with]
     F --> G[Auto-ungroup children synced elsewhere]
     G --> H[Power on children if needed]
-    H --> I{Parent is GROUP type?}
+    H --> I{"Parent is GROUP type AND has SET_MEMBERS feature?"}
     I -- Yes --> J[Delegate to player.set_members directly]
     I -- No --> K[_handle_set_members_with_protocols]
     K --> L[Determine parent's active protocol domain]
@@ -296,7 +296,7 @@ Handles validation and common logic for all grouping types:
 2. **Compatibility check**: Each child must be in `parent_player.state.can_group_with`
 3. **Auto-ungroup**: If a child is synced to a *different* player, ungroup it first
 4. **Power management**: Power on children if needed
-5. **GROUP type dispatch**: For `PlayerType.GROUP` (sync groups, universal groups), call `player.set_members()` directly — these manage their own membership
+5. **GROUP type dispatch**: For `PlayerType.GROUP` that also has `PlayerFeature.SET_MEMBERS` in `supported_features`, call `player.set_members()` directly. Static sync groups (which lack this feature) fall through to phase 2 instead.
 6. **Regular player dispatch**: For non-GROUP players, proceed to phase 2
 
 ### Phase 2: `_handle_set_members_with_protocols`

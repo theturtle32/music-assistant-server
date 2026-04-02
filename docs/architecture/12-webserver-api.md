@@ -67,6 +67,7 @@ The controller registers routes during `setup()`:
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | GET | `/` | `_handle_index` | Frontend with onboarding guard |
+| HEAD | `/` | `_handle_index` | Health check |
 | GET | `/{filename}` | `serve_static` | Frontend static files |
 | GET | `/ws` | `_handle_ws_client` | WebSocket API |
 | POST | `/api` | `_handle_jsonrpc_api_command` | HTTP JSON-RPC API |
@@ -84,6 +85,10 @@ The controller registers routes during `setup()`:
 | GET | `/api-docs` | `_handle_api_intro` | API documentation |
 | GET | `/api-docs/openapi.json` | `_handle_openapi_spec` | OpenAPI 3.0 spec |
 | GET | `/api-docs/swagger` | `_handle_swagger_ui` | Swagger UI |
+| GET | `/api-docs/commands` | `_handle_commands_reference` | Commands reference page |
+| GET | `/api-docs/commands.json` | `_handle_commands_json` | Commands JSON data |
+| GET | `/api-docs/schemas` | `_handle_schemas_reference` | Schemas reference page |
+| GET | `/api-docs/schemas.json` | `_handle_schemas_json` | Schemas JSON data |
 | GET | `/sendspin` | `handle_sendspin_proxy` | Sendspin WebSocket proxy |
 
 ### Onboarding Guard

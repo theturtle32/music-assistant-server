@@ -55,12 +55,13 @@ Additional state:
 ### The `@handle_play_action` Decorator
 
 Play-related methods (`play_media`, `play_index`) are wrapped with `@handle_play_action`, which:
-1. Acquires the per-queue lock from `_play_action_locks`
-2. Sets `ATTR_PLAY_ACTION_IN_PROGRESS` on the queue
-3. Sets the `IN_PLAY_ACTION` `ContextVar` for nested calls
-4. Ensures cleanup on exit
+1. If already inside a play action (`IN_PLAY_ACTION` ContextVar is set), skip lock acquisition (nested call)
+2. Otherwise, acquire the per-queue lock with a **60-second timeout** (`PLAY_ACTION_LOCK_TIMEOUT`). If the timeout expires, the stuck lock is force-replaced with a fresh one to recover the queue.
+3. Sets `ATTR_PLAY_ACTION_IN_PROGRESS` on the queue
+4. Sets the `IN_PLAY_ACTION` `ContextVar` for nested calls
+5. Ensures cleanup on exit
 
-This prevents concurrent play commands from racing each other on the same queue.
+This prevents concurrent play commands from racing each other on the same queue, with the timeout ensuring a stuck lock never permanently blocks a queue.
 
 ## PlayerQueue Dataclass
 
@@ -323,7 +324,7 @@ The queue is the "usual active source" for a player, but not the only possibilit
 queue.active = player.state.active_source in (queue.queue_id, None)
 ```
 
-When `active_source` is another ID (e.g. a plugin source like Spotify Connect), the queue becomes inactive and its state is forced to IDLE. Plugin sources can handle their own `next_track`, `previous_track`, `seek`, and `volume` commands — the `PlayerController` checks for an active plugin source before routing to the queue (see [04-player-controller.md](04-player-controller.md) and [11-plugin-system.md](11-plugin-system.md) for the full plugin source architecture).
+When `active_source` is another ID (e.g. a plugin source like Spotify Connect), the queue becomes inactive. If this is the first update for this queue (no entry in `_prev_states`), its state is set to IDLE and processing returns early. Otherwise, the queue falls through to normal `_update_queue_from_player` processing. Plugin sources can handle their own `next_track`, `previous_track`, `seek`, and `volume` commands — the `PlayerController` checks for an active plugin source before routing to the queue (see [04-player-controller.md](04-player-controller.md) and [11-plugin-system.md](11-plugin-system.md) for the full plugin source architecture).
 
 ## Queue Events
 

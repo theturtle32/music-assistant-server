@@ -206,7 +206,7 @@ Resolves the target volume based on per-player config:
 | `none` | No volume adjustment — play at current volume |
 | `absolute` | Set to a fixed level (e.g. always play at 50) |
 | `relative` | Add/subtract from current volume (e.g. current + 10) |
-| `percentual` | Scale current volume by a percentage (e.g. current × 1.5) |
+| `percentual` | Additive percentage: `result = current + (current / 100) * strategy_value` (e.g. current=60, strategy_value=50 → 60 + 30 = 90) |
 
 After computing the target level, it's clamped between `CONF_ENTRY_ANNOUNCE_VOLUME_MIN` and `CONF_ENTRY_ANNOUNCE_VOLUME_MAX`.
 

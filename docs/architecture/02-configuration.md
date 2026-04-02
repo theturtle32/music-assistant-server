@@ -93,7 +93,7 @@ Per-provider-instance settings. Fields beyond `Config`:
 |---|---|
 | `type` | `ProviderType` (music, player, metadata, plugin) |
 | `domain` | Provider domain (e.g. `"spotify"`) |
-| `instance_id` | Unique instance ID (auto-generated `shortuuid`) |
+| `instance_id` | Unique instance ID (format: `{domain}--{shortuuid(8)}`, e.g. `spotify--aBcDeFgH`; single-instance providers may use just the domain) |
 | `enabled` | Whether the instance is active |
 | `name` / `default_name` | Custom or auto-generated display name |
 | `last_error` | Persisted error message for UI display |

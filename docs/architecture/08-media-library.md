@@ -174,9 +174,10 @@ The `_db_add_lock` (per media type) serializes inserts to prevent race condition
 `compare_media_item` (`helpers/compare.py`) dispatches to type-specific comparisons. For tracks, the matching checks (in priority order):
 
 1. Same provider + item ID (or overlapping mappings)
-2. External ID match (MusicBrainz recording/track, AcoustID, ISRC with duration window)
-3. Title + artists + version + explicit flag + album/disc/track number alignment
-4. Duration fallback within tolerance
+2. **Primary** external IDs — MusicBrainz recording/track, AcoustID. These are definitive: a match confirms, a mismatch rejects.
+3. **Secondary** external IDs — ISRC (with 8-second duration tolerance), DISCOGS, TADB, ASIN. Only a positive match counts; mismatches do not reject.
+4. Sequential text filters: title match → artist match → version match → explicit flag → album/disc/track number alignment. Each can reject early.
+5. Duration fallback within tolerance (2-3 seconds depending on context)
 
 `compare_strings` supports both strict equality and fuzzy matching via `SequenceMatcher`. `create_safe_string` normalizes Unicode (via unidecode), strips punctuation, and handles special artist name cases.
 
@@ -221,7 +222,7 @@ sequenceDiagram
     participant DB as SQLite
 
     MC->>Tasks: schedule_provider_sync(instance_id)
-    Note over Tasks: Registers per-media-type sync tasks<br/>(interval from CONF_SYNC_INTERVAL)
+    Note over Tasks: Registers per-media-type sync tasks<br/>(interval from provider.get_default_library_sync_schedule)
     Tasks->>MC: _create_provider_sync_handler fires
     MC->>MC: async with _sync_lock
     MC->>MP: sync_library(media_type)
@@ -244,7 +245,7 @@ sequenceDiagram
 
 - `on_provider_loaded()` calls `schedule_provider_sync(instance_id)`, which registers a recurring task for each supported media type.
 - `on_provider_unload()` calls `unschedule_provider_sync(instance_id)`.
-- Sync interval defaults to `DEFAULT_SYNC_INTERVAL` (configurable via `CONF_SYNC_INTERVAL`).
+- Sync interval is determined per-provider via `MusicProvider.get_default_library_sync_schedule(media_type)`, which returns a `TaskSchedule` object. The base class defaults to every 12 hours; individual providers can override (e.g., the builtin provider syncs every 3 hours).
 
 ### The `_sync_lock`
 
