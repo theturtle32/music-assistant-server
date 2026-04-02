@@ -41,7 +41,7 @@ Providers set `_attr_*` class attributes to report device state. Public `@proper
 | `_attr_static_group_members: list[str]` | `static_group_members` | Permanent group members |
 | `_attr_can_group_with: set[str]` | `can_group_with` | Compatible player IDs |
 
-Note: `synced_to` is *not* an `_attr_*` — it is computed by scanning `group_members` across players on the same provider.
+Note: `synced_to` is *not* an `_attr_*` — it is computed by scanning `group_members` across players on the same provider. GROUP players (sync groups, universal groups) override it to always return `None`. For non-GROUP players, `group_members` is non-empty during ad-hoc sync — the sync leader lists all synced children including itself. See [06-grouping.md](06-grouping.md) for the three grouping models and how these properties interact.
 
 **Device info and identifiers:**
 
@@ -158,6 +158,13 @@ flowchart TD
 | `__final_supported_features` | `set[PlayerFeature]` | Native features + `ACTIVE_PROTOCOL_FEATURES` from active protocol + `PROTOCOL_FEATURES` from all linked protocols ± power/volume/mute adjusted by control config |
 | `__final_can_group_with` | `set[str]` | If synced → empty. Else: expanded native set (translated to visible) + linked protocol group sets (if no external source active) |
 | `__final_active_source` | `str \| None` | Active group/sync leader → protocol parent → in-use plugin → `__active_mass_source` (if no external source) → native `active_source` → fallback to `__active_mass_source` or `player_id` |
+
+Two additional computed properties are included in `PlayerState` but are not `__final_*` prefixed:
+
+| Property | Returns | Description |
+|---|---|---|
+| `group_volume` | `int \| None` | No group → own `volume_level`. With group → average of powered members' volume. See [07-volume.md](07-volume.md) |
+| `group_volume_muted` | `bool \| None` | No group → own `volume_muted`. With group → `True` if all powered members muted, `False` if any unmuted, `None` if no members support mute |
 
 ### Feature Sets from Protocols
 

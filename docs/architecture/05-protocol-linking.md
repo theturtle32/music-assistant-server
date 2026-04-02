@@ -154,7 +154,7 @@ The `UniversalPlayer` (`music_assistant/providers/universal_player/player.py`) i
 
 Priority chain:
 
-1. **Grouped protocol** — if any linked protocol player is actively grouped (synced_to, multi-member group, or active_group), use it. This ensures grouped playback stays on the protocol that formed the group.
+1. **Grouped protocol** — if any linked protocol player is actively grouped (synced_to, multi-member group, or active_group), use it. This ensures grouped playback stays on the protocol that formed the group. The controller's `_handle_set_members_with_protocols` method handles the reverse direction — translating user-visible player IDs to protocol player IDs when forming groups. See [06-grouping.md](06-grouping.md) for the full two-phase `set_members` pipeline.
 2. **User preference** — reads `CONF_PREFERRED_OUTPUT_PROTOCOL` from player config:
    - `"auto"` → skip to next step
    - `"native"` → return `(player, None)` if player has `PLAY_MEDIA`

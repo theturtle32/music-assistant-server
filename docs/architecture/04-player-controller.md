@@ -123,6 +123,8 @@ Used by transport commands (`cmd_stop`, `cmd_play`, `cmd_pause`, `cmd_seek`, `cm
 | `players/cmd/ungroup` | `cmd_ungroup` | → `cmd_set_members` (remove from groups) |
 | `players/cmd/ungroup_many` | `cmd_ungroup_many` | Loops `cmd_ungroup` |
 
+For GROUP players (sync groups, universal groups), `_handle_set_members` delegates directly to the player's `set_members()` method. For regular players (ad-hoc sync), it proceeds to `_handle_set_members_with_protocols`, which translates user-visible player IDs to protocol player IDs before forwarding. See [06-grouping.md](06-grouping.md) for the complete two-phase pipeline.
+
 **Power:**
 
 | API route | Method | Implementation |
@@ -168,7 +170,7 @@ Used by transport commands (`cmd_stop`, `cmd_play`, `cmd_pause`, `cmd_seek`, `cm
 7. **External `PlayerControl`** — calls `control.volume_set()`.
 8. **Protocol player** — recursively calls `_handle_cmd_volume_set` on the protocol player.
 
-**Group volume**: `set_group_volume()` computes a delta from the current `group_volume` and applies it proportionally to each powered child member via `_handle_cmd_volume_set`.
+**Group volume**: `set_group_volume()` computes an additive delta from the current `group_volume` (the average of powered members' volumes) and applies the same delta to each powered child member via `_handle_cmd_volume_set`, clamping results to [0, 100]. This preserves absolute volume differences between speakers. See [07-volume.md](07-volume.md) for the full algorithm and its clamping/drift characteristics.
 
 ## Player Polling
 
