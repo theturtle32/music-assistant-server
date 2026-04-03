@@ -685,6 +685,14 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         """
         player = self.get_player(player_id, True)
         assert player is not None  # for type checker
+        self.logger.debug(
+            "[VolDbg] cmd_group_volume(%s, %d) type=%s group_members=%s synced_to=%s",
+            player.state.name,
+            volume_level,
+            player.state.type,
+            player.state.group_members,
+            player.state.synced_to,
+        )
         if player.state.type == PlayerType.GROUP or player.state.group_members:
             # dedicated group player or sync leader
             await self.set_group_volume(player, volume_level)
@@ -1596,6 +1604,15 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
 
         # signal player update on the eventbus and notify plugins of volume changes
         if player.state.type != PlayerType.PROTOCOL:
+            vol_keys = {"volume_level", "group_volume"} & changed_values.keys()
+            if vol_keys:
+                self.logger.debug(
+                    "[VolDbg] signal_player_state_update(%s) changed=%s vol=%s gvol=%s",
+                    player.state.name,
+                    {k: changed_values[k] for k in vol_keys},
+                    player.state.volume_level,
+                    player.state.group_volume,
+                )
             self.mass.signal_event(EventType.PLAYER_UPDATED, object_id=player_id, data=player)
             # For group players, group_volume changes when children update.
             # For standalone players, group_volume lags volume_level by one
@@ -1750,6 +1767,13 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         if cur_volume is None:
             return
         volume_dif = volume_level - cur_volume
+        self.logger.debug(
+            "[VolDbg] set_group_volume(%s, %d) cur_group_vol=%d delta=%d",
+            group_player.state.name,
+            volume_level,
+            cur_volume,
+            volume_dif,
+        )
         coros = []
         # handle group volume by only applying the volume to powered members
         for child_player in self.iter_group_members(
@@ -1761,6 +1785,12 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
             new_child_volume = int(cur_child_volume + volume_dif)
             new_child_volume = max(0, new_child_volume)
             new_child_volume = min(100, new_child_volume)
+            self.logger.debug(
+                "[VolDbg]   child %s: %d -> %d",
+                child_player.state.name,
+                cur_child_volume,
+                new_child_volume,
+            )
             # Use private method to skip permission check - already validated on group
             # ATTR_MUTE_LOCK on muted players prevents auto-unmute during group volume changes
             coros.append(self._handle_cmd_volume_set(child_player.player_id, new_child_volume))
@@ -2025,6 +2055,13 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
             return
         for plugin_source in self.get_plugin_sources():
             if plugin_source.in_use_by == player.player_id and plugin_source.on_volume:
+                self.logger.debug(
+                    "[VolDbg] _notify_plugin_volume(%s) scheduling on_volume(%d) "
+                    "via call_later(0.25) source=%s",
+                    player.state.name,
+                    volume,
+                    plugin_source.id,
+                )
                 self.mass.call_later(
                     0.25,
                     plugin_source.on_volume,
@@ -2934,6 +2971,14 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         """
         player = self.get_player(player_id, True)
         assert player is not None  # for type checker
+        self.logger.debug(
+            "[VolDbg] _handle_cmd_volume_set(%s, %d) cur=%s type=%s vol_control=%s",
+            player.state.name,
+            volume_level,
+            player.state.volume_level,
+            player.type,
+            player.volume_control,
+        )
         if player.type == PlayerType.GROUP:
             # redirect to special group volume control
             await self.cmd_group_volume(player_id, volume_level)

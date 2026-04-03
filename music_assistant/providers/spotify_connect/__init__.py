@@ -507,11 +507,21 @@ class SpotifyConnectProvider(PluginProvider):
                 "Volume control requires a matching Spotify music provider"
             )
 
+        self.logger.debug(
+            "[VolDbg] _on_volume OUTBOUND: volume=%d in_use_by=%s",
+            volume,
+            self._source_details.in_use_by,
+        )
         try:
             # Bypass throttler for volume changes to ensure responsive UI
             async with self._spotify_provider.throttler.bypass():
                 await self._spotify_provider._put_data(f"me/player/volume?volume_percent={volume}")
                 self._last_outbound_volume_time = time.monotonic()
+                self.logger.debug(
+                    "[VolDbg] _on_volume SENT to Spotify API: volume=%d t=%.3f",
+                    volume,
+                    self._last_outbound_volume_time,
+                )
         except Exception as err:
             self.logger.warning("Failed to send volume command via Spotify Web API: %s", err)
             raise
@@ -845,21 +855,41 @@ class SpotifyConnectProvider(PluginProvider):
                 )
             elif self._source_details.in_use_by:
                 # Spotify Connect volume is 0-65535
+                raw_volume = volume
                 volume = int(int(volume) / 65535 * 100)
-                if (
-                    time.monotonic() - self._last_outbound_volume_time
-                    < _VOLUME_ECHO_SUPPRESS_WINDOW
-                ):
+                since_last = time.monotonic() - self._last_outbound_volume_time
+                self.logger.debug(
+                    "[VolDbg] volume_changed INBOUND: raw=%s mapped=%d "
+                    "in_use_by=%s since_last_outbound=%.3fs window=%.1fs",
+                    raw_volume,
+                    volume,
+                    self._source_details.in_use_by,
+                    since_last,
+                    _VOLUME_ECHO_SUPPRESS_WINDOW,
+                )
+                if since_last < _VOLUME_ECHO_SUPPRESS_WINDOW:
                     self.logger.debug(
-                        "Suppressing inbound volume_changed (%d%%) — within echo window",
+                        "[VolDbg] volume_changed SUPPRESSED (within echo window): "
+                        "volume=%d since=%.3fs",
                         volume,
+                        since_last,
                     )
                 else:
                     try:
                         player = self.mass.players.get_player(self._source_details.in_use_by)
-                        if player and (
-                            player.state.type == PlayerType.GROUP or player.state.group_members
-                        ):
+                        is_group = bool(
+                            player
+                            and (
+                                player.state.type == PlayerType.GROUP or player.state.group_members
+                            )
+                        )
+                        self.logger.debug(
+                            "[VolDbg] volume_changed ACCEPTED: volume=%d is_group=%s -> %s",
+                            volume,
+                            is_group,
+                            "cmd_group_volume" if is_group else "cmd_volume_set",
+                        )
+                        if is_group:
                             await self.mass.players.cmd_group_volume(
                                 self._source_details.in_use_by, volume
                             )
