@@ -1513,7 +1513,7 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         for key in (conf_key, dsp_conf_key):
             self.mass.config.remove(key)
 
-    def signal_player_state_update(
+    def signal_player_state_update(  # noqa: PLR0915
         self,
         player: Player,
         changed_values: dict[str, tuple[Any, Any]],
@@ -1594,9 +1594,17 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         if became_inactive and (player.state.active_group or player.state.synced_to):
             self.mass.create_task(self._cleanup_player_memberships(player.player_id))
 
-        # signal player update on the eventbus
+        # signal player update on the eventbus and notify plugins of volume changes
         if player.state.type != PlayerType.PROTOCOL:
             self.mass.signal_event(EventType.PLAYER_UPDATED, object_id=player_id, data=player)
+            # For group players, group_volume changes when children update.
+            # For standalone players, group_volume lags volume_level by one
+            # state cycle (stale read during __calculate_player_state), so
+            # we trigger on volume_level changes for non-group players.
+            if "group_volume" in changed_values or (
+                "volume_level" in changed_values and not player.state.group_members
+            ):
+                self._notify_plugin_volume(player)
 
         # signal a separate PlayerOptionsUpdated event
         if options := changed_values.get("options"):
@@ -1757,6 +1765,16 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
             # ATTR_MUTE_LOCK on muted players prevents auto-unmute during group volume changes
             coros.append(self._handle_cmd_volume_set(child_player.player_id, new_child_volume))
         await asyncio.gather(*coros)
+
+        # Force the group player's state to recalculate immediately so that
+        # group_volume reflects the children's new volumes. Without this,
+        # the group state update is debounced by 0.25s -- if a plugin echo
+        # arrives in that window, set_group_volume would read a stale
+        # group_volume and compute a non-zero delta. This also triggers
+        # the reactive plugin volume hook in signal_player_state_update,
+        # which debounces the actual plugin callback by another 0.25s to
+        # rate-limit outbound API calls during rapid slider drags.
+        group_player.update_state()
 
     def get_announcement_volume(self, player_id: str, volume_override: int | None) -> int | None:
         """Get the (player specific) volume for a announcement."""
@@ -1985,6 +2003,34 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
             if player.state.active_source == plugin_source.id:
                 return plugin_source
         return None
+
+    def _notify_plugin_volume(self, player: Player) -> None:
+        """
+        Fire a debounced plugin on_volume callback when volume changes.
+
+        For group players/sync leaders, sends the computed group_volume
+        (average of powered members). For standalone players, sends
+        volume_level directly (group_volume lags by one state cycle due
+        to a stale read during state computation).
+
+        This replaces the previous inline callback in _handle_cmd_volume_set,
+        which fired per-child during group operations (causing feedback loops)
+        and sent individual child volumes instead of the group average.
+        The debounced call_later naturally rate-limits outbound API calls.
+        """
+        volume = (
+            player.state.group_volume if player.state.group_members else player.state.volume_level
+        )
+        if volume is None:
+            return
+        for plugin_source in self.get_plugin_sources():
+            if plugin_source.in_use_by == player.player_id and plugin_source.on_volume:
+                self.mass.call_later(
+                    0.25,
+                    plugin_source.on_volume,
+                    volume,
+                    task_id=f"plugin_volume_{player.player_id}",
+                )
 
     def _get_player_groups(
         self, player: Player, available_only: bool = True, powered_only: bool = False
@@ -2912,14 +2958,23 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         # always reset fake mute when controlling volume
         player.extra_data.pop(ATTR_FAKE_MUTE, None)
 
-        # Check if a plugin source is active with a volume callback
-        if plugin_source := self._get_active_plugin_source(player):
-            if plugin_source.on_volume:
-                await plugin_source.on_volume(volume_level)
         # Handle native volume control support
         if player.volume_control == PLAYER_CONTROL_NATIVE:
-            # player supports volume command natively: forward to player
-            await player.volume_set(volume_level)
+            # Use optimistic volume so the player's internal state reflects
+            # the commanded volume immediately after the hardware call
+            # succeeds, rather than waiting for async hardware confirmation.
+            # Providers like Chromecast/Sonos/HEOS don't update state until
+            # the hardware reports back; without this, the state is stale
+            # and any code reading volume_level or group_volume between the
+            # command and the callback sees the old value.
+            #
+            # Plugin volume notification is not fired here — it is handled
+            # reactively by signal_player_state_update when volume state
+            # changes. This applies to both standalone players and group
+            # members, and ensures that groups always report the correct
+            # computed average rather than an individual child volume.
+            # The debounced hook naturally rate-limits rapid changes.
+            await player.volume_set_optimistic(volume_level)
             return
         # Handle fake volume control support
         if player.volume_control == PLAYER_CONTROL_FAKE:

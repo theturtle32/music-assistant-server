@@ -23,6 +23,7 @@ from music_assistant_models.enums import (
     ContentType,
     EventType,
     PlaybackState,
+    PlayerType,
     ProviderFeature,
     ProviderType,
     StreamType,
@@ -846,7 +847,17 @@ class SpotifyConnectProvider(PluginProvider):
                 volume = int(int(volume) / 65535 * 100)
                 self._last_volume_sent_to_spotify = volume
                 try:
-                    await self.mass.players.cmd_volume_set(self._source_details.in_use_by, volume)
+                    player = self.mass.players.get_player(self._source_details.in_use_by)
+                    if player and (
+                        player.state.type == PlayerType.GROUP or player.state.group_members
+                    ):
+                        await self.mass.players.cmd_group_volume(
+                            self._source_details.in_use_by, volume
+                        )
+                    else:
+                        await self.mass.players.cmd_volume_set(
+                            self._source_details.in_use_by, volume
+                        )
                 except UnsupportedFeaturedException:
                     self.logger.debug(
                         "Player %s does not support volume control",

@@ -167,14 +167,15 @@ Volume and mute follow the same control-chain pattern as power: the per-player `
 
 1. **GROUP type** — redirects to `cmd_group_volume`.
 2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first.
-3. **Active plugin** — calls `plugin.on_volume()` if present.
-4. **`NATIVE`** — `player.volume_set(volume_level)`.
-5. **`FAKE`** — stores in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
-6. **`NONE`** — raises `UnsupportedFeaturedException`.
-7. **External `PlayerControl`** — calls `control.volume_set()`.
-8. **Protocol player** — recursively calls `_handle_cmd_volume_set` on the protocol player.
+3. **`NATIVE`** — `player.volume_set_optimistic(volume_level)` (sends the hardware command, then optimistically updates `_attr_volume_level` and calls `update_state()` to keep `group_volume` coherent immediately).
+4. **`FAKE`** — stores in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
+5. **`NONE`** — raises `UnsupportedFeaturedException`.
+6. **External `PlayerControl`** — calls `control.volume_set()`.
+7. **Protocol player** — recursively calls `_handle_cmd_volume_set` on the protocol player.
 
-**Group volume**: `set_group_volume()` computes an additive delta from the current `group_volume` (the average of powered members' volumes) and applies the same delta to each powered child member via `_handle_cmd_volume_set`, clamping results to [0, 100]. This preserves absolute volume differences between speakers. See [07-volume.md](07-volume.md) for the full algorithm and its clamping/drift characteristics.
+Plugin volume notification is **not** inline in this method. It is handled reactively by `signal_player_state_update` when `group_volume` changes — see [07-volume.md](07-volume.md#plugin-volume-callbacks).
+
+**Group volume**: `set_group_volume()` computes an additive delta from the current `group_volume` (the average of powered members' volumes) and applies the same delta to each powered child member via `_handle_cmd_volume_set`, clamping results to [0, 100]. After all children are set, it forces `group_player.update_state()` to immediately recalculate `group_volume`. This preserves absolute volume differences between speakers. See [07-volume.md](07-volume.md) for the full algorithm and its clamping/drift characteristics.
 
 ## Player Polling
 
@@ -250,7 +251,7 @@ The controller signals several player events:
 | `PLAYER_CONFIG_UPDATED` | When supported features or config-visible state changed | `PlayerConfig` | No — fires for all types |
 | `PLAYER_OPTIONS_UPDATED` | When player options changed | options dict | No — fires for all types |
 
-The method also handles side effects: notifies `player_queues.on_player_update()`, triggers DSP reloads on group membership changes, detects external source takeover, and cleans up memberships when a player becomes unavailable.
+The method also handles side effects: notifies `player_queues.on_player_update()`, triggers DSP reloads on group membership changes, detects external source takeover, cleans up memberships when a player becomes unavailable, and fires **reactive plugin volume notifications** — when `group_volume` changes on a player that owns a plugin source (via `in_use_by`), a debounced `on_volume(group_volume)` callback is scheduled via `call_later`.
 
 ## Key Files
 

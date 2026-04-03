@@ -18,14 +18,14 @@ flowchart TD
     E -- No --> G[Reset fake mute flag]
     D -- Yes --> G
     F --> G
-    G --> H{Plugin source active with on_volume?}
-    H -- Yes --> I[Invoke plugin on_volume callback]
-    H -- No --> J{volume_control type?}
-    I --> J
-    J -- NATIVE --> K[player.volume_set]
+    G --> J{volume_control type?}
+    J -- NATIVE --> K[player.volume_set_optimistic]
     J -- FAKE --> L["Store in extra_data[ATTR_FAKE_VOLUME]"]
     J -- NONE --> M[Raise UnsupportedFeaturedException]
     J -- "player_id / control_id" --> N[Delegate to that entity]
+    K --> O["update_state() triggers signal_player_state_update"]
+    O --> P{"group_volume changed + player owns plugin source?"}
+    P -- Yes --> Q["Debounced on_volume(group_volume) via call_later"]
 ```
 
 ### Volume Control Resolution
@@ -49,21 +49,27 @@ This ensures that adjusting volume on a muted player restores audio, unless the 
 
 ### Plugin Volume Callbacks
 
-After the auto-unmute check and **before** the native/fake/delegate routing, the handler checks for an active plugin source:
+Plugin volume notifications are handled **reactively** through the state system, not inline in `_handle_cmd_volume_set`. When any volume change causes a player's `group_volume` to change, `signal_player_state_update` fires a debounced callback to the plugin source that **owns** that player:
 
 ```python
-if plugin_source := self._get_active_plugin_source(player):
-    if plugin_source.on_volume:
-        await plugin_source.on_volume(volume_level)
+if "group_volume" in changed_values:
+    for plugin_source in self.get_plugin_sources():
+        if plugin_source.in_use_by == player.player_id and plugin_source.on_volume:
+            self.mass.call_later(
+                0.25, plugin_source.on_volume, player.state.group_volume,
+                task_id=f"plugin_volume_{player.player_id}",
+            )
 ```
 
-This runs **in addition to** the normal volume handling — it's not either/or. A plugin's `on_volume` callback (`Callable[[int], Awaitable[None]] | None`, defined on `PluginSource` in `music_assistant/models/plugin.py`) receives the volume level alongside the player's own volume being set.
+The `in_use_by == player.player_id` check ensures only the plugin-owning player fires the callback — child players that merely inherit `active_source` from a group do not trigger it. This eliminates per-child callbacks during group volume operations, which previously caused feedback loops with bidirectional plugins like Spotify Connect.
+
+The callback always sends the computed `group_volume` (the average of powered members for groups, or the individual `volume_level` for standalone players), not a raw individual child volume. The `call_later` with a `task_id` debounces rapid changes — during slider drags, only the final value is sent to the plugin's API.
 
 **Plugin source matching** (`_get_active_plugin_source`): A `PluginSource` is considered active for a player if either:
 - `plugin_source.in_use_by == player.player_id`, or
 - `player.state.active_source == plugin_source.id`
 
-**Known limitation — the `in_use_by` gap for groups**: `in_use_by` stores a single `player_id`. For group players, this is set to the group player's ID. Individual child players within the group don't have `in_use_by` set to them — the plugin doesn't know about individual children. This means plugin volume callbacks only fire for the group player, not for individual member volume changes within a group. This is a known architectural limitation — see [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
+Individual member volume changes within a group propagate to the plugin automatically: the child's `update_state()` triggers a debounced `update_state()` on the group player, which recalculates `group_volume` and fires the reactive hook. See [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
 
 ## Group Volume — The Additive-Delta Algorithm
 
@@ -94,7 +100,7 @@ for child_player in iter_group_members(group_player, only_powered=True):
     # Set volume on each child
 ```
 
-All child volume sets execute concurrently via `asyncio.gather`.
+All child volume sets execute concurrently via `asyncio.gather`. After the gather completes, `group_player.update_state()` is called to force immediate recalculation of `group_volume` from the children's new volumes. Without this, the group state update is debounced by 0.25s — if a plugin echo arrives in that window, `set_group_volume` would read a stale `group_volume` and compute a non-zero delta. The forced update also triggers the reactive plugin volume hook in `signal_player_state_update`.
 
 ### Why Additive-Delta
 
@@ -236,12 +242,14 @@ flowchart TD
     V6 --> ML[Set/clear mute lock]
 
     HV -->|GROUP type| V3
-    HV -->|plugin source| PC[Plugin on_volume callback]
-    PC --> VR[Volume routing: native/fake/delegate]
-    HV -->|no plugin| VR
+    HV --> VR["Volume routing: native (optimistic) / fake / delegate"]
 
-    SGV --> |"for each powered member"| HV
+    SGV -->|"for each powered member"| HV
+    SGV -->|"after gather"| GU["group_player.update_state()"]
+    GU -->|"group_volume changed"| PV["Reactive: debounced on_volume(group_volume)"]
 ```
+
+Plugin volume notification is handled reactively: when `group_volume` changes during `signal_player_state_update`, a debounced `on_volume` callback fires for the plugin-owning player. See [Plugin Volume Callbacks](#plugin-volume-callbacks).
 
 ## Key Files
 
