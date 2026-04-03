@@ -236,7 +236,7 @@ graph LR
 
 **Dynamic capabilities**: Playback controls (`can_play_pause`, `can_seek`, `can_next_previous`) start as `False`. Once a matching Spotify music provider is found (providing Web API access), the provider enables all capabilities and registers callbacks (`on_play` → `PUT me/player/play`, `on_pause` → `PUT me/player/pause`, etc.).
 
-**Volume anti-ping-pong**: The inbound `volume_changed` handler skips events within 3 seconds of connection to avoid initial feedback. The handler also routes inbound volume through `cmd_group_volume` when the target is a group player or ad-hoc sync leader, ensuring all members adjust proportionally. The reactive `on_volume` hook (via `signal_player_state_update`) combined with optimistic state updates and `_last_volume_sent_to_spotify` echo suppression breaks the feedback loop.
+**Volume anti-ping-pong**: The inbound `volume_changed` handler skips events within 3 seconds of connection to avoid initial feedback. The handler also routes inbound volume through `cmd_group_volume` when the target is a group player or ad-hoc sync leader, ensuring all members adjust proportionally. The reactive `on_volume` hook (via `signal_player_state_update`) combined with optimistic state updates breaks the feedback loop. A timestamp-based echo suppression window (`_VOLUME_ECHO_SUPPRESS_WINDOW`, 1.5 s) suppresses all inbound `volume_changed` events after the last outbound API send, covering the round-trip latency through Spotify's cloud when multiple sends are in flight simultaneously.
 
 **Player targeting**: Follows a priority chain: currently active player → auto-select (prefer playing, then first available) → configured default.
 

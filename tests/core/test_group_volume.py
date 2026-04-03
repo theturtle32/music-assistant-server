@@ -59,10 +59,8 @@ def provider(mock_mass: MagicMock) -> MockProvider:
 
 
 @pytest.fixture
-def register_player(
-    controller: PlayerController, mock_mass: MagicMock, provider: MockProvider
-) -> RegisterPlayer:
-    """Factory fixture that creates, registers, and initializes a player."""
+def register_player(controller: PlayerController, provider: MockProvider) -> RegisterPlayer:
+    """Create, register, and initialize a player."""
 
     def _register(
         player_id: str,
@@ -92,7 +90,9 @@ class TestGroupVolumeCommandedValue:
     """
 
     async def test_group_volume_matches_target_when_children_clamp_at_ceiling(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """group_volume should equal the commanded target even when children clamp at 100."""
         leader = register_player("leader", "Leader", volume=90)
@@ -137,7 +137,9 @@ class TestGroupVolumeCommandedValue:
         assert child2.state.volume_level == 100
 
     async def test_group_volume_matches_target_when_children_clamp_at_floor(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """group_volume should equal the commanded target even when children clamp at 0."""
         leader = register_player("leader", "Leader", volume=10)

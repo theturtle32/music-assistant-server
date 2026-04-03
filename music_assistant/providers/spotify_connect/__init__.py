@@ -60,6 +60,12 @@ EVENTS_SCRIPT = pathlib.Path(__file__).parent.resolve().joinpath("events.py")
 
 SUPPORTED_FEATURES = {ProviderFeature.AUDIO_SOURCE}
 
+# After an outbound volume is sent to Spotify via Web API, suppress all
+# inbound volume_changed events for this duration.  This prevents stale
+# echoes during rapid slider drags -- the round-trip through Spotify's
+# cloud takes 0.3-1.0s, and multiple sends can be in flight at once.
+_VOLUME_ECHO_SUPPRESS_WINDOW = 1.5  # seconds
+
 
 async def setup(
     mass: MusicAssistant, manifest: ProviderManifest, config: ProviderConfig
@@ -209,7 +215,7 @@ class SpotifyConnectProvider(PluginProvider):
         self._runner_error_count = 0
         self._spotify_device_id: str | None = None
         self._last_session_connected_time: float = 0
-        self._last_volume_sent_to_spotify: int | None = None
+        self._last_outbound_volume_time: float = 0.0
 
     async def handle_async_init(self) -> None:
         """Handle async initialization of the provider."""
@@ -501,16 +507,11 @@ class SpotifyConnectProvider(PluginProvider):
                 "Volume control requires a matching Spotify music provider"
             )
 
-        # Prevent ping-pong: only send if volume actually changed from what we last sent
-        if self._last_volume_sent_to_spotify == volume:
-            self.logger.debug("Skipping volume update to Spotify - already at %d%%", volume)
-            return
-
         try:
             # Bypass throttler for volume changes to ensure responsive UI
             async with self._spotify_provider.throttler.bypass():
                 await self._spotify_provider._put_data(f"me/player/volume?volume_percent={volume}")
-                self._last_volume_sent_to_spotify = volume
+                self._last_outbound_volume_time = time.monotonic()
         except Exception as err:
             self.logger.warning("Failed to send volume command via Spotify Web API: %s", err)
             raise
@@ -845,24 +846,32 @@ class SpotifyConnectProvider(PluginProvider):
             elif self._source_details.in_use_by:
                 # Spotify Connect volume is 0-65535
                 volume = int(int(volume) / 65535 * 100)
-                self._last_volume_sent_to_spotify = volume
-                try:
-                    player = self.mass.players.get_player(self._source_details.in_use_by)
-                    if player and (
-                        player.state.type == PlayerType.GROUP or player.state.group_members
-                    ):
-                        await self.mass.players.cmd_group_volume(
-                            self._source_details.in_use_by, volume
-                        )
-                    else:
-                        await self.mass.players.cmd_volume_set(
-                            self._source_details.in_use_by, volume
-                        )
-                except UnsupportedFeaturedException:
+                if (
+                    time.monotonic() - self._last_outbound_volume_time
+                    < _VOLUME_ECHO_SUPPRESS_WINDOW
+                ):
                     self.logger.debug(
-                        "Player %s does not support volume control",
-                        self._source_details.in_use_by,
+                        "Suppressing inbound volume_changed (%d%%) — within echo window",
+                        volume,
                     )
+                else:
+                    try:
+                        player = self.mass.players.get_player(self._source_details.in_use_by)
+                        if player and (
+                            player.state.type == PlayerType.GROUP or player.state.group_members
+                        ):
+                            await self.mass.players.cmd_group_volume(
+                                self._source_details.in_use_by, volume
+                            )
+                        else:
+                            await self.mass.players.cmd_volume_set(
+                                self._source_details.in_use_by, volume
+                            )
+                    except UnsupportedFeaturedException:
+                        self.logger.debug(
+                            "Player %s does not support volume control",
+                            self._source_details.in_use_by,
+                        )
 
         # signal update to connected player
         if self._source_details.in_use_by:

@@ -60,10 +60,8 @@ def provider(mock_mass: MagicMock) -> MockProvider:
 
 
 @pytest.fixture
-def register_player(
-    controller: PlayerController, mock_mass: MagicMock, provider: MockProvider
-) -> RegisterPlayer:
-    """Factory fixture that creates, registers, and initializes a player."""
+def register_player(controller: PlayerController, provider: MockProvider) -> RegisterPlayer:
+    """Create, register, and initialize a player."""
 
     def _register(
         player_id: str,
@@ -99,7 +97,8 @@ def _get_plugin_volume_calls(
 ) -> list[Any]:
     """Extract plugin volume call_later calls from mock_mass."""
     return [
-        c for c in mock_mass.call_later.call_args_list
+        c
+        for c in mock_mass.call_later.call_args_list
         if c.kwargs.get("task_id", "").startswith(task_prefix)
     ]
 
@@ -108,7 +107,9 @@ class TestReactivePluginVolumeCallback:
     """Test that plugin on_volume fires reactively from signal_player_state_update."""
 
     def test_callback_fires_on_group_volume_change(
-        self, controller: PlayerController, mock_mass: MagicMock,
+        self,
+        controller: PlayerController,
+        mock_mass: MagicMock,
         register_player: RegisterPlayer,
     ) -> None:
         """Plugin on_volume fires with the correct group average when a child volume changes."""
@@ -136,7 +137,9 @@ class TestReactivePluginVolumeCallback:
         assert last_call.args[2] == 60
 
     def test_callback_does_not_fire_for_non_owning_player(
-        self, controller: PlayerController, mock_mass: MagicMock,
+        self,
+        controller: PlayerController,
+        mock_mass: MagicMock,
         register_player: RegisterPlayer,
     ) -> None:
         """Plugin on_volume does NOT fire for a child that merely inherits active_source."""
@@ -158,7 +161,9 @@ class TestReactivePluginVolumeCallback:
         )
 
     def test_callback_not_fired_when_group_volume_unchanged(
-        self, controller: PlayerController, mock_mass: MagicMock,
+        self,
+        controller: PlayerController,
+        mock_mass: MagicMock,
         register_player: RegisterPlayer,
     ) -> None:
         """Plugin on_volume does NOT fire if group_volume did not change."""
@@ -183,7 +188,8 @@ class TestOptimisticVolumeCoherence:
     """Test that volume_set_optimistic keeps group_volume coherent."""
 
     async def test_volume_set_optimistic_updates_state(
-        self, register_player: RegisterPlayer,
+        self,
+        register_player: RegisterPlayer,
     ) -> None:
         """volume_set_optimistic sets _attr_volume_level and calls update_state."""
         player = register_player("p1", "Player 1", volume=30)
@@ -196,7 +202,9 @@ class TestOptimisticVolumeCoherence:
         assert player.state.volume_level == 70
 
     async def test_group_volume_coherent_after_set_group_volume(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """After set_group_volume, group_volume reflects the new child volumes immediately."""
         leader = register_player("leader", "Leader", volume=40)
@@ -215,7 +223,9 @@ class TestOptimisticVolumeCoherence:
         assert leader.state.group_volume == 60
 
     async def test_echo_produces_zero_delta(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """After set_group_volume(60), a subsequent set_group_volume(60) echo produces delta=0."""
         leader = register_player("leader", "Leader", volume=50)
@@ -243,7 +253,9 @@ class TestInlinePluginCallbackRemoved:
     """Test that _handle_cmd_volume_set no longer fires inline plugin callbacks."""
 
     async def test_no_inline_plugin_callback(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """_handle_cmd_volume_set does NOT call plugin on_volume inline."""
         player = register_player("p1", "Player 1", volume=50)
@@ -262,7 +274,9 @@ class TestInboundVolumeGroupRouting:
     """Test that inbound volume for group players routes through cmd_group_volume."""
 
     async def test_group_player_routes_to_cmd_group_volume(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """Inbound volume for a GROUP player routes through cmd_group_volume."""
         group = register_player("group1", "Group", volume=50, player_type=PlayerType.GROUP)
@@ -278,7 +292,9 @@ class TestInboundVolumeGroupRouting:
             mock_gv.assert_awaited_once_with("group1", 60)
 
     async def test_ad_hoc_sync_leader_with_group_members(
-        self, controller: PlayerController, register_player: RegisterPlayer,
+        self,
+        controller: PlayerController,
+        register_player: RegisterPlayer,
     ) -> None:
         """Inbound volume for an ad-hoc sync leader (PLAYER with group_members) gets correct treatment."""
         leader = register_player("leader", "Leader", volume=50)
