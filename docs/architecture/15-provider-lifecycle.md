@@ -331,12 +331,12 @@ These flags drive conditional behavior throughout the system — the config cont
 
 | File | What to look at |
 |---|---|
-| `music_assistant/mass.py` | `_load_provider`, `_load_builtin_providers`, `_load_providers`, `__load_provider_manifests`, `load_provider`, `unload_provider`, `load_provider_config` |
-| `music_assistant/models/provider.py` | `Provider` base class — lifecycle, features, config handling |
-| `music_assistant/models/music_provider.py` | `MusicProvider` — media browsing, search, library sync interface |
-| `music_assistant/models/player_provider.py` | `PlayerProvider` — player discovery, group management |
-| `music_assistant/models/metadata_provider.py` | `MetadataProvider` — metadata resolution interface |
-| `music_assistant/models/plugin.py` | `PluginProvider` and `PluginSource` — audio source plugins |
-| `music_assistant/helpers/util.py` | `load_provider_module` — dynamic import + pip install |
-| `music_assistant/constants.py` | `DEFAULT_PROVIDERS`, `CONFIGURABLE_CORE_CONTROLLERS` |
+| [`music_assistant/mass.py`](../../music_assistant/mass.py) | `_load_provider`, `_load_builtin_providers`, `_load_providers`, `__load_provider_manifests`, `load_provider`, `unload_provider`, `load_provider_config` |
+| [`music_assistant/models/provider.py`](../../music_assistant/models/provider.py) | `Provider` base class — lifecycle, features, config handling |
+| [`music_assistant/models/music_provider.py`](../../music_assistant/models/music_provider.py) | `MusicProvider` — media browsing, search, library sync interface |
+| [`music_assistant/models/player_provider.py`](../../music_assistant/models/player_provider.py) | `PlayerProvider` — player discovery, group management |
+| [`music_assistant/models/metadata_provider.py`](../../music_assistant/models/metadata_provider.py) | `MetadataProvider` — metadata resolution interface |
+| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider` and `PluginSource` — audio source plugins |
+| [`music_assistant/helpers/util.py`](../../music_assistant/helpers/util.py) | `load_provider_module` — dynamic import + pip install |
+| [`music_assistant/constants.py`](../../music_assistant/constants.py) | `DEFAULT_PROVIDERS`, `CONFIGURABLE_CORE_CONTROLLERS` |
 | `music_assistant/providers/*/manifest.json` | Concrete manifest examples |

@@ -342,10 +342,10 @@ See [01-event-system.md](01-event-system.md) for the general event infrastructur
 
 | File | Role |
 |------|------|
-| `controllers/player_queues.py` | PlayerQueuesController — queue management and playback orchestration |
+| [`controllers/player_queues.py`](../../music_assistant/controllers/player_queues.py) | PlayerQueuesController — queue management and playback orchestration |
 | `music_assistant_models/player_queue.py` | PlayerQueue dataclass (in models package) |
 | `music_assistant_models/queue_item.py` | QueueItem dataclass (in models package) |
-| `controllers/players/controller.py` | PlayerController — receives play/stop/pause commands from the queue |
-| `controllers/streams/audio.py` | StreamsAudio — provides `get_stream_details` and buffer management |
-| `controllers/streams/audio_buffer.py` | AudioBuffer — pre-filled PCM buffer |
-| `constants.py` | `PLAYBACK_REPORT_INTERVAL_SECONDS`, `QueueOption`, config keys |
+| [`controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | PlayerController — receives play/stop/pause commands from the queue |
+| [`controllers/streams/audio.py`](../../music_assistant/controllers/streams/audio.py) | StreamsAudio — provides `get_stream_details` and buffer management |
+| [`controllers/streams/audio_buffer.py`](../../music_assistant/controllers/streams/audio_buffer.py) | AudioBuffer — pre-filled PCM buffer |
+| [`constants.py`](../../music_assistant/constants.py) | `PLAYBACK_REPORT_INTERVAL_SECONDS`, `QueueOption`, config keys |

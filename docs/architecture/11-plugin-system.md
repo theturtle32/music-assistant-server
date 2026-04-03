@@ -292,15 +292,15 @@ The Party plugin (`providers/party/`) is neither a receiver nor a scrobbler — 
 
 | File | Purpose |
 |---|---|
-| `music_assistant/models/plugin.py` | `PluginSource`, `PluginProvider` base class |
-| `music_assistant/controllers/players/controller.py` | `get_plugin_sources`, `_get_active_plugin_source`, `_handle_select_plugin_source`, callback routing |
-| `music_assistant/models/player.py` | `__final_source_list`, `__final_active_source`, `__final_current_media` — plugin integration in player state |
-| `music_assistant/providers/spotify_connect/` | Exemplar receiver: librespot, events, Web API control |
-| `music_assistant/providers/airplay_receiver/` | AirPlay receiver via shairport-sync |
-| `music_assistant/providers/ariacast_receiver/` | AriaCast receiver with custom async stream |
-| `music_assistant/providers/vban_receiver/` | VBAN UDP receiver |
-| `music_assistant/providers/lastfm_scrobble/` | Last.fm / Libre.fm scrobbler |
-| `music_assistant/providers/listenbrainz_scrobble/` | ListenBrainz scrobbler |
-| `music_assistant/providers/subsonic_scrobble/` | Subsonic scrobbler |
-| `music_assistant/providers/party/` | Guest access and queue management |
-| `music_assistant/helpers/scrobbler.py` | Shared `ScrobblerHelper` base class |
+| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginSource`, `PluginProvider` base class |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `get_plugin_sources`, `_get_active_plugin_source`, `_handle_select_plugin_source`, callback routing |
+| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | `__final_source_list`, `__final_active_source`, `__final_current_media` — plugin integration in player state |
+| [`music_assistant/providers/spotify_connect/`](../../music_assistant/providers/spotify_connect/) | Exemplar receiver: librespot, events, Web API control |
+| [`music_assistant/providers/airplay_receiver/`](../../music_assistant/providers/airplay_receiver/) | AirPlay receiver via shairport-sync |
+| [`music_assistant/providers/ariacast_receiver/`](../../music_assistant/providers/ariacast_receiver/) | AriaCast receiver with custom async stream |
+| [`music_assistant/providers/vban_receiver/`](../../music_assistant/providers/vban_receiver/) | VBAN UDP receiver |
+| [`music_assistant/providers/lastfm_scrobble/`](../../music_assistant/providers/lastfm_scrobble/) | Last.fm / Libre.fm scrobbler |
+| [`music_assistant/providers/listenbrainz_scrobble/`](../../music_assistant/providers/listenbrainz_scrobble/) | ListenBrainz scrobbler |
+| [`music_assistant/providers/subsonic_scrobble/`](../../music_assistant/providers/subsonic_scrobble/) | Subsonic scrobbler |
+| [`music_assistant/providers/party/`](../../music_assistant/providers/party/) | Guest access and queue management |
+| [`music_assistant/helpers/scrobbler.py`](../../music_assistant/helpers/scrobbler.py) | Shared `ScrobblerHelper` base class |

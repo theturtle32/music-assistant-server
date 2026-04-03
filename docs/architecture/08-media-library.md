@@ -319,17 +319,17 @@ While all eight sub-controllers share the `MediaControllerBase` pattern, some ad
 
 | File | Role |
 |------|------|
-| `controllers/music.py` | MusicController — orchestrator for all media operations |
-| `controllers/media/base.py` | MediaControllerBase — shared library interaction pattern |
-| `controllers/media/tracks.py` | TracksController — track-specific library logic |
-| `controllers/media/artists.py` | ArtistsController — artist-specific library logic |
-| `controllers/media/albums.py` | AlbumsController — album-specific library logic |
-| `controllers/media/playlists.py` | PlaylistController |
-| `controllers/media/radio.py` | RadioController |
-| `controllers/media/audiobooks.py` | AudiobooksController |
-| `controllers/media/podcasts.py` | PodcastsController |
-| `controllers/media/genres.py` | GenreController |
-| `models/music_provider.py` | MusicProvider ABC — provider interface |
-| `helpers/compare.py` | Media item comparison and matching |
-| `helpers/uri.py` | URI parsing |
-| `constants.py` | DB table names, sync intervals, config keys |
+| [`controllers/music.py`](../../music_assistant/controllers/music.py) | MusicController — orchestrator for all media operations |
+| [`controllers/media/base.py`](../../music_assistant/controllers/media/base.py) | MediaControllerBase — shared library interaction pattern |
+| [`controllers/media/tracks.py`](../../music_assistant/controllers/media/tracks.py) | TracksController — track-specific library logic |
+| [`controllers/media/artists.py`](../../music_assistant/controllers/media/artists.py) | ArtistsController — artist-specific library logic |
+| [`controllers/media/albums.py`](../../music_assistant/controllers/media/albums.py) | AlbumsController — album-specific library logic |
+| [`controllers/media/playlists.py`](../../music_assistant/controllers/media/playlists.py) | PlaylistController |
+| [`controllers/media/radio.py`](../../music_assistant/controllers/media/radio.py) | RadioController |
+| [`controllers/media/audiobooks.py`](../../music_assistant/controllers/media/audiobooks.py) | AudiobooksController |
+| [`controllers/media/podcasts.py`](../../music_assistant/controllers/media/podcasts.py) | PodcastsController |
+| [`controllers/media/genres.py`](../../music_assistant/controllers/media/genres.py) | GenreController |
+| [`models/music_provider.py`](../../music_assistant/models/music_provider.py) | MusicProvider ABC — provider interface |
+| [`helpers/compare.py`](../../music_assistant/helpers/compare.py) | Media item comparison and matching |
+| [`helpers/uri.py`](../../music_assistant/helpers/uri.py) | URI parsing |
+| [`constants.py`](../../music_assistant/constants.py) | DB table names, sync intervals, config keys |

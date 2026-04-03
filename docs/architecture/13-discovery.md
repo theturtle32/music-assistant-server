@@ -311,9 +311,9 @@ When a provider unloads, `discovery.on_provider_unload(instance_id)` clears the 
 
 | File | Purpose |
 |---|---|
-| `music_assistant/controllers/discovery/controller.py` | `DiscoveryController` — shared Zeroconf, mDNS browser, SSDP cycles |
-| `music_assistant/models/provider.py` | `on_mdns_service_state_change`, `on_upnp_service_discovered` — base callbacks |
-| `music_assistant/models/player_provider.py` | `discover_players()`, `on_player_enabled` — provider-specific discovery |
-| `music_assistant/helpers/util.py` | `get_zeroconf_args()` — interface selection logic |
-| `music_assistant/mass.py` | `run_provider_discovery()` — two-phase discovery orchestration |
+| [`music_assistant/controllers/discovery/controller.py`](../../music_assistant/controllers/discovery/controller.py) | `DiscoveryController` — shared Zeroconf, mDNS browser, SSDP cycles |
+| [`music_assistant/models/provider.py`](../../music_assistant/models/provider.py) | `on_mdns_service_state_change`, `on_upnp_service_discovered` — base callbacks |
+| [`music_assistant/models/player_provider.py`](../../music_assistant/models/player_provider.py) | `discover_players()`, `on_player_enabled` — provider-specific discovery |
+| [`music_assistant/helpers/util.py`](../../music_assistant/helpers/util.py) | `get_zeroconf_args()` — interface selection logic |
+| [`music_assistant/mass.py`](../../music_assistant/mass.py) | `run_provider_discovery()` — two-phase discovery orchestration |
 | Provider `manifest.json` files | `mdns_discovery`, `upnp_discovery` — subscription declarations |

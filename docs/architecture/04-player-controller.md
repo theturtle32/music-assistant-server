@@ -256,8 +256,8 @@ The method also handles side effects: notifies `player_queues.on_player_update()
 
 | File | Description |
 |---|---|
-| `music_assistant/controllers/players/controller.py` | `PlayerController` — registration, command routing, polling, announcements (~3242 lines) |
-| `music_assistant/controllers/players/helpers.py` | `handle_player_command` decorator, `AnnounceData` TypedDict, `wait_for_power_on` |
-| `music_assistant/controllers/players/protocol_linking.py` | `ProtocolLinkingMixin` — protocol linking logic. See [05-protocol-linking.md](05-protocol-linking.md) |
-| `music_assistant/models/player.py` | `Player` class — the model the controller manages. See [03-player-model.md](03-player-model.md) |
-| `music_assistant/models/player_provider.py` | `PlayerProvider` base class that providers implement |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `PlayerController` — registration, command routing, polling, announcements (~3242 lines) |
+| [`music_assistant/controllers/players/helpers.py`](../../music_assistant/controllers/players/helpers.py) | `handle_player_command` decorator, `AnnounceData` TypedDict, `wait_for_power_on` |
+| [`music_assistant/controllers/players/protocol_linking.py`](../../music_assistant/controllers/players/protocol_linking.py) | `ProtocolLinkingMixin` — protocol linking logic. See [05-protocol-linking.md](05-protocol-linking.md) |
+| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | `Player` class — the model the controller manages. See [03-player-model.md](03-player-model.md) |
+| [`music_assistant/models/player_provider.py`](../../music_assistant/models/player_provider.py) | `PlayerProvider` base class that providers implement |

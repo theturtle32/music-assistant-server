@@ -189,7 +189,7 @@ sequenceDiagram
 
 | File | What to look at |
 |---|---|
-| `music_assistant/mass.py` | `signal_event`, `subscribe`, `register_api_command`, `_register_api_commands` |
-| `music_assistant/helpers/api.py` | `api_command` decorator, `APICommandHandler` dataclass, `parse_arguments`, `parse_value` |
+| [`music_assistant/mass.py`](../../music_assistant/mass.py) | `signal_event`, `subscribe`, `register_api_command`, `_register_api_commands` |
+| [`music_assistant/helpers/api.py`](../../music_assistant/helpers/api.py) | `api_command` decorator, `APICommandHandler` dataclass, `parse_arguments`, `parse_value` |
 | `music_assistant_models/enums.py` | `EventType` enum definition |
 | `music_assistant_models/event.py` | `MassEvent` dataclass |

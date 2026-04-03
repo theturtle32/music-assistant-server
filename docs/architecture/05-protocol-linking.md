@@ -246,10 +246,10 @@ These player types represent logical groupings, not physical devices. They are e
 
 | File | Description |
 |---|---|
-| `music_assistant/controllers/players/protocol_linking.py` | `ProtocolLinkingMixin` — matching, linking flows, protocol selection (~1870 lines) |
-| `music_assistant/providers/universal_player/player.py` | `UniversalPlayer` class — virtual player wrapping protocols |
-| `music_assistant/providers/universal_player/provider.py` | `UniversalPlayerProvider` — lifecycle, persistence, device key resolution |
-| `music_assistant/helpers/util.py` | `enrich_device_mac_address`, `is_valid_mac_address`, `is_locally_administered_mac`, `normalize_mac_for_matching` |
-| `music_assistant/constants.py` | `PROTOCOL_PRIORITY`, `PROTOCOL_FEATURES`, `ACTIVE_PROTOCOL_FEATURES`, `CONF_LINKED_PROTOCOL_IDS`, `CONF_PROTOCOL_PARENT_ID`, `CONF_PREFERRED_OUTPUT_PROTOCOL` |
-| `music_assistant/controllers/players/README.md` | Existing reference documentation (development guide, testing scenarios) |
-| `music_assistant/models/player.py` | Protocol linking state properties (`linked_output_protocols`, `protocol_parent_id`, `active_output_protocol`, `output_protocols`). See [03-player-model.md](03-player-model.md#protocol-linking-state) |
+| [`music_assistant/controllers/players/protocol_linking.py`](../../music_assistant/controllers/players/protocol_linking.py) | `ProtocolLinkingMixin` — matching, linking flows, protocol selection (~1870 lines) |
+| [`music_assistant/providers/universal_player/player.py`](../../music_assistant/providers/universal_player/player.py) | `UniversalPlayer` class — virtual player wrapping protocols |
+| [`music_assistant/providers/universal_player/provider.py`](../../music_assistant/providers/universal_player/provider.py) | `UniversalPlayerProvider` — lifecycle, persistence, device key resolution |
+| [`music_assistant/helpers/util.py`](../../music_assistant/helpers/util.py) | `enrich_device_mac_address`, `is_valid_mac_address`, `is_locally_administered_mac`, `normalize_mac_for_matching` |
+| [`music_assistant/constants.py`](../../music_assistant/constants.py) | `PROTOCOL_PRIORITY`, `PROTOCOL_FEATURES`, `ACTIVE_PROTOCOL_FEATURES`, `CONF_LINKED_PROTOCOL_IDS`, `CONF_PROTOCOL_PARENT_ID`, `CONF_PREFERRED_OUTPUT_PROTOCOL` |
+| [`music_assistant/controllers/players/README.md`](../../music_assistant/controllers/players/README.md) | Existing reference documentation (development guide, testing scenarios) |
+| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | Protocol linking state properties (`linked_output_protocols`, `protocol_parent_id`, `active_output_protocol`, `output_protocols`). See [03-player-model.md](03-player-model.md#protocol-linking-state) |

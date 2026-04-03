@@ -368,13 +368,13 @@ The generator converts Python type hints to OpenAPI schemas, parses docstrings (
 
 | File | Purpose |
 |---|---|
-| `music_assistant/controllers/webserver/controller.py` | `WebserverController` — routes, lifecycle, frontend serving |
-| `music_assistant/controllers/webserver/auth.py` | `AuthenticationManager` — users, tokens, join codes, login providers |
-| `music_assistant/controllers/webserver/websocket_client.py` | `WebsocketClientHandler` — WebSocket connection management |
-| `music_assistant/controllers/webserver/api_docs.py` | OpenAPI/Swagger documentation generation |
-| `music_assistant/controllers/webserver/sendspin_proxy.py` | Sendspin WebSocket proxy |
-| `music_assistant/controllers/webserver/helpers/auth_middleware.py` | Context variables, ingress detection, auth middleware |
-| `music_assistant/controllers/webserver/helpers/auth_providers.py` | `BuiltinLoginProvider`, `HomeAssistantOAuthProvider`, rate limiter |
-| `music_assistant/controllers/webserver/helpers/ssl.py` | SSL certificate management |
-| `music_assistant/controllers/webserver/remote_access/` | `RemoteAccessManager`, `WebRTCGateway` |
-| `music_assistant/helpers/api.py` | `@api_command`, `APICommandHandler`, `parse_arguments` |
+| [`music_assistant/controllers/webserver/controller.py`](../../music_assistant/controllers/webserver/controller.py) | `WebserverController` — routes, lifecycle, frontend serving |
+| [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — users, tokens, join codes, login providers |
+| [`music_assistant/controllers/webserver/websocket_client.py`](../../music_assistant/controllers/webserver/websocket_client.py) | `WebsocketClientHandler` — WebSocket connection management |
+| [`music_assistant/controllers/webserver/api_docs.py`](../../music_assistant/controllers/webserver/api_docs.py) | OpenAPI/Swagger documentation generation |
+| [`music_assistant/controllers/webserver/sendspin_proxy.py`](../../music_assistant/controllers/webserver/sendspin_proxy.py) | Sendspin WebSocket proxy |
+| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context variables, ingress detection, auth middleware |
+| [`music_assistant/controllers/webserver/helpers/auth_providers.py`](../../music_assistant/controllers/webserver/helpers/auth_providers.py) | `BuiltinLoginProvider`, `HomeAssistantOAuthProvider`, rate limiter |
+| [`music_assistant/controllers/webserver/helpers/ssl.py`](../../music_assistant/controllers/webserver/helpers/ssl.py) | SSL certificate management |
+| [`music_assistant/controllers/webserver/remote_access/`](../../music_assistant/controllers/webserver/remote_access/) | `RemoteAccessManager`, `WebRTCGateway` |
+| [`music_assistant/helpers/api.py`](../../music_assistant/helpers/api.py) | `@api_command`, `APICommandHandler`, `parse_arguments` |

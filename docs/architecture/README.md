@@ -85,50 +85,50 @@ graph TB
 
 | Document | Description |
 |----------|-------------|
-| `CLAUDE.md` | AI assistant instructions: dev commands, code style, branching conventions |
-| `DEVELOPMENT.md` | Developer setup: prerequisites, venv, running locally, testing |
-| `README.md` | Project overview, installation, Home Assistant integration |
-| `SECURITY.md` | Vulnerability reporting policy and responsible disclosure process |
+| [`CLAUDE.md`](../../CLAUDE.md) | AI assistant instructions: dev commands, code style, branching conventions |
+| [`DEVELOPMENT.md`](../../DEVELOPMENT.md) | Developer setup: prerequisites, venv, running locally, testing |
+| [`README.md`](../../README.md) | Project overview, installation, Home Assistant integration |
+| [`SECURITY.md`](../../SECURITY.md) | Vulnerability reporting policy and responsible disclosure process |
 
 ### Controller Documentation (`music_assistant/controllers/`)
 
 | Document | Description |
 |----------|-------------|
-| `players/README.md` | Player controller internals: Player/PlayerState model, protocol linking, universal players |
-| `streams/README.md` | Streams controller internals: audio buffering, streaming pipeline, smart fades |
-| `tasks/README.md` | Background task manager: scheduling, progress tracking, recurring jobs |
-| `discovery/README.md` | Discovery controller: shared Zeroconf, mDNS/UPnP patterns |
-| `webserver/README.md` | Webserver architecture: auth system, WebSocket API, remote access |
+| [`players/README.md`](../../music_assistant/controllers/players/README.md) | Player controller internals: Player/PlayerState model, protocol linking, universal players |
+| [`streams/README.md`](../../music_assistant/controllers/streams/README.md) | Streams controller internals: audio buffering, streaming pipeline, smart fades |
+| [`tasks/README.md`](../../music_assistant/controllers/tasks/README.md) | Background task manager: scheduling, progress tracking, recurring jobs |
+| [`discovery/README.md`](../../music_assistant/controllers/discovery/README.md) | Discovery controller: shared Zeroconf, mDNS/UPnP patterns |
+| [`webserver/README.md`](../../music_assistant/controllers/webserver/README.md) | Webserver architecture: auth system, WebSocket API, remote access |
 
 ### Provider Documentation (`music_assistant/providers/`)
 
 | Document | Description |
 |----------|-------------|
-| `spotify_connect/ARCHITECTURE.md` | Spotify Connect: librespot integration, event flow, credential management |
-| `sync_group/README.md` | Sync group player: sync leader delegation, formation/dissolution |
-| `universal_player/README.md` | Universal player: protocol merging, virtual player lifecycle |
-| `sendspin/README.md` | Sendspin protocol: native MA playback, synchronized audio |
-| `airplay/README.md` | AirPlay provider: RAOP/AirPlay 2, device discovery, streaming |
-| `itunes_podcasts/README.md` | iTunes podcast data: country code attribution |
-| `gpodder/README.md` | gPodder icon attribution |
-| `airplay_receiver/bin/README.md` | AirPlay receiver binary attribution |
-| `ariacast_receiver/bin/README.md` | AriaCast receiver binary attribution |
-| `apple_music/bin/README.md` | Apple Music binary attribution |
+| [`spotify_connect/ARCHITECTURE.md`](../../music_assistant/providers/spotify_connect/ARCHITECTURE.md) | Spotify Connect: librespot integration, event flow, credential management |
+| [`sync_group/README.md`](../../music_assistant/providers/sync_group/README.md) | Sync group player: sync leader delegation, formation/dissolution |
+| [`universal_player/README.md`](../../music_assistant/providers/universal_player/README.md) | Universal player: protocol merging, virtual player lifecycle |
+| [`sendspin/README.md`](../../music_assistant/providers/sendspin/README.md) | Sendspin protocol: native MA playback, synchronized audio |
+| [`airplay/README.md`](../../music_assistant/providers/airplay/README.md) | AirPlay provider: RAOP/AirPlay 2, device discovery, streaming |
+| [`itunes_podcasts/README.md`](../../music_assistant/providers/itunes_podcasts/README.md) | iTunes podcast data: country code attribution |
+| [`gpodder/README.md`](../../music_assistant/providers/gpodder/README.md) | gPodder icon attribution |
+| [`airplay_receiver/bin/README.md`](../../music_assistant/providers/airplay_receiver/bin/README.md) | AirPlay receiver binary attribution |
+| [`ariacast_receiver/bin/README.md`](../../music_assistant/providers/ariacast_receiver/bin/README.md) | AriaCast receiver binary attribution |
+| [`apple_music/bin/README.md`](../../music_assistant/providers/apple_music/bin/README.md) | Apple Music binary attribution |
 
 ### GitHub and CI (`/.github/`)
 
 | Document | Description |
 |----------|-------------|
-| `copilot-instructions.md` | PR review standards and coding guidelines for AI assistants |
-| `workflows/RELEASE_WORKFLOW_GUIDE.md` | Release workflow: tagging, channels, automation |
-| `workflows/RELEASE_NOTES_GENERATION.md` | Release notes: channel-specific generation behavior |
-| `actions/generate-release-notes/README.md` | Custom release notes action: commit ranges, PR categorization |
+| [`copilot-instructions.md`](../../.github/copilot-instructions.md) | PR review standards and coding guidelines for AI assistants |
+| [`workflows/RELEASE_WORKFLOW_GUIDE.md`](../../.github/workflows/RELEASE_WORKFLOW_GUIDE.md) | Release workflow: tagging, channels, automation |
+| [`workflows/RELEASE_NOTES_GENERATION.md`](../../.github/workflows/RELEASE_NOTES_GENERATION.md) | Release notes: channel-specific generation behavior |
+| [`actions/generate-release-notes/README.md`](../../.github/actions/generate-release-notes/README.md) | Custom release notes action: commit ranges, PR categorization |
 
 ### Tests
 
 | Document | Description |
 |----------|-------------|
-| `tests/providers/nicovideo/README.md` | Niconico provider test suite: fixtures, running instructions |
+| [`tests/providers/nicovideo/README.md`](../../tests/providers/nicovideo/README.md) | Niconico provider test suite: fixtures, running instructions |
 
 ### External Resources
 

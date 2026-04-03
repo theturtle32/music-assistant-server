@@ -428,12 +428,12 @@ This ensures commands like play/stop/pause always reach the entity that owns the
 
 | File | Role |
 |---|---|
-| `music_assistant/providers/sync_group/player.py` | `SyncGroupPlayer` — sync leader delegation, formation/dissolution |
-| `music_assistant/providers/sync_group/provider.py` | `SyncGroupProvider` — create/remove/discover |
-| `music_assistant/providers/sync_group/constants.py` | `SGP_PREFIX`, `EXTRA_FEATURES_FROM_MEMBERS`, `CONF_MEMBERS_FILTER` |
-| `music_assistant/providers/universal_group/player.py` | `UniversalGroupPlayer` — server-side fan-out, power management |
-| `music_assistant/providers/universal_group/provider.py` | `UniversalGroupProvider` — create/remove/discover |
-| `music_assistant/providers/universal_group/ugp_stream.py` | `UGPStream` — fan-out subscriber model |
-| `music_assistant/providers/universal_group/constants.py` | `UGP_PREFIX`, `UGP_FORMAT`, `CONFIG_ENTRY_UGP_NOTE` |
-| `music_assistant/controllers/players/controller.py` | `cmd_set_members`, `_handle_set_members`, `_handle_set_members_with_protocols`, `iter_group_members`, `_get_player_groups` |
-| `music_assistant/models/player.py` | `group_members`, `synced_to`, `__final_group_members`, `__final_synced_to`, `__final_active_group` |
+| [`music_assistant/providers/sync_group/player.py`](../../music_assistant/providers/sync_group/player.py) | `SyncGroupPlayer` — sync leader delegation, formation/dissolution |
+| [`music_assistant/providers/sync_group/provider.py`](../../music_assistant/providers/sync_group/provider.py) | `SyncGroupProvider` — create/remove/discover |
+| [`music_assistant/providers/sync_group/constants.py`](../../music_assistant/providers/sync_group/constants.py) | `SGP_PREFIX`, `EXTRA_FEATURES_FROM_MEMBERS`, `CONF_MEMBERS_FILTER` |
+| [`music_assistant/providers/universal_group/player.py`](../../music_assistant/providers/universal_group/player.py) | `UniversalGroupPlayer` — server-side fan-out, power management |
+| [`music_assistant/providers/universal_group/provider.py`](../../music_assistant/providers/universal_group/provider.py) | `UniversalGroupProvider` — create/remove/discover |
+| [`music_assistant/providers/universal_group/ugp_stream.py`](../../music_assistant/providers/universal_group/ugp_stream.py) | `UGPStream` — fan-out subscriber model |
+| [`music_assistant/providers/universal_group/constants.py`](../../music_assistant/providers/universal_group/constants.py) | `UGP_PREFIX`, `UGP_FORMAT`, `CONFIG_ENTRY_UGP_NOTE` |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `cmd_set_members`, `_handle_set_members`, `_handle_set_members_with_protocols`, `iter_group_members`, `_get_player_groups` |
+| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | `group_members`, `synced_to`, `__final_group_members`, `__final_synced_to`, `__final_active_group` |

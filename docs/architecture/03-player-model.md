@@ -274,8 +274,8 @@ The relationship: a **native/universal player** holds `linked_output_protocols` 
 
 | File | Description |
 |---|---|
-| `music_assistant/models/player.py` | The `Player` class — `_attr_*` pattern, `__final_*` properties, abstract commands, `update_state()` (~2142 lines) |
+| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | The `Player` class — `_attr_*` pattern, `__final_*` properties, abstract commands, `update_state()` (~2142 lines) |
 | `music_assistant_models.player` | `PlayerState` (frozen dataclass), `DeviceInfo`, `OutputProtocol`, `PlayerMedia`, `PlayerSource`, `PlayerSoundMode`, `PlayerOption` |
 | `music_assistant_models.enums` | `PlayerType`, `PlayerFeature`, `PlaybackState`, `IdentifierType` |
-| `music_assistant/constants.py` | `PROTOCOL_FEATURES`, `ACTIVE_PROTOCOL_FEATURES`, player control constants |
-| `music_assistant/controllers/players/controller.py` | `PlayerController` — consumes `Player` state, routes commands. See [04-player-controller.md](04-player-controller.md) |
+| [`music_assistant/constants.py`](../../music_assistant/constants.py) | `PROTOCOL_FEATURES`, `ACTIVE_PROTOCOL_FEATURES`, player control constants |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `PlayerController` — consumes `Player` state, routes commands. See [04-player-controller.md](04-player-controller.md) |

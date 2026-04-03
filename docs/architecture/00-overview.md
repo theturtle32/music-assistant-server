@@ -154,8 +154,8 @@ The `__main__.py` entry point respects `XDG_DATA_HOME` and `XDG_CACHE_HOME` envi
 
 | File | Description |
 |---|---|
-| `music_assistant/mass.py` | `MusicAssistant` class — the central hub (~1077 lines) |
-| `music_assistant/__main__.py` | CLI entry point, argument parsing, logging setup (~271 lines) |
-| `music_assistant/constants.py` | Config keys (`CONF_*`), DB tables (`DB_TABLE_*`), reusable config entries, `CONFIGURABLE_CORE_CONTROLLERS`, `DEFAULT_PROVIDERS` |
-| `music_assistant/models/core_controller.py` | `CoreController` base class for all controllers (~110 lines) |
+| [`music_assistant/mass.py`](../../music_assistant/mass.py) | `MusicAssistant` class — the central hub (~1077 lines) |
+| [`music_assistant/__main__.py`](../../music_assistant/__main__.py) | CLI entry point, argument parsing, logging setup (~271 lines) |
+| [`music_assistant/constants.py`](../../music_assistant/constants.py) | Config keys (`CONF_*`), DB tables (`DB_TABLE_*`), reusable config entries, `CONFIGURABLE_CORE_CONTROLLERS`, `DEFAULT_PROVIDERS` |
+| [`music_assistant/models/core_controller.py`](../../music_assistant/models/core_controller.py) | `CoreController` base class for all controllers (~110 lines) |
 | `music_assistant_models` (installed package) | Shared data models: `EventType`, `MassEvent`, `ProviderManifest`, config entries, `CoreState` |

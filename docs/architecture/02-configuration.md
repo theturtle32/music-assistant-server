@@ -257,8 +257,8 @@ The `BYPASS_CACHE` context variable allows callers to temporarily skip cache rea
 
 | File | What to look at |
 |---|---|
-| `music_assistant/controllers/config.py` | `ConfigController` — JSON file I/O, get/set, provider/player/core config CRUD, encryption (~2106 lines) |
-| `music_assistant/controllers/cache.py` | `CacheController` — two-tier cache, `@use_cache` decorator, `MemoryCache` |
-| `music_assistant/helpers/database.py` | `DatabaseConnection` — SQLite abstraction, PRAGMA setup, query helpers |
-| `music_assistant/constants.py` | Config keys (`CONF_*`), DB table names (`DB_TABLE_*`), reusable `ConfigEntry` instances (`CONF_ENTRY_*`) |
+| [`music_assistant/controllers/config.py`](../../music_assistant/controllers/config.py) | `ConfigController` — JSON file I/O, get/set, provider/player/core config CRUD, encryption (~2106 lines) |
+| [`music_assistant/controllers/cache.py`](../../music_assistant/controllers/cache.py) | `CacheController` — two-tier cache, `@use_cache` decorator, `MemoryCache` |
+| [`music_assistant/helpers/database.py`](../../music_assistant/helpers/database.py) | `DatabaseConnection` — SQLite abstraction, PRAGMA setup, query helpers |
+| [`music_assistant/constants.py`](../../music_assistant/constants.py) | Config keys (`CONF_*`), DB table names (`DB_TABLE_*`), reusable `ConfigEntry` instances (`CONF_ENTRY_*`) |
 | `music_assistant_models/config_entries.py` | `ConfigEntry`, `Config`, `CoreConfig`, `ProviderConfig`, `PlayerConfig`, `ConfigValueType` |

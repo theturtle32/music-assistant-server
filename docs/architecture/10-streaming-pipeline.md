@@ -371,14 +371,14 @@ For radio streams using in-band OGG metadata (Opus/Vorbis), `ogg_handler.py` han
 
 | File | Role |
 |------|------|
-| `controllers/streams/controller.py` | StreamsController — HTTP server and streaming endpoints |
-| `controllers/streams/audio.py` | StreamsAudio — audio processing engine |
-| `controllers/streams/audio_buffer.py` | AudioBuffer — in-memory PCM buffering |
-| `controllers/streams/constants.py` | Buffer sizes, config keys, default port |
-| `controllers/streams/smart_fades/analyzer.py` | Beat detection via librosa |
-| `controllers/streams/smart_fades/fades.py` | Fade curve generation |
-| `controllers/streams/smart_fades/mixer.py` | Crossfade mixing |
-| `controllers/streams/ogg_handler.py` | Chained OGG stitching for radio |
-| `helpers/audio.py` | Audio utilities, normalization mode selection |
-| `helpers/ffmpeg.py` | FFmpeg process management |
-| `controllers/streams/README.md` | Existing detailed documentation (verified against code) |
+| [`controllers/streams/controller.py`](../../music_assistant/controllers/streams/controller.py) | StreamsController — HTTP server and streaming endpoints |
+| [`controllers/streams/audio.py`](../../music_assistant/controllers/streams/audio.py) | StreamsAudio — audio processing engine |
+| [`controllers/streams/audio_buffer.py`](../../music_assistant/controllers/streams/audio_buffer.py) | AudioBuffer — in-memory PCM buffering |
+| [`controllers/streams/constants.py`](../../music_assistant/controllers/streams/constants.py) | Buffer sizes, config keys, default port |
+| [`controllers/streams/smart_fades/analyzer.py`](../../music_assistant/controllers/streams/smart_fades/analyzer.py) | Beat detection via librosa |
+| [`controllers/streams/smart_fades/fades.py`](../../music_assistant/controllers/streams/smart_fades/fades.py) | Fade curve generation |
+| [`controllers/streams/smart_fades/mixer.py`](../../music_assistant/controllers/streams/smart_fades/mixer.py) | Crossfade mixing |
+| [`controllers/streams/ogg_handler.py`](../../music_assistant/controllers/streams/ogg_handler.py) | Chained OGG stitching for radio |
+| [`helpers/audio.py`](../../music_assistant/helpers/audio.py) | Audio utilities, normalization mode selection |
+| [`helpers/ffmpeg.py`](../../music_assistant/helpers/ffmpeg.py) | FFmpeg process management |
+| [`controllers/streams/README.md`](../../music_assistant/controllers/streams/README.md) | Existing detailed documentation (verified against code) |

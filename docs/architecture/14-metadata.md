@@ -249,13 +249,13 @@ Registered in `_register_maintenance_tasks()`, all scheduled daily at 4:00 AM lo
 
 | File | Purpose |
 |---|---|
-| `music_assistant/controllers/metadata.py` | `MetaDataController` — orchestration, enrichment, image proxy, collage generation |
-| `music_assistant/models/metadata_provider.py` | `MetadataProvider` ABC — provider interface |
-| `music_assistant/providers/theaudiodb/` | Artist/album/track images, bios, genres, links |
-| `music_assistant/providers/musicbrainz/` | MusicBrainz ID resolution, release matching |
-| `music_assistant/providers/fanarttv/` | High-quality fan art and logos |
-| `music_assistant/providers/genius_lyrics/` | Plain text lyrics via Genius API |
-| `music_assistant/providers/lrclib/` | Synced (LRC) and plain lyrics |
-| `music_assistant/helpers/images.py` | Image data resolution, thumbnail generation, collage creation, cache management |
-| `music_assistant/controllers/media/genres.py` | `GenreController` — genre alias matching, scanning, propagation |
-| `music_assistant/helpers/resources/genres/genre_mapping.json` | Default genre definitions and alias mappings |
+| [`music_assistant/controllers/metadata.py`](../../music_assistant/controllers/metadata.py) | `MetaDataController` — orchestration, enrichment, image proxy, collage generation |
+| [`music_assistant/models/metadata_provider.py`](../../music_assistant/models/metadata_provider.py) | `MetadataProvider` ABC — provider interface |
+| [`music_assistant/providers/theaudiodb/`](../../music_assistant/providers/theaudiodb/) | Artist/album/track images, bios, genres, links |
+| [`music_assistant/providers/musicbrainz/`](../../music_assistant/providers/musicbrainz/) | MusicBrainz ID resolution, release matching |
+| [`music_assistant/providers/fanarttv/`](../../music_assistant/providers/fanarttv/) | High-quality fan art and logos |
+| [`music_assistant/providers/genius_lyrics/`](../../music_assistant/providers/genius_lyrics/) | Plain text lyrics via Genius API |
+| [`music_assistant/providers/lrclib/`](../../music_assistant/providers/lrclib/) | Synced (LRC) and plain lyrics |
+| [`music_assistant/helpers/images.py`](../../music_assistant/helpers/images.py) | Image data resolution, thumbnail generation, collage creation, cache management |
+| [`music_assistant/controllers/media/genres.py`](../../music_assistant/controllers/media/genres.py) | `GenreController` — genre alias matching, scanning, propagation |
+| [`music_assistant/helpers/resources/genres/genre_mapping.json`](../../music_assistant/helpers/resources/genres/genre_mapping.json) | Default genre definitions and alias mappings |
