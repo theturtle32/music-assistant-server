@@ -144,6 +144,8 @@ flowchart TD
     end
 ```
 
+**A note on power**: Power (`_attr_powered: bool | None`) is an abstraction that means different things depending on the player. For physical players with native support, it represents actual hardware on/off state. For always-on network speakers (Chromecast, AirPlay endpoints), "fake" power provides a UI toggle that gates playback without affecting hardware. For group players, power controls member activation — powering on a universal group activates its members, powering off deactivates and stops them; sync groups don't implement power natively and use fake power instead. A value of `None` means the power state is unknown or the player has no power concept (`power_control == NONE`). The `PlayerFeature.POWER` flag in `__final_supported_features` is dynamically added or removed based on the `power_control` config, so a player without native power support can still gain a power toggle through fake or delegated power. See [04-player-controller.md](04-player-controller.md#power-management) for command routing and [06-grouping.md](06-grouping.md#power-and-membership) for how group players use power.
+
 | Property | Returns | Resolution priority (highest → lowest) |
 |---|---|---|
 | `__final_playback_state` | `tuple[PlaybackState, elapsed, timestamp]` | Active protocol player → sync leader → native `_attr_*` |

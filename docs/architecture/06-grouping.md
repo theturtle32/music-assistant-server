@@ -200,7 +200,9 @@ The `volume_set` implementation is a no-op — group volume is handled entirely 
 
 ### Power and Membership
 
-Universal groups have explicit power state management (unlike sync groups, which are implicitly "on" when playing):
+Power means something different for each grouping model. Sync groups have no native `power()` implementation — they rely on fake power from the controller, and their "on" state is effectively equivalent to "has members and is ready to play." Universal groups implement `power()` directly and use it to manage member lifecycle: power-on activates members (handling collisions with other groups), power-off deactivates and stops them. Ad-hoc sync has no group-level power concept at all — the sync leader's own power state controls the group. For the general power model across all player types, see [03-player-model.md](03-player-model.md#resolution-chains) and [04-player-controller.md](04-player-controller.md#power-management).
+
+Universal groups have explicit power state management:
 
 **Power on:**
 1. Reset `group_members` to available static members
