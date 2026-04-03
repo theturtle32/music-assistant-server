@@ -161,6 +161,8 @@ Power is a unifying abstraction that the controller normalizes across diverse ha
 
 ## Volume Routing
 
+Volume and mute follow the same control-chain pattern as power: the per-player `volume_control` and `mute_control` configs select which mechanism handles commands. The key behavioral difference from power is that volume changes interact with mute state — adjusting volume on a muted player auto-unmutes it (unless the mute lock is set, which protects deliberately-muted players in groups). Fake mute works by saving the current volume, setting it to 0, and restoring on unmute — this is transparent to the user but means fake-muted players still receive volume change commands internally. See [07-volume.md](07-volume.md) for the full algorithm, group volume delta mechanics, and the mute lock mechanism.
+
 `_handle_cmd_volume_set(player_id, volume_level)` resolves through the `volume_control` config:
 
 1. **GROUP type** — redirects to `cmd_group_volume`.
