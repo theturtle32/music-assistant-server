@@ -623,6 +623,21 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         :param volume_level: volume level (0..100) to set on the player.
         """
         await self._handle_cmd_volume_set(player_id, volume_level)
+        # Inline plugin notification (standalone players only): runs before this
+        # command returns so bidirectional plugins can detect self-originated
+        # changes. Cancels the debounced reactive hook to avoid double calls.
+        # Group-type players are handled in set_group_volume; group members use
+        # the reactive hook when group_volume is recalculated from the leader.
+        if (player := self.get_player(player_id)) and (
+            not player.state.group_members and player.type != PlayerType.GROUP
+        ):
+            volume_val = player.state.volume_level
+            if volume_val is not None:
+                task_id = f"plugin_volume_{player.player_id}"
+                for plugin_source in self.get_plugin_sources():
+                    if plugin_source.in_use_by == player.player_id and plugin_source.on_volume:
+                        self.mass.cancel_timer(task_id)
+                        await plugin_source.on_volume(volume_val)
 
     @api_command("players/cmd/volume_up")
     @handle_player_command
@@ -1801,10 +1816,19 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
         # the group state update is debounced by 0.25s -- if a plugin echo
         # arrives in that window, set_group_volume would read a stale
         # group_volume and compute a non-zero delta. This also triggers
-        # the reactive plugin volume hook in signal_player_state_update,
-        # which debounces the actual plugin callback by another 0.25s to
-        # rate-limit outbound API calls during rapid slider drags.
+        # the reactive plugin volume hook in signal_player_state_update; we
+        # cancel that debounced timer and call on_volume inline so plugins
+        # that initiated the change (e.g. inbound Spotify volume) can skip
+        # echoing back before cmd_group_volume returns.
         group_player.update_state()
+
+        volume = group_player.state.group_volume
+        if volume is not None:
+            task_id = f"plugin_volume_{group_player.player_id}"
+            for plugin_source in self.get_plugin_sources():
+                if plugin_source.in_use_by == group_player.player_id and plugin_source.on_volume:
+                    self.mass.cancel_timer(task_id)
+                    await plugin_source.on_volume(volume)
 
     def get_announcement_volume(self, player_id: str, volume_override: int | None) -> int | None:
         """Get the (player specific) volume for a announcement."""
@@ -3013,12 +3037,10 @@ class PlayerController(ProtocolLinkingMixin, CoreController):
             # and any code reading volume_level or group_volume between the
             # command and the callback sees the old value.
             #
-            # Plugin volume notification is not fired here — it is handled
-            # reactively by signal_player_state_update when volume state
-            # changes. This applies to both standalone players and group
-            # members, and ensures that groups always report the correct
-            # computed average rather than an individual child volume.
-            # The debounced hook naturally rate-limits rapid changes.
+            # Plugin volume notification is not fired here — cmd_volume_set
+            # and set_group_volume call on_volume inline when appropriate;
+            # signal_player_state_update also schedules a debounced callback
+            # for cascaded group_volume updates from member changes.
             await player.volume_set_optimistic(volume_level)
             return
         # Handle fake volume control support

@@ -54,7 +54,7 @@ All callbacks are `Callable[..., Awaitable[None]] | None`, defaulting to `None`.
 | `on_next` | `Awaitable[None]` | `cmd_next_track` |
 | `on_previous` | `Awaitable[None]` | `cmd_previous_track` |
 | `on_seek` | `(int) -> Awaitable[None]` | `cmd_seek` (position in seconds) |
-| `on_volume` | `(int) -> Awaitable[None]` | `signal_player_state_update` reactive hook on `group_volume` change (see [07-volume.md](07-volume.md#plugin-volume-callbacks)) |
+| `on_volume` | `(int) -> Awaitable[None]` | Inline after `set_group_volume` / standalone `cmd_volume_set`, and debounced from `signal_player_state_update` for cascaded changes (see [07-volume.md](07-volume.md#plugin-volume-callbacks)) |
 | `on_select` | `Awaitable[None]` | `_handle_select_plugin_source` |
 
 ### `as_player_source()`
@@ -236,7 +236,7 @@ graph LR
 
 **Dynamic capabilities**: Playback controls (`can_play_pause`, `can_seek`, `can_next_previous`) start as `False`. Once a matching Spotify music provider is found (providing Web API access), the provider enables all capabilities and registers callbacks (`on_play` → `PUT me/player/play`, `on_pause` → `PUT me/player/pause`, etc.).
 
-**Volume anti-ping-pong**: The inbound `volume_changed` handler skips events within 3 seconds of connection to avoid initial feedback. The handler also routes inbound volume through `cmd_group_volume` when the target is a group player or ad-hoc sync leader, ensuring all members adjust proportionally. The reactive `on_volume` hook (via `signal_player_state_update`) combined with optimistic state updates breaks the feedback loop. A timestamp-based echo suppression window (`_VOLUME_ECHO_SUPPRESS_WINDOW`, 1.5 s) suppresses all inbound `volume_changed` events after the last outbound API send, covering the round-trip latency through Spotify's cloud when multiple sends are in flight simultaneously.
+**Volume anti-ping-pong**: The inbound `volume_changed` handler skips events within 3 seconds of connection to avoid initial feedback. The handler routes inbound volume through `cmd_group_volume` when the target is a group player or ad-hoc sync leader, ensuring all members adjust proportionally. The player controller calls `on_volume` **inline** (awaited) at the end of `set_group_volume` and for standalone `cmd_volume_set`, so inbound handling can set `_processing_inbound_volume` around `await cmd_group_volume` / `await cmd_volume_set` and have `_on_volume` skip redundant outbound Web API calls while that flag is set. A timestamp-based echo suppression window (`_VOLUME_ECHO_SUPPRESS_WINDOW`, 1.5 s) still suppresses inbound `volume_changed` events shortly after an **outbound** MA→Spotify volume send, covering cloud round-trip latency when multiple outbound sends are in flight. Cascaded group average updates still use the debounced reactive hook in `signal_player_state_update`; see [07-volume.md](07-volume.md#plugin-volume-callbacks).
 
 **Player targeting**: Follows a priority chain: currently active player → auto-select (prefer playing, then first available) → configured default.
 

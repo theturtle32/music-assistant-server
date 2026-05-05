@@ -24,9 +24,10 @@ flowchart TD
     J -- NONE --> M[Raise UnsupportedFeaturedException]
     J -- "player_id / control_id" --> N[Delegate to that entity]
     K --> O["update_state() triggers signal_player_state_update"]
-    O --> P{"group_volume changed + player owns plugin source?"}
-    P -- Yes --> Q["Debounced on_volume(group_volume) via call_later"]
+    O --> P{"May schedule debounced on_volume"}
 ```
+
+`cmd_volume_set` awaits `_handle_cmd_volume_set`, then for **standalone** players (not `GROUP`, no `group_members`) **await**s `on_volume` after `cancel_timer` for the debounced task. `set_group_volume` does the same with the group average after updating the group player state.
 
 ### Volume Control Resolution
 
@@ -49,27 +50,29 @@ This ensures that adjusting volume on a muted player restores audio, unless the 
 
 ### Plugin Volume Callbacks
 
-Plugin volume notifications are handled **reactively** through the state system, not inline in `_handle_cmd_volume_set`. When any volume change causes a player's `group_volume` to change, `signal_player_state_update` fires a debounced callback to the plugin source that **owns** that player:
+Plugin volume uses **two paths**:
+
+1. **Inline `await on_volume`** — After `set_group_volume` completes (including `group_player.update_state()`), the controller cancels any pending debounced timer for `plugin_volume_{player_id}` and `await`s `on_volume` with the current `group_volume`. After `cmd_volume_set` for a **standalone** player (no `group_members`, not `PlayerType.GROUP`), it does the same with `volume_level`. This runs **before** the public command returns, so bidirectional plugins (e.g. Spotify Connect) can set a short-lived flag while handling an inbound `volume_changed` and skip echoing the same change back to the external API.
+
+2. **Reactive debounced hook** — `signal_player_state_update` still schedules `on_volume` via `call_later(0.25, …)` with `task_id=plugin_volume_{player_id}` when `group_volume` or (for non-group players) `volume_level` changes. This covers **cascaded** updates: e.g. the user moves an individual member’s slider in MA, the group leader’s `group_volume` is recalculated after `trigger_player_update`, and the plugin needs the new average. Inline notification cancels that timer when it handles the same event, avoiding double calls.
 
 ```python
-if "group_volume" in changed_values:
-    for plugin_source in self.get_plugin_sources():
-        if plugin_source.in_use_by == player.player_id and plugin_source.on_volume:
-            self.mass.call_later(
-                0.25, plugin_source.on_volume, player.state.group_volume,
-                task_id=f"plugin_volume_{player.player_id}",
-            )
+# Reactive path (debounced) in signal_player_state_update
+if "group_volume" in changed_values or (
+    "volume_level" in changed_values and not player.state.group_members
+):
+    self._notify_plugin_volume(player)  # call_later(0.25, on_volume, ...)
 ```
 
 The `in_use_by == player.player_id` check ensures only the plugin-owning player fires the callback — child players that merely inherit `active_source` from a group do not trigger it. This eliminates per-child callbacks during group volume operations, which previously caused feedback loops with bidirectional plugins like Spotify Connect.
 
-The callback always sends the computed `group_volume` (the average of powered members for groups, or the individual `volume_level` for standalone players), not a raw individual child volume. The `call_later` with a `task_id` debounces rapid changes — during slider drags, only the final value is sent to the plugin's API.
+The callback always sends the computed `group_volume` (the average of powered members for groups, or the individual `volume_level` for standalone players), not a raw individual child volume. The `call_later` path debounces rapid cascaded changes; inline calls run once per completed `cmd_group_volume` / standalone `cmd_volume_set`.
 
 **Plugin source matching** (`_get_active_plugin_source`): A `PluginSource` is considered active for a player if either:
 - `plugin_source.in_use_by == player.player_id`, or
 - `player.state.active_source == plugin_source.id`
 
-Individual member volume changes within a group propagate to the plugin automatically: the child's `update_state()` triggers a debounced `update_state()` on the group player, which recalculates `group_volume` and fires the reactive hook. See [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
+Individual member volume changes within a group propagate to the plugin via the reactive hook: the child's `update_state()` triggers a debounced `update_state()` on the group player, which recalculates `group_volume` and schedules `on_volume`. See [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
 
 ## Group Volume — The Additive-Delta Algorithm
 
@@ -246,10 +249,10 @@ flowchart TD
 
     SGV -->|"for each powered member"| HV
     SGV -->|"after gather"| GU["group_player.update_state()"]
-    GU -->|"group_volume changed"| PV["Reactive: debounced on_volume(group_volume)"]
+    GU --> PV["Inline: cancel_timer, await on_volume(group_volume)"]
 ```
 
-Plugin volume notification is handled reactively: when `group_volume` changes during `signal_player_state_update`, a debounced `on_volume` callback fires for the plugin-owning player. See [Plugin Volume Callbacks](#plugin-volume-callbacks).
+Plugin volume uses inline `on_volume` from `set_group_volume` / standalone `cmd_volume_set`, plus the debounced reactive path when `group_volume` changes during `signal_player_state_update` (e.g. after a member’s volume changes). See [Plugin Volume Callbacks](#plugin-volume-callbacks).
 
 ## Key Files
 

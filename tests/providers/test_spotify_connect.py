@@ -2,6 +2,7 @@
 
 Covers:
 - Timestamp-based echo window suppression for inbound volume_changed events
+- Skipping outbound volume while processing an inbound volume_changed event
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ def _make_mock_spotify_provider(
     prov = MagicMock()
     prov._last_session_connected_time = 0.0
     prov._last_outbound_volume_time = last_outbound_time if last_outbound_time is not None else 0.0
+    prov._processing_inbound_volume = False
     prov._source_details.in_use_by = in_use_by
     prov._connected_spotify_username = "testuser"
     prov.mass.players.cmd_volume_set = AsyncMock()
@@ -86,3 +88,41 @@ class TestSpotifyEchoWindowSuppression:
 
         mock_self.mass.players.cmd_volume_set.assert_not_awaited()
         mock_self.mass.players.cmd_group_volume.assert_not_awaited()
+
+
+class TestSpotifyOnVolumeProcessingInboundFlag:
+    """Test _on_volume skips outbound while _processing_inbound_volume is set."""
+
+    async def test_on_volume_skipped_when_processing_inbound(self) -> None:
+        """Outbound Spotify volume is not sent while processing an inbound change."""
+        mock_self = MagicMock()
+        mock_self._processing_inbound_volume = True
+        mock_self._spotify_provider = MagicMock()
+        mock_self._spotify_provider.throttler.bypass = MagicMock()
+        mock_self._spotify_provider.throttler.bypass.return_value.__aenter__ = AsyncMock()
+        mock_self._spotify_provider.throttler.bypass.return_value.__aexit__ = AsyncMock()
+        mock_self._spotify_provider._put_data = AsyncMock()
+        mock_self._source_details = MagicMock()
+        mock_self._source_details.in_use_by = "p1"
+        mock_self.logger = MagicMock()
+
+        await SpotifyConnectProvider._on_volume(mock_self, 50)
+
+        mock_self._spotify_provider._put_data.assert_not_awaited()
+
+    async def test_on_volume_proceeds_when_not_processing_inbound(self) -> None:
+        """Outbound Spotify volume is sent when not processing an inbound change."""
+        mock_self = MagicMock()
+        mock_self._processing_inbound_volume = False
+        mock_self._spotify_provider = MagicMock()
+        mock_self._spotify_provider.throttler.bypass = MagicMock()
+        mock_self._spotify_provider.throttler.bypass.return_value.__aenter__ = AsyncMock()
+        mock_self._spotify_provider.throttler.bypass.return_value.__aexit__ = AsyncMock()
+        mock_self._spotify_provider._put_data = AsyncMock()
+        mock_self._source_details = MagicMock()
+        mock_self._source_details.in_use_by = "p1"
+        mock_self.logger = MagicMock()
+
+        await SpotifyConnectProvider._on_volume(mock_self, 50)
+
+        mock_self._spotify_provider._put_data.assert_awaited_once()

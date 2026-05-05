@@ -216,6 +216,7 @@ class SpotifyConnectProvider(PluginProvider):
         self._spotify_device_id: str | None = None
         self._last_session_connected_time: float = 0
         self._last_outbound_volume_time: float = 0.0
+        self._processing_inbound_volume: bool = False
 
     async def handle_async_init(self) -> None:
         """Handle async initialization of the provider."""
@@ -506,6 +507,13 @@ class SpotifyConnectProvider(PluginProvider):
             raise UnsupportedFeaturedException(
                 "Volume control requires a matching Spotify music provider"
             )
+
+        if self._processing_inbound_volume:
+            self.logger.debug(
+                "[VolDbg] _on_volume SKIPPED (processing inbound from Spotify): volume=%d",
+                volume,
+            )
+            return
 
         self.logger.debug(
             "[VolDbg] _on_volume OUTBOUND: volume=%d in_use_by=%s",
@@ -875,6 +883,7 @@ class SpotifyConnectProvider(PluginProvider):
                         since_last,
                     )
                 else:
+                    self._processing_inbound_volume = True
                     try:
                         player = self.mass.players.get_player(self._source_details.in_use_by)
                         is_group = bool(
@@ -902,6 +911,8 @@ class SpotifyConnectProvider(PluginProvider):
                             "Player %s does not support volume control",
                             self._source_details.in_use_by,
                         )
+                    finally:
+                        self._processing_inbound_volume = False
 
         # signal update to connected player
         if self._source_details.in_use_by:
