@@ -23,6 +23,7 @@ from music_assistant_models.enums import (
     ContentType,
     EventType,
     PlaybackState,
+    PlayerType,
     ProviderFeature,
     ProviderType,
     StreamType,
@@ -58,6 +59,12 @@ PLAYER_ID_AUTO = "__auto__"
 EVENTS_SCRIPT = pathlib.Path(__file__).parent.resolve().joinpath("events.py")
 
 SUPPORTED_FEATURES = {ProviderFeature.AUDIO_SOURCE}
+
+# After an outbound volume is sent to Spotify via Web API, suppress all
+# inbound volume_changed events for this duration.  This prevents stale
+# echoes during rapid slider drags -- the round-trip through Spotify's
+# cloud takes 0.3-1.0s, and multiple sends can be in flight at once.
+_VOLUME_ECHO_SUPPRESS_WINDOW = 1.5  # seconds
 
 
 async def setup(
@@ -208,7 +215,7 @@ class SpotifyConnectProvider(PluginProvider):
         self._runner_error_count = 0
         self._spotify_device_id: str | None = None
         self._last_session_connected_time: float = 0
-        self._last_volume_sent_to_spotify: int | None = None
+        self._last_outbound_volume_time: float = 0.0
 
     async def handle_async_init(self) -> None:
         """Handle async initialization of the provider."""
@@ -500,16 +507,21 @@ class SpotifyConnectProvider(PluginProvider):
                 "Volume control requires a matching Spotify music provider"
             )
 
-        # Prevent ping-pong: only send if volume actually changed from what we last sent
-        if self._last_volume_sent_to_spotify == volume:
-            self.logger.debug("Skipping volume update to Spotify - already at %d%%", volume)
-            return
-
+        self.logger.debug(
+            "[VolDbg] _on_volume OUTBOUND: volume=%d in_use_by=%s",
+            volume,
+            self._source_details.in_use_by,
+        )
         try:
             # Bypass throttler for volume changes to ensure responsive UI
             async with self._spotify_provider.throttler.bypass():
                 await self._spotify_provider._put_data(f"me/player/volume?volume_percent={volume}")
-                self._last_volume_sent_to_spotify = volume
+                self._last_outbound_volume_time = time.monotonic()
+                self.logger.debug(
+                    "[VolDbg] _on_volume SENT to Spotify API: volume=%d t=%.3f",
+                    volume,
+                    self._last_outbound_volume_time,
+                )
         except Exception as err:
             self.logger.warning("Failed to send volume command via Spotify Web API: %s", err)
             raise
@@ -739,8 +751,11 @@ class SpotifyConnectProvider(PluginProvider):
             if self._spotify_provider is not None:
                 self._spotify_provider = None
                 self._update_source_capabilities()
-            # Clear active player and potentially stop daemon on session disconnect
+            # Clear active player and stop the player on session disconnect
+            prev_player_id = self._active_player_id
             self._clear_active_player()
+            if prev_player_id:
+                self.mass.create_task(self.mass.players.deselect_source(prev_player_id))
 
         # handle paused event - clear in_use_by so UI shows correct active source
         # this happens when MA starts playing while Spotify Connect was active
@@ -843,15 +858,53 @@ class SpotifyConnectProvider(PluginProvider):
                 )
             elif self._source_details.in_use_by:
                 # Spotify Connect volume is 0-65535
+                raw_volume = volume
                 volume = int(int(volume) / 65535 * 100)
-                self._last_volume_sent_to_spotify = volume
-                try:
-                    await self.mass.players.cmd_volume_set(self._source_details.in_use_by, volume)
-                except UnsupportedFeaturedException:
+                since_last = time.monotonic() - self._last_outbound_volume_time
+                self.logger.debug(
+                    "[VolDbg] volume_changed INBOUND: raw=%s mapped=%d "
+                    "in_use_by=%s since_last_outbound=%.3fs window=%.1fs",
+                    raw_volume,
+                    volume,
+                    self._source_details.in_use_by,
+                    since_last,
+                    _VOLUME_ECHO_SUPPRESS_WINDOW,
+                )
+                if since_last < _VOLUME_ECHO_SUPPRESS_WINDOW:
                     self.logger.debug(
-                        "Player %s does not support volume control",
-                        self._source_details.in_use_by,
+                        "[VolDbg] volume_changed SUPPRESSED (within echo window): "
+                        "volume=%d since=%.3fs",
+                        volume,
+                        since_last,
                     )
+                else:
+                    try:
+                        player = self.mass.players.get_player(self._source_details.in_use_by)
+                        is_group = bool(
+                            player
+                            and (
+                                player.state.type == PlayerType.GROUP or player.state.group_members
+                            )
+                        )
+                        self.logger.debug(
+                            "[VolDbg] volume_changed ACCEPTED: volume=%d is_group=%s -> %s",
+                            volume,
+                            is_group,
+                            "cmd_group_volume" if is_group else "cmd_volume_set",
+                        )
+                        if is_group:
+                            await self.mass.players.cmd_group_volume(
+                                self._source_details.in_use_by, volume
+                            )
+                        else:
+                            await self.mass.players.cmd_volume_set(
+                                self._source_details.in_use_by, volume
+                            )
+                    except UnsupportedFeaturedException:
+                        self.logger.debug(
+                            "Player %s does not support volume control",
+                            self._source_details.in_use_by,
+                        )
 
         # signal update to connected player
         if self._source_details.in_use_by:

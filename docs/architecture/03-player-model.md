@@ -207,7 +207,8 @@ The `Player` class defines abstract methods that provider implementations overri
 | Method | Feature gate | Description |
 |---|---|---|
 | `power(powered)` | `POWER` | Turn on/off |
-| `volume_set(volume_level)` | `VOLUME_SET` | Set volume 0–100 |
+| `volume_set(volume_level)` | `VOLUME_SET` | Set volume 0–100 (abstract — overridden by providers) |
+| `volume_set_optimistic(volume_level)` | *(non-abstract, base class)* | Calls `volume_set()`, then sets `_attr_volume_level` and `update_state()` to guarantee immediate state coherence |
 | `volume_mute(muted)` | `VOLUME_MUTE` | Mute/unmute |
 | `play()` | *(required — must implement)* | Resume playback |
 | `stop()` | `PLAY_MEDIA` | Stop playback |

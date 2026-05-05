@@ -54,7 +54,7 @@ All callbacks are `Callable[..., Awaitable[None]] | None`, defaulting to `None`.
 | `on_next` | `Awaitable[None]` | `cmd_next_track` |
 | `on_previous` | `Awaitable[None]` | `cmd_previous_track` |
 | `on_seek` | `(int) -> Awaitable[None]` | `cmd_seek` (position in seconds) |
-| `on_volume` | `(int) -> Awaitable[None]` | `_handle_cmd_volume_set` (see [07-volume.md](07-volume.md)) |
+| `on_volume` | `(int) -> Awaitable[None]` | `signal_player_state_update` reactive hook on `group_volume` change (see [07-volume.md](07-volume.md#plugin-volume-callbacks)) |
 | `on_select` | `Awaitable[None]` | `_handle_select_plugin_source` |
 
 ### `as_player_source()`
@@ -181,7 +181,7 @@ The `in_use_by` field tracks which player is currently consuming a plugin source
 
 - **Single player ID**: `in_use_by` holds the ID of whichever player selected the source — this can be a physical player or a group player. Only one ID is stored at a time.
 - **Single-player exclusivity**: A plugin source can only be used by one player at a time. Selecting the source on a different player stops the current consumer first.
-- **Group member gap**: When a group player selects a plugin source, `in_use_by` holds the group player's ID. Individual child players within the group are not tracked. This means the `on_volume` callback only fires for volume commands targeting the group player — individual member volume changes do not trigger it. This is the feedback loop problem documented in [07-volume.md](07-volume.md#plugin-volume-callbacks).
+- **Group volume propagation**: When a group player selects a plugin source, `in_use_by` holds the group player's ID. The reactive volume hook in `signal_player_state_update` uses this ownership check to fire `on_volume` only for the group player. Individual member volume changes propagate to the plugin automatically: the child's `update_state()` triggers a debounced `update_state()` on the group player, which recalculates `group_volume` and fires the hook with the new average. See [07-volume.md](07-volume.md#plugin-volume-callbacks).
 
 ---
 
@@ -236,7 +236,7 @@ graph LR
 
 **Dynamic capabilities**: Playback controls (`can_play_pause`, `can_seek`, `can_next_previous`) start as `False`. Once a matching Spotify music provider is found (providing Web API access), the provider enables all capabilities and registers callbacks (`on_play` → `PUT me/player/play`, `on_pause` → `PUT me/player/pause`, etc.).
 
-**Volume anti-ping-pong**: The `on_volume` callback skips volume events within 3 seconds of connection to avoid feedback loops between Spotify's volume and MA's volume.
+**Volume anti-ping-pong**: The inbound `volume_changed` handler skips events within 3 seconds of connection to avoid initial feedback. The handler also routes inbound volume through `cmd_group_volume` when the target is a group player or ad-hoc sync leader, ensuring all members adjust proportionally. The reactive `on_volume` hook (via `signal_player_state_update`) combined with optimistic state updates breaks the feedback loop. A timestamp-based echo suppression window (`_VOLUME_ECHO_SUPPRESS_WINDOW`, 1.5 s) suppresses all inbound `volume_changed` events after the last outbound API send, covering the round-trip latency through Spotify's cloud when multiple sends are in flight simultaneously.
 
 **Player targeting**: Follows a priority chain: currently active player → auto-select (prefer playing, then first available) → configured default.
 
