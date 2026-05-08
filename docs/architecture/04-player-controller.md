@@ -136,6 +136,7 @@ For GROUP players (sync groups, universal groups), `_handle_set_members` delegat
 | API route | Method | Implementation |
 |---|---|---|
 | `players/cmd/select_source` | `select_source` | → `_handle_select_source` |
+| `players/cmd/deselect_source` | `deselect_source` | Stops the player and clears its current source. Used when an external source (plugin/receiver) disconnects and the player should stop rather than fall through to another source — internally calls `_handle_cmd_stop` |
 | `players/cmd/select_sound_mode` | `select_sound_mode` | → `player.select_sound_mode` |
 | `players/cmd/set_option` | `set_option` | → `player.set_option` |
 | `players/cmd/play_announcement` | `play_announcement` | See [Announcement Handling](#announcement-handling) |
@@ -214,10 +215,18 @@ Plugin source internals are covered in [11-plugin-system.md](11-plugin-system.md
 | Mechanism | Scope | Purpose |
 |---|---|---|
 | `_player_throttlers` | Per-player `Throttler(1, 0.05)` | Rate-limits commands to each player (wraps all `@handle_player_command` calls) |
-| `_player_command_locks` | Per `(function_name, player_id)` `asyncio.Lock` | Serializes concurrent calls to the same locked command on the same player (used by `play_announcement`, `play_media`, `enqueue_next_media`) |
+| `_player_command_locks` | Per `(PlayerLockPurpose, player_id)` `asyncio.Lock` | Serializes concurrent commands sharing the same purpose on the same player. See [Per-Player Locking](#per-player-locking) below for the re-entrant `get_player_lock` API. |
 | `_register_lock` | Global `asyncio.Lock` | Serializes all player registrations |
 | `_delayed_evaluation_lock` | Global `asyncio.Lock` | Serializes delayed protocol evaluations (from `ProtocolLinkingMixin`) |
 | `IN_QUEUE_COMMAND` | `ContextVar[bool]` | Prevents circular calls between `PlayerController` and `PlayerQueuesController`. When `True`, `cmd_stop`/`cmd_pause`/`cmd_seek` skip the queue redirect path. Set by `player_queues` when it calls back into the player controller. |
+
+### Per-Player Locking
+
+Player commands that must not race (power, playback, volume) acquire a lock via `get_player_lock(player_id, purpose=PlayerLockPurpose.PLAYBACK)`. The lock is **purpose-scoped** — commands with different purposes can run concurrently on the same player (for example a volume change and a power change), but two commands with the same purpose serialize. The `@handle_player_command(lock=...)` decorator wraps the command body with `get_player_lock` automatically.
+
+The lock is **re-entrant per asyncio Task**: nested calls within the same task skip re-acquisition (preventing self-deadlock), but deferred callbacks (`call_later`, `create_task`) run in a fresh task and acquire the lock fresh. Ownership is tracked in `self._task_held_locks: dict[int, set[str]]` keyed by task ID, with lock keys formed as `f"{purpose.value}_{player_id}"`.
+
+Locks, throttlers, and protocol evaluations are also cleaned up at unregister time to prevent leakage when players disappear (#3554).
 
 ## Player Config Interaction
 
@@ -252,6 +261,14 @@ The controller signals several player events:
 | `PLAYER_OPTIONS_UPDATED` | When player options changed | options dict | No — fires for all types |
 
 The method also handles side effects: notifies `player_queues.on_player_update()`, triggers DSP reloads on group membership changes, detects external source takeover, cleans up memberships when a player becomes unavailable, and **enforces volume limits** when `volume_level` changes — if the player reports a device volume outside the configured min/max, `_enforce_volume_limits` schedules a corrective `volume_set`.
+
+### State Update Fan-Out
+
+Beyond emitting events on the bus, every player state update is fanned out by the controller through three complementary mechanisms:
+
+1. **Hook propagation to related players** (`_forward_state_update`): when a player updates, the controller calls the appropriate hook (`on_group_updated`, `on_sync_parent_updated`, `on_group_member_updated`, `on_protocol_parent_updated`, `on_protocol_player_updated`) on every related player. See [03-player-model.md](03-player-model.md#update-notification-hooks) for the hook surface.
+2. **Internal subscribers** (`subscribe_player_state_update` / `_dispatch_state_update_subscribers`): callers can register a synchronous callback receiving `(Player, changed_values)` where `changed_values` maps attribute name to a `(previous, new)` tuple. `subscribe_player_state_update` returns an unsubscribe function. Used by long-running commands that need to know exactly when a state attribute flips, distinct from the event-bus subscribers that get the full `PLAYER_UPDATED` event payload.
+3. **Async wait helpers** (`wait_for_player_update`, `_wait_for_playback_state`): `wait_for_player_update(player_id, attribute_name=..., attribute_value=..., timeout=...)` is an `asynccontextmanager` that subscribes on entry, runs the body (which typically triggers the awaited update), then waits for the matching update on exit. Skips the wait if the value already matches at entry. `_wait_for_playback_state` builds on it for the common "wait until PLAYING/IDLE" case.
 
 ## Key Files
 

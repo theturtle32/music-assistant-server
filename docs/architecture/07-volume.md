@@ -19,19 +19,17 @@ flowchart TD
     D -- Yes --> G
     F --> G
     G --> H["scale_volume_to_device(logical→device range)"]
-    H --> J{volume_control type?}
+    H --> O{Active plugin source owned by this player?}
+    O -- Yes --> P["await plugin_source.on_volume(volume_level)"]
+    O -- No --> J{volume_control type?}
+    P --> J
     J -- NATIVE --> K["player.volume_set(device_volume)"]
     J -- FAKE --> L["Store in extra_data[ATTR_FAKE_VOLUME]"]
     J -- NONE --> M[Raise UnsupportedFeaturedException]
     J -- "player_id / control_id" --> N[Delegate to that entity]
-    K --> O{Active plugin source owned by this player?}
-    L --> O
-    O -- Yes --> P["await plugin_source.on_volume(volume_level)"]
-    O -- No --> Q[Return]
-    P --> Q
 ```
 
-After `_handle_cmd_volume_set` finishes its native/fake/delegate routing, if the player is the direct owner of an active plugin source (`plugin_source.in_use_by == player.player_id`), it `await`s `on_volume(volume_level)` synchronously before returning. `set_group_volume` does the same at the group level after all child volumes have been applied.
+Before `_handle_cmd_volume_set` dispatches to the native/fake/delegate routing, if the player is the direct owner of an active plugin source (`plugin_source.in_use_by == player.player_id`), it `await`s `on_volume(volume_level)` synchronously. This guarantees the plugin sees the commanded value before any hardware confirmation can echo back. `set_group_volume` follows the inverse pattern at the group level: it fires `on_volume(volume_level)` on the group player *after* all child volumes have been applied (since the group volume itself isn't a hardware command — only the children's volumes are).
 
 ### Volume Control Resolution
 
@@ -65,10 +63,10 @@ When min and max are both at their defaults (0 and 100), all three scale methods
 
 ## Plugin Volume Callbacks
 
-When a volume command completes, the controller fires `plugin_source.on_volume(volume_level)` synchronously (inline) if an active plugin source owns the player:
+The controller fires `plugin_source.on_volume(volume_level)` synchronously (inline) if an active plugin source owns the player. The exact placement differs between the two call sites:
 
-- In `_handle_cmd_volume_set`: after the routing branch returns, the controller checks `_get_active_plugin_source(player)`. If a source is found and `plugin_source.in_use_by == player.player_id`, `on_volume(volume_level)` is awaited.
-- In `set_group_volume`: after `asyncio.gather` completes on all child volume sets, the same check runs on the group player with the commanded `volume_level`.
+- In `_handle_cmd_volume_set`: after the auto-unmute check and `scale_volume_to_device`, **before** the volume_control routing branches. The controller checks `_get_active_plugin_source(player)`; if a source is found and `plugin_source.in_use_by == player.player_id`, `on_volume(volume_level)` is awaited before any native/fake/delegate path runs. Notifying the plugin first lets bidirectional plugins (Spotify Connect) record the commanded value before the hardware roundtrip can produce an echo.
+- In `set_group_volume`: after `asyncio.gather` completes on all child volume sets, the same check runs on the group player with the commanded `volume_level`. The group player itself has no hardware to write to, so there is no "before-routing" placement to choose; the callback runs once the children have been adjusted.
 
 The `in_use_by == player.player_id` ownership check ensures only the plugin-owning player fires the callback. Individual member volume changes within a group **do not** trigger `on_volume` on the group's plugin — only a group-level `set_group_volume` or a standalone player's `_handle_cmd_volume_set` produces a plugin callback. This is an intentional simplification: it eliminates per-child callbacks during group operations (which previously caused feedback loops with bidirectional plugins like Spotify Connect) at the cost of not surfacing individual member adjustments to the external service.
 
@@ -270,14 +268,14 @@ flowchart TD
     V6 --> ML[Set/clear mute lock]
 
     HV -->|GROUP type| V3
-    HV --> VR["scale_volume_to_device → native / fake / delegate"]
-    VR --> PV3["Inline: await on_volume(volume_level) if owner"]
+    HV --> PV3["Inline: await on_volume(volume_level) if owner"]
+    PV3 --> VR["scale_volume_to_device → native / fake / delegate"]
 
     SGV -->|"for each powered member"| HV
-    SGV --> PV2["Inline: await on_volume(volume_level) if owner"]
+    SGV --> PV2["Inline: await on_volume(volume_level) if owner (after gather)"]
 ```
 
-Plugin volume uses inline `on_volume` from both `set_group_volume` and `_handle_cmd_volume_set`, gated by `plugin_source.in_use_by == player.player_id`. See [Plugin Volume Callbacks](#plugin-volume-callbacks).
+Plugin volume uses inline `on_volume` from both `set_group_volume` (fired after all child volumes have been gathered) and `_handle_cmd_volume_set` (fired *before* the routing branch dispatch), gated by `plugin_source.in_use_by == player.player_id`. See [Plugin Volume Callbacks](#plugin-volume-callbacks).
 
 ## Key Files
 
