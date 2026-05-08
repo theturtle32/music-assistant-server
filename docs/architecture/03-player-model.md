@@ -167,7 +167,7 @@ Two additional computed properties are included in `PlayerState` but are not `__
 
 | Property | Returns | Description |
 |---|---|---|
-| `group_volume` | `int \| None` | No group → own `volume_level`. With group → average of powered members' volume. See [07-volume.md](07-volume.md) |
+| `group_volume` | `int \| None` | No group → own `volume_level`. With group → **max** of powered members' volume (the slider acts as a master fader for the loudest speaker). See [07-volume.md](07-volume.md) |
 | `group_volume_muted` | `bool \| None` | No group → own `volume_muted`. With group → `True` if all powered members muted, `False` if all unmuted, `None` if mixed (some muted, some not) or no members support mute. See [07-volume.md](07-volume.md) |
 
 ### Feature Sets from Protocols
@@ -208,7 +208,6 @@ The `Player` class defines abstract methods that provider implementations overri
 |---|---|---|
 | `power(powered)` | `POWER` | Turn on/off |
 | `volume_set(volume_level)` | `VOLUME_SET` | Set volume 0–100 (abstract — overridden by providers) |
-| `volume_set_optimistic(volume_level)` | *(non-abstract, base class)* | Calls `volume_set()`, then sets `_attr_volume_level` and `update_state()` to guarantee immediate state coherence |
 | `volume_mute(muted)` | `VOLUME_MUTE` | Mute/unmute |
 | `play()` | *(required — must implement)* | Resume playback |
 | `stop()` | `PLAY_MEDIA` | Stop playback |
