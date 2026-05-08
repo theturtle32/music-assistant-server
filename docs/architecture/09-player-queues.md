@@ -100,7 +100,7 @@ When a player registers, `PlayerQueuesController.on_player_register(player)` reh
 | `next_item_id_enqueued` | `str \| None` | Queue item id last announced to the player via `enqueue_next_media`, so re-announce can skip if unchanged |
 | `items_last_updated` | `float` | Timestamp of the last `update_items()` swap (drives `QUEUE_ITEMS_UPDATED` change detection) |
 | `session_id` | `str \| None` | Current playback session (validated in stream URLs) |
-| `extra_attributes` | `dict[str, ...]` | Bag for queue-scoped flags. Holds `ATTR_PLAY_ACTION_IN_PROGRESS` and any other transient queue-side state |
+| `extra_attributes` | `dict[str, EXTRA_ATTRIBUTES_TYPES]` | Bag for queue-scoped flags (value type alias is `str \| int \| float \| bool \| None`). Holds `ATTR_PLAY_ACTION_IN_PROGRESS` and any other transient queue-side state |
 | `userid` | `str \| None` | User who initiated playback |
 
 The `corrected_elapsed_time` property accounts for wall-clock drift while the state is PLAYING.
