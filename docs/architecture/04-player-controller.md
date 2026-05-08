@@ -167,15 +167,15 @@ Volume and mute follow the same control-chain pattern as power: the per-player `
 
 1. **GROUP type** — redirects to `cmd_group_volume`.
 2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first.
-3. **`NATIVE`** — `player.volume_set_optimistic(volume_level)` (sends the hardware command, then optimistically updates `_attr_volume_level` and calls `update_state()` to keep `group_volume` coherent immediately).
+3. **`NATIVE`** — scales the logical volume to the player's configured device range via `scale_volume_to_device`, then calls `player.volume_set(device_volume)`.
 4. **`FAKE`** — stores in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
 5. **`NONE`** — raises `UnsupportedFeaturedException`.
 6. **External `PlayerControl`** — calls `control.volume_set()`.
 7. **Protocol player** — recursively calls `_handle_cmd_volume_set` on the protocol player.
 
-Plugin volume notification is **not** inline in this method. It is handled reactively by `signal_player_state_update` when `group_volume` changes — see [07-volume.md](07-volume.md#plugin-volume-callbacks).
+Plugin volume notification **is** inline: after the routing branch returns, if the player owns an active plugin source (`plugin_source.in_use_by == player.player_id`), `_handle_cmd_volume_set` `await`s `plugin_source.on_volume(volume_level)` before returning. See [07-volume.md](07-volume.md#plugin-volume-callbacks).
 
-**Group volume**: `set_group_volume()` computes an additive delta from the current `group_volume` (the average of powered members' volumes) and applies the same delta to each powered child member via `_handle_cmd_volume_set`, clamping results to [0, 100]. After all children are set, it forces `group_player.update_state()` to immediately recalculate `group_volume`. This preserves absolute volume differences between speakers. See [07-volume.md](07-volume.md) for the full algorithm and its clamping/drift characteristics.
+**Group volume**: `set_group_volume()` applies snapshot-based interpolation. On the first adjustment it caches each powered child's current volume on the group player's `extra_data[ATTR_GROUP_VOLUME_SNAPSHOT]` as a reference; subsequent adjustments interpolate each child from its snapshot value toward 100 (when scaling up) or toward 0 (when scaling down). The snapshot is invalidated by `_invalidate_group_volume_snapshot` when a child's individual volume changes or when group membership changes. After all children are set, `set_group_volume` fires `on_volume(volume_level)` on the group's active plugin source if any. See [07-volume.md](07-volume.md) for the full algorithm.
 
 ## Player Polling
 
@@ -251,7 +251,7 @@ The controller signals several player events:
 | `PLAYER_CONFIG_UPDATED` | When supported features or config-visible state changed | `PlayerConfig` | No — fires for all types |
 | `PLAYER_OPTIONS_UPDATED` | When player options changed | options dict | No — fires for all types |
 
-The method also handles side effects: notifies `player_queues.on_player_update()`, triggers DSP reloads on group membership changes, detects external source takeover, cleans up memberships when a player becomes unavailable, and fires **reactive plugin volume notifications** — when `group_volume` changes on a player that owns a plugin source (via `in_use_by`), a debounced `on_volume(group_volume)` callback is scheduled via `call_later`.
+The method also handles side effects: notifies `player_queues.on_player_update()`, triggers DSP reloads on group membership changes, detects external source takeover, cleans up memberships when a player becomes unavailable, and **enforces volume limits** when `volume_level` changes — if the player reports a device volume outside the configured min/max, `_enforce_volume_limits` schedules a corrective `volume_set`.
 
 ## Key Files
 

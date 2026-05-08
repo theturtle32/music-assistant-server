@@ -71,7 +71,7 @@ graph TB
 | [04-player-controller.md](04-player-controller.md) | Command routing, registration, power/volume management, announcements, polling |
 | [05-protocol-linking.md](05-protocol-linking.md) | Multi-protocol device merging, identifier matching, Universal Player, output selection |
 | [06-grouping.md](06-grouping.md) | Sync groups, universal groups, ad-hoc sync, `set_members` pipeline |
-| [07-volume.md](07-volume.md) | Individual/group volume routing, additive-delta algorithm, mute lock, announcement volume |
+| [07-volume.md](07-volume.md) | Individual/group volume routing, interpolation-based scaling, volume limits, mute lock, announcement volume |
 | [08-media-library.md](08-media-library.md) | Music controller, media sub-controllers, match-and-store pattern, library sync |
 | [09-player-queues.md](09-player-queues.md) | Queue state, playback flow, shuffle/repeat, radio mode, transition guards |
 | [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, DSP, HTTP delivery |

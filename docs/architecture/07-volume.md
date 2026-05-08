@@ -1,6 +1,6 @@
 # 07 — Volume Control
 
-Volume control in Music Assistant spans individual players, group players, and plugin sources. Individual volume routes through a configurable control chain (native, fake, delegated). Group volume uses an additive-delta algorithm that preserves relative differences between speakers. Plugin sources can hook into volume changes via callbacks. This document covers all three paths, the mute lock mechanism, announcement volume, and known architectural limitations.
+Volume control in Music Assistant spans individual players, group players, and plugin sources. Individual volume routes through a configurable control chain (native, fake, delegated). Group volume uses interpolation-based scaling that preserves relative balance between speakers and reaches full silence/full volume at the extremes. Plugin sources hook into volume changes via inline callbacks. This document covers all three paths, per-player volume limits, the mute lock mechanism, announcement volume, and known architectural limitations.
 
 The three control modes — `NATIVE`, `FAKE`, and `NONE` — apply identically to volume and mute. **NATIVE** means the player (or its active protocol) handles the command in hardware or firmware. **FAKE** means MA simulates the control in software: for volume, the level is stored in `extra_data` and used in DSP calculations; for mute, the current volume is saved, set to 0, and restored on unmute. **NONE** means the control is disabled — volume/mute commands raise `UnsupportedFeaturedException`. Beyond these three, the config can specify a specific player ID (delegating to a protocol player like Chromecast) or a `PlayerControl` ID (delegating to an external Home Assistant entity). The **mute lock** is a group-specific safeguard: when a user deliberately mutes a player within a group, a lock flag prevents subsequent group volume adjustments from auto-unmuting it. For how these modes are resolved from config, see [03-player-model.md](03-player-model.md#resolution-chains).
 
@@ -18,15 +18,20 @@ flowchart TD
     E -- No --> G[Reset fake mute flag]
     D -- Yes --> G
     F --> G
-    G --> J{volume_control type?}
-    J -- NATIVE --> K[player.volume_set_optimistic]
+    G --> H["scale_volume_to_device(logical→device range)"]
+    H --> J{volume_control type?}
+    J -- NATIVE --> K["player.volume_set(device_volume)"]
     J -- FAKE --> L["Store in extra_data[ATTR_FAKE_VOLUME]"]
     J -- NONE --> M[Raise UnsupportedFeaturedException]
     J -- "player_id / control_id" --> N[Delegate to that entity]
-    K --> O["update_state() triggers signal_player_state_update"]
-    O --> P{"group_volume changed + player owns plugin source?"}
-    P -- Yes --> Q["Debounced on_volume(group_volume) via call_later"]
+    K --> O{Active plugin source owned by this player?}
+    L --> O
+    O -- Yes --> P["await plugin_source.on_volume(volume_level)"]
+    O -- No --> Q[Return]
+    P --> Q
 ```
+
+After `_handle_cmd_volume_set` finishes its native/fake/delegate routing, if the player is the direct owner of an active plugin source (`plugin_source.in_use_by == player.player_id`), it `await`s `on_volume(volume_level)` synchronously before returning. `set_group_volume` does the same at the group level after all child volumes have been applied.
 
 ### Volume Control Resolution
 
@@ -47,33 +52,37 @@ Before setting volume, the handler checks:
 
 This ensures that adjusting volume on a muted player restores audio, unless the user explicitly muted it within a group context.
 
-### Plugin Volume Callbacks
+## Volume Limits
 
-Plugin volume notifications are handled **reactively** through the state system, not inline in `_handle_cmd_volume_set`. When any volume change causes a player's `group_volume` to change, `signal_player_state_update` fires a debounced callback to the plugin source that **owns** that player:
+Per-player minimum and maximum device volume can be configured via `CONF_MIN_VOLUME` and `CONF_MAX_VOLUME`. The controller translates between the logical 0–100 range that the rest of the system uses and the device-specific range.
 
-```python
-if "group_volume" in changed_values:
-    for plugin_source in self.get_plugin_sources():
-        if plugin_source.in_use_by == player.player_id and plugin_source.on_volume:
-            self.mass.call_later(
-                0.25, plugin_source.on_volume, player.state.group_volume,
-                task_id=f"plugin_volume_{player.player_id}",
-            )
-```
+- **`_get_volume_limits(player_id)`** — reads `CONF_MIN_VOLUME` and `CONF_MAX_VOLUME` from player config, returning a `(min, max)` tuple (default 0 and 100).
+- **`scale_volume_to_device(player_id, logical_volume)`** — maps logical 0–100 to the device's min–max range. Called by `_handle_cmd_volume_set` before `player.volume_set()`.
+- **`scale_volume_from_device(player_id, device_volume)`** — the inverse mapping. Called by `Player.__final_volume_level` so the UI always sees logical 0–100 regardless of what the device reports.
+- **`_enforce_volume_limits(player)`** — called from `signal_player_state_update` whenever `volume_level` changes. If the player reports a device volume outside the configured range (e.g. adjusted externally), it schedules a corrective `player.volume_set()` call to bring it back in range.
 
-The `in_use_by == player.player_id` check ensures only the plugin-owning player fires the callback — child players that merely inherit `active_source` from a group do not trigger it. This eliminates per-child callbacks during group volume operations, which previously caused feedback loops with bidirectional plugins like Spotify Connect.
+When min and max are both at their defaults (0 and 100), all three scale methods are no-ops.
 
-The callback always sends the computed `group_volume` (the average of powered members for groups, or the individual `volume_level` for standalone players), not a raw individual child volume. The `call_later` with a `task_id` debounces rapid changes — during slider drags, only the final value is sent to the plugin's API.
+## Plugin Volume Callbacks
+
+When a volume command completes, the controller fires `plugin_source.on_volume(volume_level)` synchronously (inline) if an active plugin source owns the player:
+
+- In `_handle_cmd_volume_set`: after the routing branch returns, the controller checks `_get_active_plugin_source(player)`. If a source is found and `plugin_source.in_use_by == player.player_id`, `on_volume(volume_level)` is awaited.
+- In `set_group_volume`: after `asyncio.gather` completes on all child volume sets, the same check runs on the group player with the commanded `volume_level`.
+
+The `in_use_by == player.player_id` ownership check ensures only the plugin-owning player fires the callback. Individual member volume changes within a group **do not** trigger `on_volume` on the group's plugin — only a group-level `set_group_volume` or a standalone player's `_handle_cmd_volume_set` produces a plugin callback. This is an intentional simplification: it eliminates per-child callbacks during group operations (which previously caused feedback loops with bidirectional plugins like Spotify Connect) at the cost of not surfacing individual member adjustments to the external service.
+
+The callback always receives the commanded `volume_level` (not a derived average), which is the value that was just applied.
 
 **Plugin source matching** (`_get_active_plugin_source`): A `PluginSource` is considered active for a player if either:
 - `plugin_source.in_use_by == player.player_id`, or
 - `player.state.active_source == plugin_source.id`
 
-Individual member volume changes within a group propagate to the plugin automatically: the child's `update_state()` triggers a debounced `update_state()` on the group player, which recalculates `group_volume` and fires the reactive hook. See [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
+See [11-plugin-system.md](11-plugin-system.md#in_use_by-semantics) for the full plugin source model.
 
-## Group Volume — The Additive-Delta Algorithm
+## Group Volume — Interpolation-Based Scaling
 
-Group volume applies a uniform delta to all powered members, preserving their relative volume relationships.
+Group volume applies proportional scaling to all powered members, preserving their relative balance and ensuring the slider reaches full silence and full volume at the extremes.
 
 ### Sync Leader Redirect
 
@@ -90,41 +99,60 @@ Note the asymmetry: `cmd_group_volume_mute` does **not** redirect to the sync le
 `set_group_volume(group_player, volume_level)` in the player controller:
 
 ```python
-cur_volume = group_player.state.group_volume  # average of powered members
-volume_dif = volume_level - cur_volume
-for child_player in iter_group_members(group_player, only_powered=True):
-    if child_player.state.volume_control == PLAYER_CONTROL_NONE:
-        continue
-    cur_child_volume = child_player.state.volume_level or 0
-    new_child_volume = clamp(cur_child_volume + volume_dif, 0, 100)
-    # Set volume on each child
+children = [c for c in iter_group_members(group_player, only_powered=True)
+            if c.state.volume_control != PLAYER_CONTROL_NONE]
+
+# Take a snapshot of child volumes on first adjustment (invalidated on individual changes)
+snapshot = group_player.extra_data.get(ATTR_GROUP_VOLUME_SNAPSHOT)
+if snapshot is None or not all(c.player_id in snapshot for c in children):
+    snapshot = {c.player_id: c.state.volume_level or 0 for c in children}
+    group_player.extra_data[ATTR_GROUP_VOLUME_SNAPSHOT] = snapshot
+
+base_group = max(snapshot.values())  # loudest child at snapshot time
+
+for child in children:
+    child_base = snapshot[child.player_id]
+    if volume_level >= base_group:
+        # scale up: interpolate child_base toward 100
+        if base_group >= 100:
+            new = child_base
+        else:
+            progress = (volume_level - base_group) / (100 - base_group)
+            new = round(child_base + (100 - child_base) * progress)
+    elif base_group == 0:
+        new = 0
+    else:
+        # scale down: interpolate child_base toward 0
+        new = round(child_base * (volume_level / base_group))
+    new = clamp(new, 0, 100)
+    # set volume on child
 ```
 
-All child volume sets execute concurrently via `asyncio.gather`. After the gather completes, `group_player.update_state()` is called to force immediate recalculation of `group_volume` from the children's new volumes. Without this, the group state update is debounced by 0.25s — if a plugin echo arrives in that window, `set_group_volume` would read a stale `group_volume` and compute a non-zero delta. The forced update also triggers the reactive plugin volume hook in `signal_player_state_update`.
+All child volume sets execute concurrently via `asyncio.gather`. After the gather completes, `on_volume(volume_level)` is fired on the group's active plugin source (if any) — see [Plugin Volume Callbacks](#plugin-volume-callbacks).
 
-### Why Additive-Delta
+### Why Interpolation-Based Scaling
 
-Additive-delta preserves the *absolute* differences between speakers. If the living room is at 60 and the kitchen is at 40 (group average 50), setting group volume to 55 adds +5 to both → 65 and 45. The relative balance is maintained.
+- All members reach 0 when the slider hits 0 and 100 when it hits 100
+- Relative balance between speakers is preserved across the full range
+- Returning the slider to its original position restores the exact original child volumes
+- A child at volume 0 will still increase when raising the group slider (unlike additive-delta, where a child stuck at 0 would remain at 0)
 
-### Clamping and Drift
+### Snapshot Invalidation
 
-When a child volume would exceed [0, 100], it clamps. This can cause drift:
+The snapshot is cleared whenever an individual child's volume is set directly (via `_invalidate_group_volume_snapshot`, called from `cmd_volume_set` for non-GROUP players) or when group membership changes. The next group adjustment then captures a fresh snapshot from the current state.
 
-| Speaker | Before | Delta +10 | After (clamped) | Lost |
-|---|---|---|---|---|
-| Living Room | 95 | +10 | 100 | 5 units lost |
-| Kitchen | 40 | +10 | 50 | — |
-
-The inverse operation (delta -10) produces Living Room = 90, Kitchen = 40 — the original 55-unit gap has shrunk to 50. The relative ratio is not restored.
-
-This is an accepted characteristic. For typical use cases (moderate volume levels, small adjustments), it rarely causes noticeable imbalance.
+```python
+def _invalidate_group_volume_snapshot(player_id):
+    # clears ATTR_GROUP_VOLUME_SNAPSHOT from the player itself,
+    # from all group players it belongs to, and from its sync leader
+```
 
 ### `group_volume` Property
 
 Computed on the `Player` model, not stored. The calculation:
 
 - **No group members**: return `state.volume_level` (or `None` if `volume_control == NONE`)
-- **Has group members**: average the `volume_level` of all powered members (via `iter_group_members`). `exclude_self` is `True` for GROUP types but `False` for `PLAYER` types (ad-hoc sync leaders include themselves). Returns `None` if no members support volume.
+- **Has group members**: return the **maximum** `volume_level` across all powered members (via `iter_group_members`). This makes the group slider act as a master fader representing the loudest speaker, ensuring the slider always has the full 0–100 range available regardless of individual member levels. Returns `None` if no members support volume.
 
 ### `group_volume_muted` Property
 
@@ -242,19 +270,19 @@ flowchart TD
     V6 --> ML[Set/clear mute lock]
 
     HV -->|GROUP type| V3
-    HV --> VR["Volume routing: native (optimistic) / fake / delegate"]
+    HV --> VR["scale_volume_to_device → native / fake / delegate"]
+    VR --> PV3["Inline: await on_volume(volume_level) if owner"]
 
     SGV -->|"for each powered member"| HV
-    SGV -->|"after gather"| GU["group_player.update_state()"]
-    GU -->|"group_volume changed"| PV["Reactive: debounced on_volume(group_volume)"]
+    SGV --> PV2["Inline: await on_volume(volume_level) if owner"]
 ```
 
-Plugin volume notification is handled reactively: when `group_volume` changes during `signal_player_state_update`, a debounced `on_volume` callback fires for the plugin-owning player. See [Plugin Volume Callbacks](#plugin-volume-callbacks).
+Plugin volume uses inline `on_volume` from both `set_group_volume` and `_handle_cmd_volume_set`, gated by `plugin_source.in_use_by == player.player_id`. See [Plugin Volume Callbacks](#plugin-volume-callbacks).
 
 ## Key Files
 
 | File | Role |
 |---|---|
-| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `cmd_volume_set`, `cmd_volume_up/down`, `cmd_group_volume`, `cmd_group_volume_up/down`, `cmd_group_volume_mute`, `set_group_volume`, `_handle_cmd_volume_set`, `_get_active_plugin_source`, `get_announcement_volume` |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `cmd_volume_set`, `cmd_volume_up/down`, `cmd_group_volume`, `cmd_group_volume_up/down`, `cmd_group_volume_mute`, `set_group_volume`, `_handle_cmd_volume_set`, `_get_active_plugin_source`, `_get_volume_limits`, `scale_volume_to_device`, `scale_volume_from_device`, `_enforce_volume_limits`, `_invalidate_group_volume_snapshot`, `get_announcement_volume` |
 | [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | `group_volume`, `group_volume_muted` (computed properties), `volume_control`, `mute_control`, `__final_volume_level`, `__final_volume_muted_state` |
 | [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginSource` — `on_volume` callback, `in_use_by` field |

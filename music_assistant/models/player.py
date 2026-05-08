@@ -379,24 +379,6 @@ class Player(ABC):
             "volume_set needs to be implemented when PlayerFeature.VOLUME_SET is set"
         )
 
-    async def volume_set_optimistic(self, volume_level: int) -> None:
-        """
-        Set volume and optimistically update internal state.
-
-        Calls the provider's volume_set(), then unconditionally updates
-        _attr_volume_level and triggers a state recalculation. This ensures
-        that computed properties like group_volume reflect the new value
-        immediately, rather than waiting for async hardware confirmation.
-
-        For providers that already update state inside volume_set(), the
-        subsequent update_state() call here detects no change and is a no-op.
-
-        :param volume_level: volume level (0..100) to set on the player.
-        """
-        await self.volume_set(volume_level)
-        self._attr_volume_level = volume_level
-        self.update_state()
-
     async def volume_mute(self, muted: bool) -> None:
         """
         Handle VOLUME MUTE command on the player.

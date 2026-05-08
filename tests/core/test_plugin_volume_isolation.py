@@ -185,21 +185,7 @@ class TestReactivePluginVolumeCallback:
 
 
 class TestOptimisticVolumeCoherence:
-    """Test that volume_set_optimistic keeps group_volume coherent."""
-
-    async def test_volume_set_optimistic_updates_state(
-        self,
-        register_player: RegisterPlayer,
-    ) -> None:
-        """volume_set_optimistic sets _attr_volume_level and calls update_state."""
-        player = register_player("p1", "Player 1", volume=30)
-        player.volume_set = AsyncMock()  # type: ignore[method-assign]
-
-        await player.volume_set_optimistic(70)
-
-        player.volume_set.assert_awaited_once_with(70)
-        assert player._attr_volume_level == 70
-        assert player.state.volume_level == 70
+    """Test group_volume coherence after volume commands."""
 
     async def test_group_volume_coherent_after_set_group_volume(
         self,
