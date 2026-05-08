@@ -239,7 +239,9 @@ The `CacheController` (`music_assistant/controllers/cache/controller.py`) is a s
 
 ### Serialization
 
-Only `SerializableType` values (`str | int | float | bool | None | list | dict`, plus tuples that round-trip as lists) may be written. Passing a model object directly raises `TypeError` — callers must call `.to_dict()` before storing. On reads, `get()` returns the JSON-deserialized data; an optional `base_class` parameter automatically reconstructs model objects via `base_class.from_dict(...)`. The `@use_cache` decorator (in `cache/helpers.py`) uses the wrapped function's type annotations to drive the same `to_dict` / `from_dict` flow transparently.
+Only `SerializableType` values (`str | int | float | bool | None | list | dict`, plus tuples that round-trip as lists) may be written. Passing a model object directly raises `TypeError` — callers must call `.to_dict()` before storing. On reads, `get()` returns the JSON-deserialized data; an optional `base_class` parameter automatically reconstructs model objects via `base_class.from_dict(...)`.
+
+The `@use_cache` decorator (in `cache/helpers.py`) wraps the **read path only** — it does not serialize the write. The wrapped method's return value is passed straight to `cache.set()`, so the method itself is responsible for returning a `SerializableType` (typically by calling `.to_dict()` before returning). On a hit, the decorator reconstructs the cached data using whichever reconstruction strategy is configured: `base_class.from_dict(...)` if `base_class=` was passed to `@use_cache`, otherwise `parse_value(...)` from `helpers/api.py` driven by the wrapped function's return type annotation.
 
 ### Cache operations
 
@@ -265,7 +267,7 @@ A scheduled cleanup task (`CACHE_DATABASE_CLEANUP_TASK_ID`) removes expired entr
 | File | What to look at |
 |---|---|
 | [`music_assistant/controllers/config.py`](../../music_assistant/controllers/config.py) | `ConfigController` — JSON file I/O, get/set, provider/player/core config CRUD, encryption (~2106 lines) |
-| [`music_assistant/controllers/cache/`](../../music_assistant/controllers/cache/) | `CacheController` package: `controller.py` (get/set/delete/clear, lifecycle), `constants.py` (`SerializableType`, `BYPASS_CACHE`, `DEFAULT_CACHE_EXPIRATION`, `MAX_CACHE_DB_SIZE_MB`), `helpers.py` (`@use_cache` decorator with type-annotation-driven serialization). See in-tree [README](../../music_assistant/controllers/cache/README.md). |
+| [`music_assistant/controllers/cache/`](../../music_assistant/controllers/cache/) | `CacheController` package: `controller.py` (get/set/delete/clear, lifecycle), `constants.py` (`SerializableType`, `BYPASS_CACHE`, `DEFAULT_CACHE_EXPIRATION`, `MAX_CACHE_DB_SIZE_MB`), `helpers.py` (`@use_cache` decorator with type-annotation-driven reconstruction on reads). See in-tree [README](../../music_assistant/controllers/cache/README.md). |
 | [`music_assistant/helpers/database.py`](../../music_assistant/helpers/database.py) | `DatabaseConnection` — SQLite abstraction, PRAGMA setup, query helpers |
 | [`music_assistant/constants.py`](../../music_assistant/constants.py) | Config keys (`CONF_*`), DB table names (`DB_TABLE_*`), reusable `ConfigEntry` instances (`CONF_ENTRY_*`) |
 | `music_assistant_models/config_entries.py` | `ConfigEntry`, `Config`, `CoreConfig`, `ProviderConfig`, `PlayerConfig`, `ConfigValueType` |
