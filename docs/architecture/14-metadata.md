@@ -223,12 +223,18 @@ When a radio stream produces ICY/HLS in-band metadata containing an `artist - ti
 1. **Filtering**: artist names matching `AD_DETECTION_PHRASES` (`"asset link"`, `"asset stop"`, `"asset spot"`, `"advert"`, `"promo"`) are short-circuited to the fallback image — these are commercial breaks, not music.
 2. **Cache check**: results are cached under `CACHE_CATEGORY_RADIO_ARTWORK` (`= 101`) keyed by `f"{artist_name.lower()}|{track_name.lower()}"`. Hits store for 90 days (`CACHE_EXPIRATION_RADIO_ARTWORK`); misses store for 7 days (`CACHE_EXPIRATION_RADIO_ARTWORK_MISS`) — the asymmetric TTL prevents repeatedly hammering MusicBrainz/etc. for the same dead lookup.
 3. **Library-first**: `_get_library_track_metadata`, `_get_library_artist_metadata`, and `_get_library_item_thumb` check the user's existing library before reaching out — if the user already owns the track, the local artwork is preferred.
-4. **External fallback**: `get_track_metadata_by_name` searches MusicBrainz with name variants (via `_search_musicbrainz_with_variants` for swapped/punctuated forms), then `_get_release_group_artwork` fetches album artwork from the metadata providers (Fanart.tv first, iTunes Artwork second when the release group has a barcode).
+4. **External fallback**: `get_track_metadata_by_name` searches MusicBrainz with name variants (via `_search_musicbrainz_with_variants` for swapped/punctuated forms), then `_get_release_group_artwork` walks `self.providers` in priority order. Because the controller sorts by `MetadataProvider.priority` (#3623), **iTunes Artwork (priority 30) is checked before Fanart.tv (default priority 50)** — iTunes succeeds when the release group has a barcode; Fanart.tv handles the cases iTunes can't.
 5. **Station logo fallback**: `get_radio_stream_station_image(streamdetails)` returns the station's own logo when track-level lookup yields nothing.
 
-### Caller
+### Callers
 
-`controllers/streams/audio.py` registers `update_radio_stream_artwork` as a `streamdetails.stream_metadata_update_callback` (with a 5-second update interval) once it detects in-band metadata on an active radio stream.
+`controllers/streams/audio.py` reaches `update_radio_stream_artwork` along three paths, all of which funnel through the internal `_update_radio_stream_metadata(streamdetails, artist, title, …)` helper:
+
+- **ICY** (Shoutcast/Icecast `StreamTitle`): when in-band metadata is parsed and contains a `"Artist - Title"` pair, the audio loop calls `_update_radio_stream_metadata` directly.
+- **OGG** (in-band Vorbis comments via the chained-OGG handler): when the metadata callback fires with new artist/title, the audio loop calls `_update_radio_stream_metadata` directly.
+- **HLS**: `_update_hls_radio_metadata` is registered as `streamdetails.stream_metadata_update_callback` with a 5-second interval; it polls the playlist for fresh metadata and forwards new tracks into `_update_radio_stream_metadata`.
+
+`_update_radio_stream_metadata` updates `streamdetails.stream_metadata` and signals the queue, then schedules `update_radio_stream_artwork` via `mass.call_later(0.2, ..., task_id=f"update_radio_artwork_{queue_id}")`. The 0.2 s debounce + per-queue task ID coalesces rapid metadata flaps into a single artwork lookup.
 
 ---
 
