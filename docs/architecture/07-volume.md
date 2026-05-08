@@ -268,8 +268,9 @@ flowchart TD
     V6 --> ML[Set/clear mute lock]
 
     HV -->|GROUP type| V3
-    HV --> PV3["Inline: await on_volume(volume_level) if owner"]
-    PV3 --> VR["scale_volume_to_device → native / fake / delegate"]
+    HV --> SV["scale_volume_to_device(logical→device)"]
+    SV --> PV3["Inline: await on_volume(volume_level) if owner"]
+    PV3 --> VR["native / fake / delegate routing"]
 
     SGV -->|"for each powered member"| HV
     SGV --> PV2["Inline: await on_volume(volume_level) if owner (after gather)"]

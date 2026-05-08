@@ -136,7 +136,7 @@ For GROUP players (sync groups, universal groups), `_handle_set_members` delegat
 | API route | Method | Implementation |
 |---|---|---|
 | `players/cmd/select_source` | `select_source` | → `_handle_select_source` |
-| `players/cmd/deselect_source` | `deselect_source` | Stops the player and clears its current source. Used when an external source (plugin/receiver) disconnects and the player should stop rather than fall through to another source — internally calls `_handle_cmd_stop` |
+| *(internal — not `@api_command`-exposed)* | `deselect_source` | Stops the player and clears its current source. Called from controller-internal paths when an external source (plugin/receiver) disconnects and the player should stop rather than fall through to another source — internally calls `_handle_cmd_stop` |
 | `players/cmd/select_sound_mode` | `select_sound_mode` | → `player.select_sound_mode` |
 | `players/cmd/set_option` | `set_option` | → `player.set_option` |
 | `players/cmd/play_announcement` | `play_announcement` | See [Announcement Handling](#announcement-handling) |
@@ -222,7 +222,7 @@ Plugin source internals are covered in [11-plugin-system.md](11-plugin-system.md
 
 ### Per-Player Locking
 
-Player commands that must not race (power, playback, volume) acquire a lock via `get_player_lock(player_id, purpose=PlayerLockPurpose.PLAYBACK)`. The lock is **purpose-scoped** — commands with different purposes can run concurrently on the same player (for example a volume change and a power change), but two commands with the same purpose serialize. The `@handle_player_command(lock=...)` decorator wraps the command body with `get_player_lock` automatically.
+Player commands that must not race (power, playback, volume) acquire a lock via `get_player_lock(player_id, purpose=...)`. The lock is **purpose-scoped** — commands with different purposes can run concurrently on the same player (for example a volume change and a power change), but two commands with the same purpose serialize. The `@handle_player_command(lock=...)` decorator wraps the command body with `get_player_lock` automatically using the appropriate purpose: `PlayerLockPurpose.PLAYBACK` for `cmd_stop` / `cmd_resume` / `cmd_power` / `play_announcement` / `play_media` / `enqueue_next_media`, and `PlayerLockPurpose.VOLUME` for `cmd_volume_set` / `cmd_volume_mute`.
 
 The lock is **re-entrant per asyncio Task**: nested calls within the same task skip re-acquisition (preventing self-deadlock), but deferred callbacks (`call_later`, `create_task`) run in a fresh task and acquire the lock fresh. Ownership is tracked in `self._task_held_locks: dict[int, set[str]]` keyed by task ID, with lock keys formed as `f"{purpose.value}_{player_id}"`.
 
