@@ -104,14 +104,16 @@ flowchart TD
     G -- Yes --> I[Set sync_leader]
     E -- Yes --> I
     I --> J[Reorder: leader first in group_members]
-    J --> K{Leader playing something else?}
+    J -->     K{Leader playing something else?}
     K -- Yes --> N[Stop leader, wait for IDLE]
-    K -- No --> O[cmd_set_members on leader]
+    K -- No --> O[_handle_set_members on leader]
     N --> O
     O --> Z["_attr_powered = True; state event"]
 ```
 
 The `_form_syncgroup` method is locked (`@lock` decorator from `music_assistant.helpers.util`) to prevent concurrent formation attempts.
+
+> **Why `_handle_set_members` and not `cmd_set_members`?** `cmd_set_members` redirects commands targeting a member of an active group player back to the group itself (see [Active-Group Forwarding](#active-group-forwarding)). If `_form_syncgroup` called `cmd_set_members(sync_leader_id, ...)`, that redirect would loop the command back into `SyncGroupPlayer.set_members` on the same syncgroup. The implementation deliberately calls the lower-level `_handle_set_members` to bypass the redirect. The same reasoning applies to `_dissolve_syncgroup` and `SyncGroupPlayer.set_members` below.
 
 ### Stop vs Dissolve
 
@@ -121,7 +123,7 @@ The `_form_syncgroup` method is locked (`@lock` decorator from `music_assistant.
 
 1. If currently playing/paused, the leader is stopped first
 2. Get all sync children from the leader's `group_members`
-3. Call `cmd_set_members` on the leader to remove all children (waits for state)
+3. Call `_handle_set_members` on the leader to remove all children (waits for state)
 4. Clear the leader's `active_output_protocol` (when leader is not still playing)
 5. Set `sync_leader = None`
 6. `_attr_powered = False`; state event emitted
@@ -132,10 +134,10 @@ The `_form_syncgroup` method is locked (`@lock` decorator from `music_assistant.
 
 When `set_members` is called on a dynamic group during playback:
 
-- **Adding members**: Validates compatibility with the sync leader's `can_group_with` (which now includes the leader's *linked output protocols* too — so an AirPlay-only player is valid for a Sonos leader that has AirPlay as a linked protocol). Compatible members are appended to the internal list and forwarded to `cmd_set_members` on the leader, which handles protocol selection (and may switch to a different output protocol so the new member can join via that protocol). Incompatible members are **not** registered (avoids stranding orphan entries).
+- **Adding members**: Validates compatibility with the sync leader's `can_group_with` (which now includes the leader's *linked output protocols* too — so an AirPlay-only player is valid for a Sonos leader that has AirPlay as a linked protocol). Compatible members are appended to the internal list and forwarded to `_handle_set_members` on the leader (bypassing the active-group redirect — see the note in [Formation Lifecycle](#formation-lifecycle)). The leader handles protocol selection (and may switch to a different output protocol so the new member can join via that protocol). Incompatible members are **not** registered (avoids stranding orphan entries).
 - **Removing the sync leader while playing**: see [Dynamic Leader Switch](#dynamic-leader-switch) below — either a seamless protocol-level handoff or a dissolve + re-form fallback.
 - **Removing last member**: Dissolves the group entirely
-- **Removing a regular member**: Forwards removal to `cmd_set_members` on the leader
+- **Removing a regular member**: Forwards removal to `_handle_set_members` on the leader
 - **Static members cannot be removed** — raises `PlayerCommandFailed`
 
 ### Dynamic Leader Switch
@@ -150,7 +152,7 @@ When the leader of a playing group is removed:
    - On the *old* session player, call `set_members(player_ids_to_remove=[old_leader_protocol])` to drop just the old leader.
    - On the *new* leader's protocol player, call `set_members(player_ids_to_add=[remaining_protocol_ids])` to take ownership.
    - Remaining members keep playing; no audio gap.
-   - Implemented via `Player.handoff_sync_leadership(new_leader, remaining_members=...)`, which intentionally bypasses `cmd_set_members` on the controller (which would interpret self-removal as "dissolve the entire group").
+   - Implemented in `SyncGroupPlayer._dynamic_leader_switch(old_leader_id)`, which selects a new leader (preferring one that already supports the active protocol), drives the protocol-level membership changes directly via the `set_members` methods on the *protocol players*, and bypasses the controller's `cmd_set_members` (which would interpret self-removal as "dissolve the entire group").
 2. **Otherwise**: fall back to dissolve + re-form (brief audio gap).
 
 ## Universal Groups
