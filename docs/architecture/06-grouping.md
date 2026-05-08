@@ -149,8 +149,8 @@ The constant `PROVIDERS_WITH_DYNAMIC_LEADER_SWITCH` lists the eligible protocols
 When the leader of a playing group is removed:
 
 1. **If the active protocol supports handoff** *and* the chosen new leader is part of the live session (not a freshly added player):
-   - On the *old* session player, call `set_members(player_ids_to_remove=[old_leader_protocol])` to drop just the old leader.
-   - On the *new* leader's protocol player, call `set_members(player_ids_to_add=[remaining_protocol_ids])` to take ownership.
+   - On the *old* session player, call `set_members(player_ids_to_remove=[old_leader_protocol_player_id])` to drop just the old leader.
+   - On the *new* leader's protocol player, call `set_members(player_ids_to_add=[remaining_protocol_player_ids])` to take ownership.
    - Remaining members keep playing; no audio gap.
    - Implemented in `SyncGroupPlayer._dynamic_leader_switch(old_leader_id)`, which selects a new leader (preferring one that already supports the active protocol), drives the protocol-level membership changes directly via the `set_members` methods on the *protocol players*, and bypasses the controller's `cmd_set_members` (which would interpret self-removal as "dissolve the entire group").
 2. **Otherwise**: fall back to dissolve + re-form (brief audio gap).
