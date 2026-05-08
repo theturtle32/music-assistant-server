@@ -168,7 +168,11 @@ Volume and mute follow the same control-chain pattern as power: the per-player `
 `_handle_cmd_volume_set(player_id, volume_level)` resolves through the `volume_control` config:
 
 1. **GROUP type** — redirects to `cmd_group_volume`.
-2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first. The mute-lock check looks at both the player's own `extra_data[ATTR_MUTE_LOCK]` *and* the protocol parent's lock (when `protocol_parent_id` is set), because `cmd_volume_mute` records the lock on the parent player while group volume changes route through the protocol player ID. Without this fallback, group volume on a Sonos-like player whose protocol child receives the actual command would auto-unmute the parent (#3655). See [07-volume.md](07-volume.md#the-mute-lock-mechanism).
+2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first. The mute-lock check is extended to handle protocol players:
+    - It checks `extra_data[ATTR_MUTE_LOCK]` on both the player's own `extra_data` *and* the protocol parent's lock (when `protocol_parent_id` is set).
+    - This is necessary because `cmd_volume_mute` records the lock on the parent, while group volume changes may route through the child protocol player.
+    - Without this fallback, group volume changes on a Sonos-like player would incorrectly auto-unmute the parent (#3655).
+    - See [07-volume.md](07-volume.md#the-mute-lock-mechanism) for more details.
 3. **`NATIVE`** — scales the logical volume to the player's configured device range via `scale_volume_to_device`, then calls `player.volume_set(device_volume)`.
 4. **`FAKE`** — stores in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
 5. **`NONE`** — raises `UnsupportedFeaturedException`.

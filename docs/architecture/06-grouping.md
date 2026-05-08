@@ -104,7 +104,7 @@ flowchart TD
     G -- Yes --> I[Set sync_leader]
     E -- Yes --> I
     I --> J[Reorder: leader first in group_members]
-    J -->     K{Leader playing something else?}
+    J --> K{Leader playing something else?}
     K -- Yes --> N[Stop leader, wait for IDLE]
     K -- No --> O[_handle_set_members on leader]
     N --> O
@@ -134,7 +134,11 @@ The `_form_syncgroup` method is locked (`@lock` decorator from `music_assistant.
 
 When `set_members` is called on a dynamic group during playback:
 
-- **Adding members**: Validates compatibility with the sync leader's `can_group_with` (which now includes the leader's *linked output protocols* too — so an AirPlay-only player is valid for a Sonos leader that has AirPlay as a linked protocol). Compatible members are appended to the internal list and forwarded to `_handle_set_members` on the leader (bypassing the active-group redirect — see the note in [Formation Lifecycle](#formation-lifecycle)). The leader handles protocol selection (and may switch to a different output protocol so the new member can join via that protocol). Incompatible members are **not** registered (avoids stranding orphan entries).
+- **Adding members**:
+  - Validates compatibility with the sync leader's `can_group_with`, which now includes the leader's *linked output protocols* (so an AirPlay-only player is valid for a Sonos leader that has AirPlay as a linked protocol).
+  - Appends compatible members to the internal list and forwards to `_handle_set_members` on the leader, bypassing the active-group redirect (see the note in [Formation Lifecycle](#formation-lifecycle)).
+  - The leader handles protocol selection and may switch to a different output protocol so the new member can join.
+  - Incompatible members are **not** registered (avoids stranding orphan entries).
 - **Removing the sync leader while playing**: see [Dynamic Leader Switch](#dynamic-leader-switch) below — either a seamless protocol-level handoff or a dissolve + re-form fallback.
 - **Removing last member**: Dissolves the group entirely
 - **Removing a regular member**: Forwards removal to `_handle_set_members` on the leader
