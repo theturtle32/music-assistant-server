@@ -235,30 +235,37 @@ The class also supports list parameters in queries: a list value in `params` is 
 
 ## `CacheController`
 
-The `CacheController` (`music_assistant/controllers/cache.py`) provides a two-tier caching system:
+The `CacheController` (`music_assistant/controllers/cache/controller.py`) is a single-tier SQLite-backed cache with mandatory JSON serialization. The cache package also ships its own README at [`music_assistant/controllers/cache/README.md`](../../music_assistant/controllers/cache/README.md). Earlier versions used a layered LRU memory cache in front of SQLite; that tier was removed in PR #3542 because it produced an inconsistency where the memory layer returned native Python objects while the database layer returned JSON-deserialized dicts. With WAL mode, mmap (30 GB), a 64 MB page cache, and `synchronous=normal`, SQLite alone is fast enough for the hot paths.
 
-1. **Memory cache** (`MemoryCache`): An LRU `OrderedDict` limited to 500 entries. Checked first on reads.
-2. **Database cache** (`cache.db`): SQLite-backed, with expiration timestamps. Items with expiration under 30 minutes are memory-only (not persisted to DB).
+### Serialization
 
-**Cache operations:**
+Only `SerializableType` values (`str | int | float | bool | None | list | dict`, plus tuples that round-trip as lists) may be written. Passing a model object directly raises `TypeError` — callers must call `.to_dict()` before storing. On reads, `get()` returns the JSON-deserialized data; an optional `base_class` parameter automatically reconstructs model objects via `base_class.from_dict(...)`. The `@use_cache` decorator (in `cache/helpers.py`) uses the wrapped function's type annotations to drive the same `to_dict` / `from_dict` flow transparently.
+
+### Cache operations
 
 | Method | Behavior |
 |---|---|
-| `get(key, provider, category, checksum)` | Check memory → check DB → return `default` |
-| `set(key, data, expiration, provider, category)` | Write to memory; write to DB if expiration > 30 min |
-| `delete(key, category, provider)` | Remove from both tiers |
-| `clear(key_filter, category_filter, provider_filter)` | Bulk delete with optional filters |
+| `get(key, provider, category, checksum, default, allow_bypass, base_class)` | Read from SQLite; deserialize JSON; reconstruct via `base_class.from_dict()` if provided. Returns `default` on miss. |
+| `set(key, data, expiration, provider, category, checksum, persistent)` | Validate JSON-serializability (or raise), then write. `persistent=True` makes the entry survive `clear()`. |
+| `delete(key, category, provider)` | Remove a specific entry. |
+| `clear(key_filter, category_filter, provider_filter, include_persistent)` | Bulk delete with optional filters; `include_persistent=True` is required to remove entries written with `persistent=True`. |
 
-The `BYPASS_CACHE` context variable allows callers to temporarily skip cache reads (used during forced refreshes). The `@use_cache` decorator wraps provider methods to automatically cache their results with configurable expiration.
+Entries are namespaced by `(category: int, provider: str, key: str)`.
 
-**Maintenance:** A daily cleanup task (scheduled at 4:00 AM local time) scans for and removes expired entries. The database is also checked for excessive size (> 2 GB) on startup — if exceeded, the entire cache DB is deleted and recreated.
+### `BYPASS_CACHE` context
+
+The `BYPASS_CACHE` ContextVar (in `cache/constants.py`) forces cache misses for the duration of a context — useful during forced refreshes. Callers don't set it directly; they use the `handle_refresh()` async context manager on `CacheController` which toggles the var for the body's lifetime.
+
+### Maintenance
+
+A scheduled cleanup task (`CACHE_DATABASE_CLEANUP_TASK_ID`) removes expired entries. On startup, if the cache DB exceeds `MAX_CACHE_DB_SIZE_MB` (2048 MB / 2 GB), it is deleted and recreated — protection against runaway growth.
 
 ## Key Files
 
 | File | What to look at |
 |---|---|
 | [`music_assistant/controllers/config.py`](../../music_assistant/controllers/config.py) | `ConfigController` — JSON file I/O, get/set, provider/player/core config CRUD, encryption (~2106 lines) |
-| [`music_assistant/controllers/cache.py`](../../music_assistant/controllers/cache.py) | `CacheController` — two-tier cache, `@use_cache` decorator, `MemoryCache` |
+| [`music_assistant/controllers/cache/`](../../music_assistant/controllers/cache/) | `CacheController` package: `controller.py` (get/set/delete/clear, lifecycle), `constants.py` (`SerializableType`, `BYPASS_CACHE`, `DEFAULT_CACHE_EXPIRATION`, `MAX_CACHE_DB_SIZE_MB`), `helpers.py` (`@use_cache` decorator with type-annotation-driven serialization). See in-tree [README](../../music_assistant/controllers/cache/README.md). |
 | [`music_assistant/helpers/database.py`](../../music_assistant/helpers/database.py) | `DatabaseConnection` — SQLite abstraction, PRAGMA setup, query helpers |
 | [`music_assistant/constants.py`](../../music_assistant/constants.py) | Config keys (`CONF_*`), DB table names (`DB_TABLE_*`), reusable `ConfigEntry` instances (`CONF_ENTRY_*`) |
 | `music_assistant_models/config_entries.py` | `ConfigEntry`, `Config`, `CoreConfig`, `ProviderConfig`, `PlayerConfig`, `ConfigValueType` |

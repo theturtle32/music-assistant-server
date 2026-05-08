@@ -46,7 +46,7 @@ class MusicAssistant:
 |---|---|---|
 | `ConfigController` | `config` | Persistent JSON settings, encryption, get/set interface for all config |
 | `DiscoveryController` | `discovery` | mDNS/SSDP device discovery, zeroconf management |
-| `CacheController` | `cache` | Two-tier cache (in-memory LRU + SQLite), expiration, cleanup |
+| `CacheController` | `cache` | SQLite cache (WAL + mmap, no in-memory tier) with JSON-serialized values, expiration, persistent entries, scheduled cleanup |
 | `TasksController` | `tasks` | Background task scheduling, recurring tasks, progress tracking |
 | `StreamsController` | `streams` | Audio streaming engine, codec transcoding, flow-mode streams |
 | `MusicController` | `music` | Unified media library, provider sync, search aggregation |
