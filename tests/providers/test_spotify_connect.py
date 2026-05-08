@@ -126,3 +126,31 @@ class TestSpotifyOnVolumeProcessingInboundFlag:
         await SpotifyConnectProvider._on_volume(mock_self, 50)
 
         mock_self._spotify_provider._put_data.assert_awaited_once()
+
+
+class TestSpotifyRapidDragEndToEnd:
+    """End-to-end: outbound drags set the timestamp; subsequent echoes are suppressed."""
+
+    async def test_rapid_outbound_drags_then_delayed_echoes_all_suppressed(self) -> None:
+        """Multiple delayed echoes from a rapid MA drag are all suppressed."""
+        mock_self = _make_mock_spotify_provider()
+        mock_self._spotify_provider = MagicMock()
+        mock_self._spotify_provider.throttler.bypass = MagicMock()
+        mock_self._spotify_provider.throttler.bypass.return_value.__aenter__ = AsyncMock()
+        mock_self._spotify_provider.throttler.bypass.return_value.__aexit__ = AsyncMock()
+        mock_self._spotify_provider._put_data = AsyncMock()
+        mock_self.logger = MagicMock()
+
+        for vol in (50, 60, 70, 80):
+            await SpotifyConnectProvider._on_volume(mock_self, vol)
+
+        assert mock_self._spotify_provider._put_data.await_count == 4
+        assert mock_self._last_outbound_volume_time > 0
+
+        for raw in (32768, 39321, 45875, 52428):
+            await SpotifyConnectProvider._handle_custom_webservice(
+                mock_self, _make_volume_changed_request(raw_volume=raw)
+            )
+
+        mock_self.mass.players.cmd_volume_set.assert_not_awaited()
+        mock_self.mass.players.cmd_group_volume.assert_not_awaited()
