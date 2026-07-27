@@ -197,7 +197,7 @@ Located in `storage_path`, this is the primary data store for the media library:
 | `DB_TABLE_ALBUM_ARTISTS` | `album_artists` | Album ↔ artist relationships |
 | `DB_TABLE_PLAYLOG` | `playlog` | Playback history |
 | `DB_TABLE_LOUDNESS_MEASUREMENTS` | `loudness_measurements` | EBU-R128 loudness analysis results |
-| `DB_TABLE_SMART_FADES_ANALYSIS` | `smart_fades_analysis` | Beat detection / crossfade analysis |
+| `DB_TABLE_AUDIO_ANALYSIS` | `audio_analysis` | Per-track audio analysis results from `AudioAnalysisProvider` instances (loudness, beats, key, energy descriptors). See [16-audio-analysis.md](16-audio-analysis.md). |
 | `DB_TABLE_GENRES` | `genres` | Genre taxonomy |
 | `DB_TABLE_GENRE_MEDIA_ITEM_MAPPING` | `genre_media_item_mapping` | Genre ↔ media item links |
 | `DB_TABLE_GENRE_MEDIA_ITEM_EXCLUSION` | `genre_media_item_exclusion` | User-excluded genre ↔ media item pairs |

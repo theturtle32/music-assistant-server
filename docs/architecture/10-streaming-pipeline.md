@@ -53,7 +53,7 @@ The webserver is an `aiohttp` application managed by a `Webserver` helper class 
 
 ## StreamsController
 
-`StreamsController` (`controllers/streams/controller.py`) extends `CoreController` with `domain = "streams"`. It owns the HTTP server, the `StreamsAudio` sub-controller, and the `SmartFadesAnalyzer`.
+`StreamsController` (`controllers/streams/controller.py`) extends `CoreController` with `domain = "streams"`. It owns the HTTP server, the `StreamsAudio` sub-controller, and the [`AudioAnalysisController`](16-audio-analysis.md) sub-controller that fans PCM out to registered audio-analysis providers.
 
 ### Initialization
 
@@ -64,8 +64,10 @@ def __init__(self, mass: MusicAssistant) -> None:
     self.register_dynamic_route = self._server.register_dynamic_route
     self.unregister_dynamic_route = self._server.unregister_dynamic_route
     self.audio = StreamsAudio(mass)
-    self._smart_fades_analyzer = SmartFadesAnalyzer(self)
+    self._audio_analysis = AudioAnalysisController(self)
 ```
+
+`StreamsAudio` in turn instantiates a `SmartFadesMixer` (`self._smart_fades_mixer`) that reads persisted analysis to drive crossfade execution — the mixer is separate from the analysis algorithm (which now lives in the `smart_fades` audio-analysis provider). See [16-audio-analysis.md](16-audio-analysis.md#crossfade-execution-separate-from-the-analysis).
 
 `setup()` calls `self.audio.setup()`, validates FFmpeg version (≥ 6), and starts the HTTP server with the configured bind IP and port.
 
@@ -218,18 +220,9 @@ Radio streams always use `RADIO_BUFFER_SIZE` (15 seconds) regardless of preset.
 
 For large seeks (> 60s), FFmpeg starts at the seek position directly (`-ss` flag), and chunk indices are aligned via `_discarded_chunks`.
 
-### Analyze Callbacks
+### Audio Analysis Hand-off
 
-`ChunkCallback = Callable[[int, bytes], None]` — receives the position (seconds) and PCM data. An empty `bytes` signals EOF.
-
-Two analyzers are attached automatically:
-
-| Analyzer | Scope | Duration | Purpose |
-|----------|-------|----------|---------|
-| **Loudness** | All streams | Up to 120s | EBU R128 via FFmpeg `ebur128`; result stored for measurement-based normalization |
-| **Smart Fades** | Tracks only (not podcasts/audiobooks) | First 45s (intro) + last 45s (outro) | Beat detection via `librosa.beat.beat_track`; results cached for crossfade timing |
-
-Both check for existing measurements before starting.
+Live PCM is forwarded to the [`AudioAnalysisController`](16-audio-analysis.md) via `start_analysis(session_id, streamdetails, audio_format)` at the start of `_load_item` and `_distribute_chunk(session_key, pcm)` for each chunk. The controller fans the data out to every registered audio-analysis provider (loudness, smart fades, etc.) — they are no longer chunk callbacks attached to the `AudioBuffer` itself. Sessions only spin up when `seek_position_ms == 0`, since analysis needs the full track. See [16-audio-analysis.md](16-audio-analysis.md) for the controller lifecycle, provider hooks, and background scan.
 
 ### Error Handling
 
@@ -258,21 +251,14 @@ Mode selection (`get_normalization_mode` in `helpers/audio.py`) considers:
 
 ### Loudness Analysis
 
-`attach_loudness_analyzer` feeds up to 120 seconds of PCM into an FFmpeg `ebur128` process. The measured loudness is stored in `DB_TABLE_LOUDNESS_MEASUREMENTS` so subsequent plays of the same track can use measurement-based normalization instead of the more resource-intensive dynamic mode.
+Loudness measurement runs through the **builtin `loudness_analysis` audio-analysis provider** (EBU R128 via FFmpeg `ebur128`). Live playback and the nightly background scan share the same provider. Results are stored in `DB_TABLE_AUDIO_ANALYSIS` plus a denormalized fast-path in `DB_TABLE_LOUDNESS_MEASUREMENTS` (which also accepts loudness values supplied by file tags or ReplayGain — in which case runtime ebur128 is skipped). See [16-audio-analysis.md](16-audio-analysis.md#built-in-loudness-analysis) for the full provider model.
 
 ## Smart Fades System
 
-The smart fades system (`controllers/streams/smart_fades/`) provides intelligent crossfading between tracks.
+The smart fades system splits into **analysis** and **execution**:
 
-### Analyzer (`analyzer.py`)
-
-`SmartFadesAnalyzer.attach_to_buffer` registers chunk callbacks on the AudioBuffer:
-
-- Collects the first 45 seconds (intro) and last 45 seconds (outro) of each track.
-- Runs `librosa.beat.beat_track` in a background thread for beat detection.
-- Computes confidence from inter-beat interval coefficient of variation.
-- Estimates musical downbeats via `_estimate_musical_downbeats`.
-- Results are persisted in `DB_TABLE_SMART_FADES_ANALYSIS`.
+- **Analysis** is done by the optional [`smart_fades` audio-analysis provider](16-audio-analysis.md#optional-smart-fades-v2) (`providers/smart_fades/`) — Beat This! transformer + S-KEY on a streaming-friendly pipeline. Results (beats, downbeats, key, RMS energy, spectral centroid) land in `DB_TABLE_AUDIO_ANALYSIS`. This replaced the earlier per-`AudioBuffer` chunk-callback analyzer that ran `librosa.beat.beat_track` inline.
+- **Execution** stays here in `controllers/streams/smart_fades/`. `SmartFadesMixer.mix(...)` reads the persisted analysis and picks a fade strategy; the strategy composes a list of PCM filters.
 
 ### Fades (`fades.py`)
 
@@ -375,9 +361,10 @@ For radio streams using in-band OGG metadata (Opus/Vorbis), `ogg_handler.py` han
 | [`controllers/streams/audio.py`](../../music_assistant/controllers/streams/audio.py) | StreamsAudio — audio processing engine |
 | [`controllers/streams/audio_buffer.py`](../../music_assistant/controllers/streams/audio_buffer.py) | AudioBuffer — in-memory PCM buffering |
 | [`controllers/streams/constants.py`](../../music_assistant/controllers/streams/constants.py) | Buffer sizes, config keys, default port |
-| [`controllers/streams/smart_fades/analyzer.py`](../../music_assistant/controllers/streams/smart_fades/analyzer.py) | Beat detection via librosa |
-| [`controllers/streams/smart_fades/fades.py`](../../music_assistant/controllers/streams/smart_fades/fades.py) | Fade curve generation |
-| [`controllers/streams/smart_fades/mixer.py`](../../music_assistant/controllers/streams/smart_fades/mixer.py) | Crossfade mixing |
+| [`controllers/streams/smart_fades/fades.py`](../../music_assistant/controllers/streams/smart_fades/fades.py) | `SmartFade` ABC plus `SmartCrossFade` / `StandardCrossFade` implementations |
+| [`controllers/streams/smart_fades/filters.py`](../../music_assistant/controllers/streams/smart_fades/filters.py) | Composable PCM filters used by `SmartCrossFade` |
+| [`controllers/streams/smart_fades/helpers.py`](../../music_assistant/controllers/streams/smart_fades/helpers.py) | Tempo steps, downbeat extrapolation, synthetic timestamps |
+| [`controllers/streams/smart_fades/mixer.py`](../../music_assistant/controllers/streams/smart_fades/mixer.py) | `SmartFadesMixer` — reads persisted analysis, drives fade strategy |
 | [`controllers/streams/ogg_handler.py`](../../music_assistant/controllers/streams/ogg_handler.py) | Chained OGG stitching for radio |
 | [`helpers/audio.py`](../../music_assistant/helpers/audio.py) | Audio utilities, normalization mode selection |
 | [`helpers/ffmpeg.py`](../../music_assistant/helpers/ffmpeg.py) | FFmpeg process management |

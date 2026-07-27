@@ -80,6 +80,7 @@ graph TB
 | [13-discovery.md](13-discovery.md) | Shared Zeroconf, aggregated mDNS browser, SSDP/UPnP, server advertisement |
 | [14-metadata.md](14-metadata.md) | Metadata enrichment, image proxy, thumbnail caching, genre system |
 | [15-provider-lifecycle.md](15-provider-lifecycle.md) | Provider taxonomy, manifest system, loading/unloading, dependency management |
+| [16-audio-analysis.md](16-audio-analysis.md) | Audio analysis subsystem: `AudioAnalysisController`, `AudioAnalysisProvider` ABC, `AudioAnalysisData`, builtin loudness analysis, optional smart fades v2, background scan |
 
 ### Root Documentation
 
