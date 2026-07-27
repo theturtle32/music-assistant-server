@@ -33,12 +33,14 @@ flowchart TD
 |---|---|---|---|
 | `CONF_LANGUAGE` | STRING | `"en_US"` | Preferred locale for metadata (30+ options) |
 | `CONF_ENABLE_ONLINE_METADATA` | BOOLEAN | `True` | Toggle online provider queries |
+| `CONF_PREFER_LOCAL_GENRES` | BOOLEAN | `False` | When on, online providers' genres are masked off items that already have a local genre (file tag/NFO). Items without a local genre still receive online genres. (#3815) |
+| `CONF_ENABLE_RADIO_METADATA_LOOKUP` | BOOLEAN | `True` | When off, radio streams skip the artist/track artwork lookup and show only the station logo. (#3741) |
 | `CONF_THUMB_CACHE_MAX_SIZE` | INTEGER | `500` (MB) | Max disk cache for thumbnails (50-5000 range) |
 
 ### Setup and Lifecycle
 
 - **`setup(config)`**: Silences PIL logger, creates `collage_images/` directory under `mass.cache_path`
-- **`post_setup()`**: Registers the `/imageproxy` HTTP route on the streams server, schedules maintenance tasks, runs a one-time CDN URL migration for TheAudioDB
+- **`post_setup()`**: Registers the `/imageproxy` HTTP route on the streams server and schedules maintenance tasks
 - **`close()`**: Unregisters the `/imageproxy` route
 
 ### Core Entry Point: `update_metadata`
@@ -92,6 +94,10 @@ If `CONF_ENABLE_ONLINE_METADATA` is enabled, the controller iterates all loaded 
 
 Each provider is checked for the relevant `ProviderFeature` flag (`ARTIST_METADATA`, `ALBUM_METADATA`, `TRACK_METADATA`, `LYRICS`), and its returned `MediaItemMetadata` is merged via `update()`.
 
+**Provider order**: `MetadataProvider.priority` (default `50`, lower wins) determines iteration order — the controller's `providers` property sorts by it (#3623). The iTunes Artwork provider sets `priority = 30` so it runs before the default-priority providers; the rest currently use the default and effectively iterate in load order.
+
+**Local-genre masking**: When `CONF_PREFER_LOCAL_GENRES` is enabled and the item already has a non-empty `metadata.genres`, each online provider's response is shallow-cloned with `dataclasses.replace(metadata, genres=None)` before merging. Other fields merge normally — only the `genres` set is shielded. (#3815)
+
 ---
 
 ## Metadata Providers
@@ -116,23 +122,24 @@ Each method checks whether the corresponding `ProviderFeature` is declared. If t
 | **MusicBrainz** | `musicbrainz` | *(utility — no standard features)* | Artist name + tracks/albums | 30 days | 5 req/s |
 | **TheAudioDB** | `theaudiodb` | `ARTIST`, `ALBUM`, `TRACK` | MBID (artist), RG-MBID or name (album) | 90 days | 1 req/s |
 | **Fanart.tv** | `fanarttv` | `ARTIST`, `ALBUM` | MBID (artist), RG-MBID (album) | 60 days | 1/30s (or 1/s with VIP key) |
+| **iTunes Artwork** | `itunes_artwork` | `ALBUM` | UPC/EAN barcode (via `ExternalID.BARCODE`; `MusicBrainzReleaseGroup.barcode` is captured for RG lookups) | 30 days | *(uncapped)* |
 | **Genius Lyrics** | `genius_lyrics` | `TRACK`, `LYRICS` | Artist name + track name | 7 days | *(library-managed)* |
 | **LRCLIB** | `lrclib` | `TRACK`, `LYRICS` | Artist + track + album + duration | 14 days | 1/30s (or 1/s custom API) |
 
 ### What Each Provider Contributes
 
-| Data Type | TheAudioDB | Fanart.tv | Genius | LRCLIB |
-|---|---|---|---|---|
-| Artist images (thumb, logo, banner, fanart, cutout, clearart, landscape) | Yes (up to 10 variants per type) | Yes (thumb, logo, banner, fanart) | — | — |
-| Album images (thumb, disc art) | Yes (including HQ, 3D variants) | Yes | — | — |
-| Track images | Yes (thumb) | — | — | — |
-| Biography/description | Yes (localized) | — | — | — |
-| External links (website, social) | Yes | — | — | — |
-| Genre/style/mood | Yes | — | — | — |
-| Plain text lyrics | Yes | — | Yes | Yes (fallback) |
-| Synced lyrics (LRC) | — | — | — | Yes (preferred) |
-| Album review | Yes | — | — | — |
-| MBID backfill | Yes (artist + album RG) | — | — | — |
+| Data Type | TheAudioDB | Fanart.tv | iTunes | Genius | LRCLIB |
+|---|---|---|---|---|---|
+| Artist images (thumb, logo, banner, fanart, cutout, clearart, landscape) | Yes (up to 10 variants per type) | Yes (thumb, logo, banner, fanart) | — | — | — |
+| Album images (thumb, disc art) | Yes (including HQ, 3D variants) | Yes | Yes (thumb only, 1500×1500) | — | — |
+| Track images | Yes (thumb) | — | — | — | — |
+| Biography/description | Yes (localized) | — | — | — | — |
+| External links (website, social) | Yes | — | — | — | — |
+| Genre/style/mood | Yes | — | — | — | — |
+| Plain text lyrics | Yes | — | — | Yes | Yes (fallback) |
+| Synced lyrics (LRC) | — | — | — | — | Yes (preferred) |
+| Album review | Yes | — | — | — | — |
+| MBID backfill | Yes (artist + album RG) | — | — | — | — |
 
 ### MusicBrainz — The Utility Provider
 
@@ -203,6 +210,34 @@ For playlists, the controller generates collage thumbnails:
 
 ---
 
+## Radio Stream Artwork
+
+When a radio stream produces ICY/HLS in-band metadata containing an `artist - title` pair, the streams controller hands the `StreamDetails` to `MetaDataController.update_radio_stream_artwork(streamdetails)`. The full lookup pipeline is dedicated to enriching now-playing display when the station itself only carries text. (#3110)
+
+### Entry Point
+
+`update_radio_stream_artwork(streamdetails)` is gated by `CONF_ENABLE_RADIO_METADATA_LOOKUP` (default on; #3741). When enabled, it calls `get_image_url_by_name(artist_name, track_name, fallback_image_url=…)` to resolve an image URL plus optional corrected `artist`/`track` (the helper detects "Track - Artist" swaps). On a successful resolution, it updates `streamdetails.stream_metadata` and signals the active queue.
+
+### Lookup Pipeline
+
+1. **Filtering**: artist names matching `AD_DETECTION_PHRASES` (`"asset link"`, `"asset stop"`, `"asset spot"`, `"advert"`, `"promo"`) are short-circuited to the fallback image — these are commercial breaks, not music.
+2. **Cache check**: results are cached under `CACHE_CATEGORY_RADIO_ARTWORK` (`= 101`) keyed by `f"{artist_name.lower()}|{track_name.lower()}"`. Hits store for 90 days (`CACHE_EXPIRATION_RADIO_ARTWORK`); misses store for 7 days (`CACHE_EXPIRATION_RADIO_ARTWORK_MISS`) — the asymmetric TTL prevents repeatedly hammering MusicBrainz/etc. for the same dead lookup.
+3. **Library-first**: `_get_library_track_metadata`, `_get_library_artist_metadata`, and `_get_library_item_thumb` check the user's existing library before reaching out — if the user already owns the track, the local artwork is preferred.
+4. **External fallback**: `get_track_metadata_by_name` searches MusicBrainz with name variants (via `_search_musicbrainz_with_variants` for swapped/punctuated forms), then `_get_release_group_artwork` walks `self.providers` in priority order. Because the controller sorts by `MetadataProvider.priority` (#3623), **iTunes Artwork (priority 30) is checked before Fanart.tv (default priority 50)** — iTunes succeeds when the release group has a barcode; Fanart.tv handles the cases iTunes can't.
+5. **Station logo fallback**: `get_radio_stream_station_image(streamdetails)` returns the station's own logo when track-level lookup yields nothing.
+
+### Callers
+
+`controllers/streams/audio.py` reaches `update_radio_stream_artwork` along three paths, all of which funnel through the internal `_update_radio_stream_metadata(streamdetails, artist, title, …)` helper:
+
+- **ICY** (Shoutcast/Icecast `StreamTitle`): when in-band metadata is parsed and contains a `"Artist - Title"` pair, the audio loop calls `_update_radio_stream_metadata` directly.
+- **OGG** (in-band Vorbis comments via the chained-OGG handler): when the metadata callback fires with new artist/title, the audio loop calls `_update_radio_stream_metadata` directly.
+- **HLS**: `_update_hls_radio_metadata` is registered as `streamdetails.stream_metadata_update_callback` with a 5-second interval; it polls the playlist for fresh metadata and forwards new tracks into `_update_radio_stream_metadata`.
+
+`_update_radio_stream_metadata` updates `streamdetails.stream_metadata` and signals the queue, then schedules `update_radio_stream_artwork` via `mass.call_later(0.2, ..., task_id=f"update_radio_artwork_{queue_id}")`. The 0.2 s debounce + per-queue task ID coalesces rapid metadata flaps into a single artwork lookup.
+
+---
+
 ## Genre Handling
 
 `GenreController` (`controllers/media/genres.py`) manages genre entities as library-only items with an alias-based matching system.
@@ -239,7 +274,7 @@ Registered in `_register_maintenance_tasks()`, all scheduled daily at 4:00 AM lo
 
 | Task | Handler | Behavior |
 |---|---|---|
-| Missing artist artwork scan | `_scan_missing_artist_artwork` | Finds artists with no images and stale `last_refresh`, processes batch of 5 |
+| Missing artist metadata scan | `_scan_missing_artist_metadata` | Finds artists missing images **or** description with no `last_refresh`, processes batch of 5 (#3595) |
 | Playlist metadata refresh | `_refresh_playlist_metadata_batch` | Finds playlists needing refresh, processes batch of 5 |
 | Thumbnail cache cleanup | `_cleanup_thumb_cache` | Removes oldest thumbnails when cache exceeds configured max size |
 
@@ -254,6 +289,7 @@ Registered in `_register_maintenance_tasks()`, all scheduled daily at 4:00 AM lo
 | [`music_assistant/providers/theaudiodb/`](../../music_assistant/providers/theaudiodb/) | Artist/album/track images, bios, genres, links |
 | [`music_assistant/providers/musicbrainz/`](../../music_assistant/providers/musicbrainz/) | MusicBrainz ID resolution, release matching |
 | [`music_assistant/providers/fanarttv/`](../../music_assistant/providers/fanarttv/) | High-quality fan art and logos |
+| [`music_assistant/providers/itunes_artwork/`](../../music_assistant/providers/itunes_artwork/) | High-resolution album artwork from the iTunes catalog (UPC barcode lookup, 30-day cache, priority 30) |
 | [`music_assistant/providers/genius_lyrics/`](../../music_assistant/providers/genius_lyrics/) | Plain text lyrics via Genius API |
 | [`music_assistant/providers/lrclib/`](../../music_assistant/providers/lrclib/) | Synced (LRC) and plain lyrics |
 | [`music_assistant/helpers/images.py`](../../music_assistant/helpers/images.py) | Image data resolution, thumbnail generation, collage creation, cache management |
