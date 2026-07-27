@@ -50,22 +50,30 @@ graph LR
 Additional state:
 - `_prev_states` — previous `CompareState` per queue (for change detection in update signals)
 - `_transitioning_players` — set of player IDs currently between tracks (prevents duplicate advance commands)
-- `_play_action_locks` — per-queue `asyncio.Lock` for serializing play-related operations
+- `_play_action_refcount` — per-queue refcount of nested `@handle_play_action` invocations (used to keep `ATTR_PLAY_ACTION_IN_PROGRESS` set across nested play actions, since the actual lock is now the unified player lock — see [The `@handle_play_action` Decorator](#the-handle_play_action-decorator) below)
 
 ### The `@handle_play_action` Decorator
 
 Play-related methods (`play_media`, `play_index`) are wrapped with `@handle_play_action`, which:
-1. If already inside a play action (`IN_PLAY_ACTION` ContextVar is set), skip lock acquisition (nested call)
-2. Otherwise, acquire the per-queue lock with a **60-second timeout** (`PLAY_ACTION_LOCK_TIMEOUT`). If the timeout expires, the stuck lock is force-replaced with a fresh one to recover the queue.
-3. Sets `ATTR_PLAY_ACTION_IN_PROGRESS` on the queue
-4. Sets the `IN_PLAY_ACTION` `ContextVar` for nested calls
-5. Ensures cleanup on exit
 
-This prevents concurrent play commands from racing each other on the same queue, with the timeout ensuring a stuck lock never permanently blocks a queue.
+1. Acquires `mass.players.get_player_lock(queue_id, PlayerLockPurpose.PLAYBACK)` — the same per-purpose, re-entrant-per-asyncio-Task lock that the player controller uses for `cmd_play` / `cmd_stop` / `cmd_resume` / `cmd_power` / `play_announcement` / `play_media` / `enqueue_next_media`. See [04-player-controller.md](04-player-controller.md#per-player-locking) for the lock semantics.
+2. Maintains a per-queue refcount in `_play_action_refcount` so nested calls (e.g. `play_media` calling `play_index`) don't clear the in-progress flag prematurely.
+3. Sets `extra_attributes[ATTR_PLAY_ACTION_IN_PROGRESS] = True` and signals the queue when the refcount transitions 0→1; clears the flag and signals again when it transitions back to 0.
+
+Sharing one lock across queue + controller eliminates the previous deadlock: when the queue's `play_media` synchronously called `controller.play_media`, both held different locks and could deadlock under concurrent play actions (#3624). With one re-entrant lock per `(player_id, purpose)`, the same task can re-enter freely — no separate ContextVar guard is required.
+
+### Queue Restore on Player Register
+
+When a player registers, `PlayerQueuesController.on_player_register(player)` rehydrates the queue's `PlayerQueue` snapshot from the cache. The restore path:
+
+1. Loads the cached `PlayerQueue` dict via `mass.cache.get(...)` and runs it through `PlayerQueue.from_dict()`.
+2. Forces `extra_attributes[ATTR_PLAY_ACTION_IN_PROGRESS] = False` — protection against MA being killed mid-play-action and leaving the flag stuck on next start.
+3. Calls `queue.from_cache(prev_state)` (mashumaro hook on the model). This reconstructs both `radio_source` and `enqueued_media_items` back into proper `MediaItemType` instances — without it, mashumaro deserializes them as plain dicts and downstream `isinstance(item, Playlist)` checks (e.g. in `_fill_radio_tracks`) silently fail (#3827).
+4. Loads the cached queue items via `mass.cache.get(...)` and runs each through `QueueItem.from_cache()`.
 
 ## PlayerQueue Dataclass
 
-`PlayerQueue` (from `music_assistant_models.player_queue`) holds the runtime state of a single queue:
+`PlayerQueue` (from `music_assistant_models.player_queue`) holds the runtime state of a single queue. Queue-scoped flags such as `ATTR_PLAY_ACTION_IN_PROGRESS` live in the `extra_attributes` dict — they used to be top-level fields in earlier versions.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -73,23 +81,26 @@ This prevents concurrent play commands from racing each other on the same queue,
 | `display_name` | `str` | Human-readable name |
 | `active` | `bool` | Whether this queue is the player's active source |
 | `available` | `bool` | Whether the associated player is available |
+| `items` | `int` | Total item count |
 | `state` | `PlaybackState` | IDLE, PLAYING, PAUSED |
 | `shuffle_enabled` | `bool` | Shuffle mode |
 | `repeat_mode` | `RepeatMode` | OFF, ONE, ALL |
 | `dont_stop_the_music_enabled` | `bool` | Auto-radio when queue runs out |
-| `current_index` | `int` | Index of the currently playing item |
-| `index_in_buffer` | `int` | Index of the item currently in the audio buffer |
+| `current_index` | `int \| None` | Index of the currently playing item |
+| `index_in_buffer` | `int \| None` | Index of the item currently in the audio buffer |
 | `elapsed_time` | `float` | Seconds elapsed in current track |
 | `elapsed_time_last_updated` | `float` | Timestamp of last elapsed_time update |
 | `current_item` | `QueueItem \| None` | The item currently playing |
 | `next_item` | `QueueItem \| None` | The next item (for UI display) |
-| `resume_pos` | `float` | Position to resume from after pause |
+| `resume_pos` | `int` | Seconds offset to resume from after pause |
 | `flow_mode` | `bool` | Whether flow mode is active (set by streams layer) |
-| `flow_mode_stream_log` | `list` | Items played during the current flow stream |
-| `radio_source` | `list` | Seed items for radio mode |
-| `enqueued_media_items` | `list` | Original media items that were enqueued |
-| `session_id` | `str` | Current playback session (validated in stream URLs) |
-| `items` | `int` | Total item count |
+| `flow_mode_stream_log` | `list[PlayLogEntry]` | Items played during the current flow stream |
+| `radio_source` | `list[MediaItemType]` | Seed items for radio mode (and dynamic-playlist refill) |
+| `enqueued_media_items` | `list[MediaItemType]` | Original media items that were enqueued (capped at 10 most recent) |
+| `next_item_id_enqueued` | `str \| None` | Queue item id last announced to the player via `enqueue_next_media`, so re-announce can skip if unchanged |
+| `items_last_updated` | `float` | Timestamp of the last `update_items()` swap (drives `QUEUE_ITEMS_UPDATED` change detection) |
+| `session_id` | `str \| None` | Current playback session (validated in stream URLs) |
+| `extra_attributes` | `dict[str, EXTRA_ATTRIBUTES_TYPES]` | Bag for queue-scoped flags (value type alias is `str \| int \| float \| bool \| None`). Holds `ATTR_PLAY_ACTION_IN_PROGRESS` and any other transient queue-side state |
 | `userid` | `str \| None` | User who initiated playback |
 
 The `corrected_elapsed_time` property accounts for wall-clock drift while the state is PLAYING.
@@ -118,18 +129,20 @@ The `uri` and `media_type` properties are derived from `media_item`.
 
 ### `play_media` — The Main Entry Point
 
-`play_media(queue_id, media, option, radio_mode, start_item, username)` is the primary API for initiating playback. It accepts flexible input:
+`play_media(queue_id, media, option, radio_mode, start_item, username, sort_by)` is the primary API for initiating playback. It accepts flexible input:
 
 - **`str`** — parsed as a URI via `mass.music.get_item_by_uri()`
 - **`ItemMapping`** — a lightweight reference to a media item
 - **`MediaItemType`** — a fully resolved media item
 - **`list`** — any combination of the above
 
+The `sort_by` parameter (#3663) lets the caller pin the queue's track order to whatever sort the user is currently viewing in the UI before `start_item` is applied. Without it, "play from here" on an album sorted by year/duration/title would silently fall back to the album's intrinsic track order; with it, the queue matches the user's view exactly.
+
 The `QueueOption` enum controls how items are inserted:
 
 | Option | Behavior |
 |--------|----------|
-| `REPLACE` | Clear queue, load items, start playback from index 0 |
+| `REPLACE` | Clear queue items (without stopping the player — `skip_stop=True`, #3753), load new items, start playback from index 0. The player keeps outputting audio through the brief gap; the new track takes over via the normal `play_index` flow. |
 | `PLAY` | Insert at current position, start playing the first new item |
 | `NEXT` | Insert after the current item |
 | `REPLACE_NEXT` | Replace everything after current item |
@@ -151,6 +164,29 @@ Radio refill is triggered in `_update_queue_from_player` when fewer than 5 track
 ### "Don't Stop the Music"
 
 `dont_stop_the_music_enabled` is a gentler version of radio mode — when the queue is about to run out, it uses the originally `enqueued_media_items` as seed and calls `_fill_radio_tracks` to append similar content.
+
+### Dynamic Playlists
+
+Some music providers expose **dynamic playlists** — internet radio stations or smart playlists where the next batch of tracks is computed on demand by the provider rather than known up-front. They surface as `Playlist` objects with `is_dynamic = True` (#3527).
+
+`play_media` detects `Playlist + is_dynamic` and routes through a different path:
+
+1. The first batch is fetched immediately via `get_playlist_tracks(playlist, start_item=None)`.
+2. The dynamic playlist itself is preserved on `queue.radio_source` so the refill path can find it later.
+3. Refill (`_fill_radio_tracks`) checks `radio_source` for a dynamic playlist *before* falling through to generic similar-tracks radio. If one is found, it fetches the next batch from the provider and **appends** to the queue:
+
+   ```python
+   await self.load(
+       queue_id,
+       queue_items,
+       insert_at_index=len(self._queue_items[queue_id]),
+       keep_remaining=True,
+       keep_played=True,
+   )
+   ```
+
+   Appending (rather than inserting after `current_index`) preserves any unplayed buffered tracks ahead of the new batch (#3675). Earlier versions inserted at `current_index + 1` with `keep_remaining=False`, which discarded those tracks.
+4. If the provider returns no playable tracks, the refill logs a warning and exits — it does **not** fall back to the generic similar-tracks radio. Stations manage their own track supply.
 
 ## Playback Flow
 
@@ -200,6 +236,7 @@ Key details:
 3. Determines album-context loudness (tracks from the same album can share loudness measurements).
 4. Calls `StreamsAudio.get_stream_details()` to resolve the actual audio source, format, loudness data, and normalization mode.
 5. When `is_start=True`, calls `AudioBuffer.get_buffer(wait_ready=True, reason="prepare")` to pre-fill the buffer before the player asks for the stream.
+6. After `get_stream_details` returns, if `streamdetails.duration` has a value and the original `queue_item.duration` was unset (common for podcast episodes and some audiobooks), the duration is backfilled onto the queue item and a `signal_update(items_changed=True)` is emitted so the UI reflects the actual length once playback starts (#3668).
 
 ### Pre-Warming the Next Track
 
@@ -258,6 +295,10 @@ Called by the streams layer when the current stream is about to end (crossfade t
 | `ONE` | Same index (loop single track) | Advances normally (skip overrides repeat-one) |
 | `ALL` | Returns index 0 (loop entire queue) | Normal advance |
 
+### Queue Items Mutability Invariant
+
+`_queue_items[queue_id]` is treated as **append-or-replace, never mutate-in-place**. Methods that change the list build or `.copy()` it first, then call `update_items(queue_id, new_list)` to atomically swap the binding and emit a `QUEUE_ITEMS_UPDATED` event. `delete_item()` originally mutated the list in place, which could race with concurrent reads serializing the queue to clients; PR #3551 fixed it to copy before `pop()`. Treat any future mutator the same way.
+
 ## Playback Controls
 
 | Method | Behavior |
@@ -271,21 +312,11 @@ Called by the streams layer when the current stream is about to end (crossfade t
 | `seek(position)` | Calls `play_index(queue_id, current_index, seek_position=position)` |
 | `play_pause()` | Toggle between `play()` and `pause()` |
 
-### The `IN_QUEUE_COMMAND` Guard
+### Cross-Controller Command Re-entrancy
 
-Player commands like `cmd_stop` and `cmd_pause` on the `PlayerController` check whether the player has an active queue. If so, they redirect to `player_queues.stop()` / `player_queues.pause()`. But queue methods themselves need to call those same `cmd_*` methods without triggering the redirect.
+When `cmd_stop`, `cmd_pause`, etc. on `PlayerController` see an active queue, they unconditionally redirect to `player_queues.stop()` / `player_queues.pause()`. The queue methods then call back into `cmd_stop` / `cmd_pause` to actually stop the player.
 
-The `IN_QUEUE_COMMAND` `ContextVar` (defined on `PlayerController`) breaks this cycle:
-
-```python
-# PlayerController checks:
-if not IN_QUEUE_COMMAND.get() and active_queue:
-    return await self.mass.player_queues.stop(queue_id)
-
-# Queue methods set it before calling player commands:
-IN_QUEUE_COMMAND.set(True)
-await self.mass.players.cmd_stop(player_id)
-```
+This used to require an `IN_QUEUE_COMMAND` ContextVar guard to prevent infinite recursion and lock contention. PR #3624 removed the guard: both call sites now share the unified player lock via `get_player_lock(player_id, PlayerLockPurpose.PLAYBACK)`, which is re-entrant per asyncio Task. The same task that's running inside `player_queues.stop()` can call `cmd_stop` and re-enter the lock without deadlock — and the redirect from `cmd_stop` back to the queue is harmless because the redirect target sees a no-op (queue already stopping). See [04-player-controller.md](04-player-controller.md#per-player-locking).
 
 ## Transition Guard
 

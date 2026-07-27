@@ -223,7 +223,14 @@ Plugin source internals are covered in [11-plugin-system.md](11-plugin-system.md
 | `_player_command_locks` | Per `(PlayerLockPurpose, player_id)` `asyncio.Lock` | Serializes concurrent commands sharing the same purpose on the same player. See [Per-Player Locking](#per-player-locking) below for the re-entrant `get_player_lock` API. |
 | `_register_lock` | Global `asyncio.Lock` | Serializes all player registrations |
 | `_delayed_evaluation_lock` | Global `asyncio.Lock` | Serializes delayed protocol evaluations (from `ProtocolLinkingMixin`) |
-| `IN_QUEUE_COMMAND` | `ContextVar[bool]` | Prevents circular calls between `PlayerController` and `PlayerQueuesController`. When `True`, `cmd_stop`/`cmd_pause`/`cmd_seek` skip the queue redirect path. Set by `player_queues` when it calls back into the player controller. |
+
+### Per-Player Locking
+
+Player commands that must not race (power, playback, volume) acquire a lock via `get_player_lock(player_id, purpose=...)`. The lock is **purpose-scoped** — commands with different purposes can run concurrently on the same player (for example a volume change and a power change), but two commands with the same purpose serialize. The `@handle_player_command(lock=...)` decorator wraps the command body with `get_player_lock` automatically using the appropriate purpose: `PlayerLockPurpose.PLAYBACK` for `cmd_stop` / `cmd_resume` / `cmd_power` / `play_announcement` / `play_media` / `enqueue_next_media`, and `PlayerLockPurpose.VOLUME` for `cmd_volume_set` / `cmd_volume_mute`.
+
+The lock is **re-entrant per asyncio Task**: nested calls within the same task skip re-acquisition (preventing self-deadlock), but deferred callbacks (`call_later`, `create_task`) run in a fresh task and acquire the lock fresh. Ownership is tracked in `self._task_held_locks: dict[int, set[str]]` keyed by task ID, with lock keys formed as `f"{purpose.value}_{player_id}"`.
+
+Locks, throttlers, and protocol evaluations are also cleaned up at unregister time to prevent leakage when players disappear (#3554).
 
 ### Per-Player Locking
 
