@@ -1,6 +1,6 @@
 # 11 — Plugin System
 
-The plugin system bridges external audio sources and services into the Music Assistant player model. A **plugin provider** can inject audio from external apps (Spotify, AirPlay, AriaCast, VBAN), report plays to scrobbling services (Last.fm, ListenBrainz, Subsonic), or provide guest access features (Party). The key abstraction is `PluginSource` — a `PlayerSource` subclass that carries both stream configuration and playback-control callbacks, allowing MA to route commands back to the originating external app.
+The plugin system bridges external audio sources and services into the Music Assistant player model. A **plugin provider** can inject audio from external apps (Spotify, AirPlay, AriaCast, VBAN), report plays to scrobbling services (Last.fm, ListenBrainz, Subsonic), provide guest access features (Party), or expose MA players onto an external control surface (Yandex Smart Home, Yandex Music Connect). The key abstraction is `PluginSource` — a `PlayerSource` subclass that carries both stream configuration and playback-control callbacks, allowing MA to route commands back to the originating external app.
 
 ---
 
@@ -10,9 +10,9 @@ Plugins fall into three categories based on what they provide:
 
 | Category | Examples | Has `AUDIO_SOURCE` Feature | Provides Audio | Listens to Events |
 |---|---|---|---|---|
-| **Receiver** (audio source) | Spotify Connect, AirPlay Receiver, AriaCast Receiver, VBAN Receiver | Yes | Yes — raw PCM via pipe or async generator | Indirectly (via subprocess/protocol events) |
+| **Receiver** (audio source) | Spotify Connect, AirPlay Receiver, AriaCast Receiver, VBAN Receiver, Yandex Music Connect | Yes | Yes — raw PCM via pipe or async generator | Indirectly (via subprocess/protocol events) |
 | **Scrobbler** (event listener) | Last.fm, ListenBrainz, Subsonic | No | No | Yes — subscribes to `MEDIA_ITEM_PLAYED` |
-| **Feature** (UI/access) | Party | No | No | No — registers API commands |
+| **Feature / bridge** (UI, access, external control surfaces) | Party, Yandex Smart Home | No | No | No — registers API commands / serves an external API |
 
 Only receiver plugins participate in the `PluginSource`/player integration described below. Scrobblers and feature plugins use the standard provider base class with no audio-specific behavior.
 
@@ -270,6 +270,10 @@ Pre-buffering: Uses a ring buffer (75 frames × 20ms = 1.5s) and waits for 60% f
 
 Receives audio over UDP using the VBAN protocol (via the `aiovban` library). Implements `StreamType.CUSTOM`. Highly configurable (PCM format, sample rate, channels, bind IP, port, queue strategy). No playback controls, no metadata. The simplest receiver — always visible in the source list (`passive = False`).
 
+### Yandex Music Connect (Ynison)
+
+Provider domain `yandex_ynison` (#3614). Declares `ProviderFeature.AUDIO_SOURCE`, so it is a receiver in the same sense as Spotify Connect: it makes an MA player appear as a selectable device inside the Yandex Music app via the Ynison protocol, and audio flows *into* MA from the external app. Playback control travels back out through the `PluginSource` callbacks. Not builtin.
+
 ---
 
 ## Scrobbler Plugins
@@ -288,9 +292,13 @@ All scrobblers subscribe to `EventType.MEDIA_ITEM_PLAYED` in `loaded_in_mass()` 
 
 ---
 
-## Party Plugin
+## Feature and Bridge Plugins
 
-The Party plugin (`providers/party/`) is neither a receiver nor a scrobbler — it provides guest access functionality with no audio involvement.
+Plugins in this category have no audio involvement and no `PluginSource`. Some register API surfaces for MA-side features (Party); others expose MA players onto an external control surface (Yandex Smart Home).
+
+### Party
+
+The Party plugin (`providers/party/`) provides guest access functionality with no audio involvement.
 
 **Core features**:
 - Guest user creation (`UserRole.GUEST` named `party_guest`)
@@ -301,6 +309,10 @@ The Party plugin (`providers/party/`) is neither a receiver nor a scrobbler — 
 **API commands**: `party/url`, `party/player`, `party/config`, `party/add_to_queue`, `party/boost_queue_item`, `party/skip`.
 
 **Queue management**: Guest-added tracks go into a priority section after the current track. Boosted tracks move to the end of the boosted sub-section. A `_queue_lock` serializes all queue mutations. The `_find_section_end` helper scans forward to find where consecutive items with a given attribute end.
+
+### Yandex Smart Home
+
+Provider domain `yandex_smarthome` (#3615). Declares **no** `ProviderFeature`s at all — it has no `PluginSource` and never touches audio. Instead it stands up a Yandex Smart Home API surface so MA players are controllable from Yandex Alice. Architecturally it is the mirror image of a receiver plugin: commands flow *in* from the external service and are translated into `PlayerController` calls, rather than MA reaching out to an external app. Not builtin.
 
 ---
 
