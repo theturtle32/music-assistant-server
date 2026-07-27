@@ -38,7 +38,7 @@ Only receiver plugins participate in the `PluginSource`/player integration descr
 | Field | Type | Default | Purpose |
 |---|---|---|---|
 | `audio_format` | `AudioFormat` | PCM S16LE 44.1kHz stereo | PCM format the source provides |
-| `metadata` | `StreamMetadata \| None` | `None` | Current track info (title, artist, album, image URL, duration, elapsed time) |
+| `metadata` | `StreamMetadata \| None` | `None` | Current track info (title, artist, album, image URL, duration, elapsed time). When `metadata.elapsed_time` is set, the player controller uses it as the source of truth for player progress instead of the player's byte-consumption counter — letting plugins like Spotify Connect drive accurate position from the cloud-side playhead (#3652) |
 | `stream_type` | `StreamType \| None` | `StreamType.CUSTOM` | How audio is delivered: `CUSTOM` (async generator) or pipe-based |
 | `path` | `str \| None` | `None` | Named pipe path when `stream_type` is not `CUSTOM` |
 | `in_use_by` | `str \| None` | `None` | Player ID currently consuming this source |
@@ -65,7 +65,7 @@ Returns a plain `PlayerSource` copy with only the serializable fields (`id`, `na
 
 ## `PluginProvider` Base Class
 
-`PluginProvider` (in `models/plugin.py`) extends `Provider` and defines three methods:
+`PluginProvider` (in `models/plugin.py`) extends `Provider` and defines several optional methods that subclasses override based on the features they declare:
 
 ```python
 def get_source(self) -> PluginSource:
@@ -76,12 +76,28 @@ async def get_audio_stream(self, player_id: str) -> AsyncGenerator[bytes, None]:
     """Yield raw audio bytes for CUSTOM stream type."""
     raise NotImplementedError
 
+async def get_tts_message(self, message: str, language: str | None = None) -> StreamDetails:
+    """Convert text to speech and return StreamDetails for streaming the audio."""
+    raise NotImplementedError
+
+async def ai_query(self, query: str) -> str:
+    """Send a natural-language query to an AI backend and return the response text."""
+    raise NotImplementedError
+
 async def resolve_image(self, path: str) -> str | bytes:
     """Resolve an image path to bytes or a URL."""
     return path
 ```
 
-`get_source()` is called only when `ProviderFeature.AUDIO_SOURCE` is declared. `get_audio_stream()` is called only when `stream_type == StreamType.CUSTOM`. Providers using named pipes (Spotify Connect, AirPlay) never implement `get_audio_stream()` — the streams controller reads the pipe directly via ffmpeg.
+Each method is called only when the matching `ProviderFeature` is declared:
+
+| Method | Feature gate | Notes |
+|---|---|---|
+| `get_source()` | `AUDIO_SOURCE` | Returns the `PluginSource` exposed to players |
+| `get_audio_stream(player_id)` | (used when `stream_type == StreamType.CUSTOM`) | Providers using named pipes (Spotify Connect, AirPlay) never implement this — the streams controller reads the pipe directly via ffmpeg |
+| `get_tts_message(message, language)` | `TTS` | Converts text to speech and returns `StreamDetails` for the resulting audio (#3607) |
+| `ai_query(query)` | `AI_QUERY` | Sends a natural-language prompt to an AI backend and returns the response text (#3607) |
+| `resolve_image(path)` | *(non-abstract, optional override)* | Resolves an image path to bytes or a URL; defaults to returning the path unchanged |
 
 ---
 

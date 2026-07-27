@@ -159,7 +159,7 @@ flowchart TD
 | `__final_source_list` | `list[PlayerSource]` | PROTOCOL → native only. Else: ensure MA queue source + plugin sources appended |
 | `__final_group_members` | `list[str]` | If synced → empty. Else: native members (protocol IDs translated to visible parents), merged with active protocol's members. Non-GROUP with only self → empty |
 | `__final_synced_to` | `str \| None` | Native `synced_to` (mapped through protocol parent) → linked protocol's `synced_to` (resolved to visible parent) |
-| `__final_supported_features` | `set[PlayerFeature]` | Native features + `ACTIVE_PROTOCOL_FEATURES` from active protocol + `PROTOCOL_FEATURES` from all linked protocols ± power/volume/mute adjusted by control config |
+| `__final_supported_features` | `set[PlayerFeature]` | Native features + `ACTIVE_PROTOCOL_FEATURES` from active protocol + `PROTOCOL_FEATURES` from all linked protocols ± power/volume/mute adjusted by control config; `PlayerFeature.SELECT_SOURCE` is auto-added when the final source list has at least two non-passive entries (#3789) |
 | `__final_can_group_with` | `set[str]` | If synced → empty. Else: expanded native set (translated to visible) + linked protocol group sets (if no external source active) |
 | `__final_active_source` | `str \| None` | Active group/sync leader → protocol parent → in-use plugin → `__active_mass_source` (if no external source) → native `active_source` → fallback to `__active_mass_source` or `player_id` |
 
@@ -199,6 +199,20 @@ The `PlayerType` enum (from `music_assistant_models.enums`) defines four types w
 - **`__final_can_group_with`**: PROTOCOL → simplified expanded set; others → protocol-to-parent translation
 - **`__final_active_source`**: PROTOCOL → uses parent's active source
 - **Event signaling**: PROTOCOL players do *not* trigger `PLAYER_ADDED` or `PLAYER_UPDATED` events
+
+## Update Notification Hooks
+
+Beyond reacting to its own state changes, a `Player` can override one of five callbacks to be notified when a *related* player's state changes. The controller dispatches these from `_forward_state_update` whenever a relevant relationship is in scope. Default implementations call `trigger_player_update` to refresh the receiving player's own state, so subclasses only need to override when they need richer behavior than a plain re-render.
+
+| Hook | Fires when |
+|---|---|
+| `on_protocol_player_updated(protocol_player, changed_values)` | One of this player's linked protocol players (e.g. a RAOP/AirPlay endpoint linked to a native parent) updated |
+| `on_protocol_parent_updated(protocol_parent, changed_values)` | The protocol parent of this protocol player updated |
+| `on_group_member_updated(member_player, changed_values)` | A group member of this group player updated |
+| `on_group_updated(group_player, changed_values)` | A group player this player belongs to updated |
+| `on_sync_parent_updated(sync_parent, changed_values)` | The sync parent (ad-hoc sync leader) of this player updated |
+
+All five take the source `Player` and a `changed_values` dict mapping attribute name to a `(previous, new)` tuple. See [04-player-controller.md](04-player-controller.md#state-update-fan-out) for the dispatch flow.
 
 ## Player Control Commands
 
