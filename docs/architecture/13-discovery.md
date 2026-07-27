@@ -46,6 +46,7 @@ graph TB
 | `_mdns_locks` | `dict[str, asyncio.Lock]` | Per-provider locks serializing mDNS callbacks |
 | `_upnp_locks` | `dict[str, asyncio.Lock]` | Per-provider locks serializing UPnP callbacks |
 | `_upnp_run_lock` | `asyncio.Lock` | Prevents concurrent UPnP discovery cycles |
+| `_mdns_waiters` | `list[asyncio.Event]` | Events signalled on every mDNS state change, so `async_find_mdns_service` can wake and re-scan the cache |
 
 ### Setup Lifecycle
 
@@ -164,6 +165,29 @@ When a provider loads after startup, it may have missed mDNS announcements that 
 
 The entire replay is serialized under the provider's lock to prevent interleaving with live events.
 
+### On-Demand Lookup
+
+Alongside the push-based callback routing, providers can *pull* a specific service when they need it synchronously:
+
+```python
+info = await mass.discovery.async_find_mdns_service(
+    service_type="_raop._tcp.local.",
+    name_filter=device_name,
+    timeout=3.0,
+)
+```
+
+`async_find_mdns_service(service_type, name_filter, timeout=3.0)` implements a **check-cache-then-wait** loop:
+
+1. Register an `asyncio.Event` in `_mdns_waiters`.
+2. Clear the event, then scan `aiozc.zeroconf.cache.cache` for an entry whose lowercased name contains both `service_type` and `name_filter` (cache keys are lowercased DNS names, so matching is case-insensitive). On a hit, resolve via `async_request` and return.
+3. On a miss, `await` the event with the remaining deadline. `_on_mdns_service_state_change` sets every waiter's event on each incoming mDNS event, waking the loop to re-scan.
+4. Return `None` once the deadline expires.
+
+Clearing the event *before* the cache scan (rather than after) is what makes this race-free: an announcement arriving mid-scan still leaves the event set, so the next `await` returns immediately instead of blocking until timeout.
+
+This exists because of the **AirPlay RAOP/AirPlay race** (#3546). An AirPlay device advertises `_airplay._tcp.local.` and `_raop._tcp.local.` independently, and either can arrive first. The provider needs both to build one player, so on receiving one it pulls the other on demand rather than holding partial state and hoping for a second callback.
+
 ---
 
 ## SSDP/UPnP Discovery
@@ -269,7 +293,7 @@ In addition to the shared mDNS/UPnP infrastructure, player providers can impleme
 
 | Pattern | Example | Why not manifest-driven |
 |---|---|---|
-| Manual IP addresses | Sonos S1 | User-configured IPs bypass network discovery entirely |
+| Manual IP addresses | Sonos, Sonos S1, Chromecast, Sendspin, WiiM, MPD, Roku, Bose SoundTouch, Samsung WAM, Fully Kiosk | User-configured IPs bypass network discovery entirely. Shared via the `CONF_ENTRY_MANUAL_DISCOVERY_IPS` config entry (`manual_discovery_ip_addresses`, advanced, multi-value STRING). Providers read it in `discover_players()` and probe each address directly, so devices on unroutable subnets or with mDNS blocked still register. Sendspin gained support in #3846. |
 | Controller-side enumeration | HEOS | mDNS finds the controller; `discover_players()` queries it for all devices |
 | Library-based discovery | Chromecast | Delegates to PyChromecast's own Zeroconf browser |
 | Config-driven virtual players | Sync Group | No network discovery — reads stored player configs |
