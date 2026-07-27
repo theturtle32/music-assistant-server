@@ -13,7 +13,7 @@ Music Assistant supports three distinct grouping models for multi-room audio: **
 | **Cross-protocol** | No — same protocol only | Yes — any player | No — same protocol only |
 | **Audio delivery** | Delegated to sync leader's native protocol | Server-side fan-out (independent HTTP stream per member) | Native protocol sync |
 | **Player ID format** | `syncgroup_{random_8}` | `ugp_{random_8}` | N/A |
-| **Dissolves on stop** | After 5s delay | No (persistent power state) | Immediately |
+| **Dissolves on stop** | No — `stop()` only stops the leader; group remains powered. Dissolves only on `power(False)`. | No (persistent power state) | Immediately |
 | **Dynamic membership** | Optional (`CONF_DYNAMIC_GROUP_MEMBERS`) | Optional | Always |
 | **`SET_MEMBERS` feature** | Only if dynamic | Only if dynamic | Depends on provider |
 
@@ -32,8 +32,9 @@ The sync leader reference is stored as `SyncGroupPlayer.sync_leader: Player | No
 **Selection logic** (`_select_sync_leader`):
 
 1. If a current leader exists and is available, keep it
-2. Prioritize static group members (stable across restarts)
-3. Fall back to first available member
+2. **Prefer protocol continuity** when re-selecting after a leader change while playing — pick a member that supports the currently active output protocol so the live session can continue without a teardown (#3600)
+3. Prioritize static group members (stable across restarts)
+4. Fall back to first available member
 
 ### Protocol Compatibility
 
@@ -54,7 +55,7 @@ A `CONF_MEMBERS_FILTER` config entry allows excluding specific players from the 
 
 ### Feature Inheritance
 
-Base features are minimal — just `PLAY_MEDIA` (plus `SET_MEMBERS` if dynamic). When a sync leader is active, the group inherits additional features from the leader:
+Base features are `PLAY_MEDIA` and `POWER` (plus `SET_MEMBERS` if dynamic). `POWER` is canonical here because the group's lifecycle is power-driven (see [Lifecycle](#formation-lifecycle) below) — `_attr_powered` is the source of truth for "is this group active". When a sync leader is active, the group also inherits additional features from the leader:
 
 ```python
 EXTRA_FEATURES_FROM_MEMBERS = {
@@ -70,28 +71,32 @@ This means a sync group's capabilities change dynamically depending on which mem
 
 ### State Delegation
 
-The sync group delegates most of its observable state to the sync leader:
+The sync group delegates most of its observable state to the sync leader. Crucially, it reads the leader's *raw* attributes (`leader.playback_state`, `leader.elapsed_time`, etc.) — **not** `leader.state.*`. This avoids a circular dependency: synced clients (`__final_synced_to`) mirror their leader's `state.playback_state`, so if the group derived from `state.*` and the leader derived from the group, both would deadlock at the previous value. Members of an active group always report their own raw playback state; only manually-synced clients (`synced_to`) mirror the leader.
 
 | Property | Source |
 |---|---|
-| `playback_state` | Sync leader (or `IDLE` if none) |
-| `elapsed_time` | Sync leader (or its active protocol player) |
-| `current_media` | Sync leader |
-| `active_source` | Sync leader (with protocol-awareness — see below) |
-| `group_members` | Sync leader's reported members (preferred) or internal list |
+| `playback_state` | Sync leader's raw `playback_state` (or `IDLE` if no leader) |
+| `elapsed_time`, `elapsed_time_last_updated` | Sync leader's raw `elapsed_time` / `elapsed_time_last_updated` |
+| `current_media` | Sync leader's raw `current_media` (set optimistically in `play_media`) |
+| `active_source` | Sync leader's raw `active_source` (with protocol-awareness — see below) |
+| `group_members` | Sync leader's reported `state.group_members` (preferred) or internal list |
 | `source_list` | Sync leader |
-
-The `elapsed_time` property is protocol-aware: if the sync leader has an active output protocol (not native), elapsed time is read from the protocol player instead.
+| `powered` | Group's own `_attr_powered` (canonical "is this group active" signal) |
 
 The `active_source` property filters out cases where the sync leader reports a source that actually belongs to an active output protocol (e.g. AirPlay) or a bridged protocol (e.g. Sendspin), to avoid confusing source attribution.
 
+### State Polling
+
+While the group is playing, `SyncGroupPlayer.poll()` runs every 1 second to refresh `elapsed_time` from the sync leader. When idle, the poll interval drops to 30 seconds. This avoids the per-second eventbus cascade that would happen if every leader `elapsed_time` tick propagated through the group's update chain.
+
 ### Formation Lifecycle
+
+The group's lifecycle is driven by **power**, not playback. `power(True)` forms the group; `power(False)` dissolves it; `stop()` only stops the leader and the group remains powered and ready to resume. This mirrors how an AVR or stereo system behaves: turn it on, it's an active output; turn it off, it's gone. `play_media` and `play` implicitly trigger `power(True)` if the group is not already powered, then call `_form_syncgroup` (which is idempotent).
 
 ```mermaid
 flowchart TD
-    A[play_media called on SyncGroupPlayer] --> B[_form_syncgroup]
-    B --> C[Cancel any pending dissolve timer]
-    C --> D[Ensure static members are in group_members]
+    A["power(True) called on SyncGroupPlayer<br/>(directly, or implicitly by play_media / play)"] --> B[_form_syncgroup]
+    B --> D[Ensure static members are in group_members]
     D --> E{sync_leader exists?}
     E -- No --> F[_select_sync_leader]
     F --> G{Leader found?}
@@ -99,44 +104,60 @@ flowchart TD
     G -- Yes --> I[Set sync_leader]
     E -- Yes --> I
     I --> J[Reorder: leader first in group_members]
-    J --> K{Members need syncing?}
-    K -- No --> L[Done]
-    K -- Yes --> M{Leader currently playing?}
-    M -- Yes --> N[Stop leader first]
-    N --> O[cmd_set_members on leader]
-    M -- No --> O
-    O --> L
-    L --> P[play_media forwarded to sync leader via _handle_play_media]
+    J --> K{Leader playing something else?}
+    K -- Yes --> N[Stop leader, wait for IDLE]
+    K -- No --> O[_handle_set_members on leader]
+    N --> O
+    O --> Z["_attr_powered = True; state event"]
 ```
 
 The `_form_syncgroup` method is locked (`@lock` decorator from `music_assistant.helpers.util`) to prevent concurrent formation attempts.
 
-### Dissolution Lifecycle
+> **Why `_handle_set_members` and not `cmd_set_members`?** `cmd_set_members` redirects commands targeting a member of an active group player back to the group itself (see [Active-Group Forwarding](#active-group-forwarding)). If `_form_syncgroup` called `cmd_set_members(sync_leader_id, ...)`, that redirect would loop the command back into `SyncGroupPlayer.set_members` on the same syncgroup. The implementation deliberately calls the lower-level `_handle_set_members` to bypass the redirect. The same reasoning applies to `_dissolve_syncgroup` and `SyncGroupPlayer.set_members` below.
 
-When `stop()` is called on the sync group:
+### Stop vs Dissolve
 
-1. Clear `current_media`
-2. Stop the sync leader via `_handle_cmd_stop` (bypasses group redirect to avoid infinite loop)
-3. Schedule `_dissolve_syncgroup` with a **5-second delay** (`call_later`)
+**`stop()`** (or `cmd_stop`) is forwarded to the sync leader and *does not* dissolve the group. The group stays powered and formed; subsequent `play_media` resumes immediately on the same members.
 
-The 5-second delay prevents unnecessary sync/unsync churn during track transitions, where the queue briefly stops between tracks.
+**`_dissolve_syncgroup`** runs only on `power(False)`:
 
-`_dissolve_syncgroup` (also locked):
+1. If currently playing/paused, the leader is stopped first
+2. Get all sync children from the leader's `group_members`
+3. Call `_handle_set_members` on the leader to remove all children (waits for state)
+4. Clear the leader's `active_output_protocol` (when leader is not still playing)
+5. Set `sync_leader = None`
+6. `_attr_powered = False`; state event emitted
 
-1. Get all sync children from the leader's `group_members`
-2. Call `cmd_set_members` on the leader to remove all children
-3. Clear `sync_leader` to `None`
-4. Trigger state update
+`_dissolve_syncgroup` is also locked.
 
 ### Dynamic Member Changes
 
 When `set_members` is called on a dynamic group during playback:
 
-- **Adding members**: Validates compatibility with the sync leader's `can_group_with`, adds to internal list, forwards to `cmd_set_members` on the leader
-- **Removing the sync leader**: Stops playback, dissolves the group, removes the old leader from the member list, selects a new leader, and resumes playback
+- **Adding members**:
+  - Validates compatibility with the sync leader's `can_group_with`, which now includes the leader's *linked output protocols* (so an AirPlay-only player is valid for a Sonos leader that has AirPlay as a linked protocol).
+  - Appends compatible members to the internal list and forwards to `_handle_set_members` on the leader, bypassing the active-group redirect (see the note in [Formation Lifecycle](#formation-lifecycle)).
+  - The leader handles protocol selection and may switch to a different output protocol so the new member can join.
+  - Incompatible members are **not** registered (avoids stranding orphan entries).
+- **Removing the sync leader while playing**: see [Dynamic Leader Switch](#dynamic-leader-switch) below — either a seamless protocol-level handoff or a dissolve + re-form fallback.
 - **Removing last member**: Dissolves the group entirely
-- **Removing a regular member**: Forwards removal to `cmd_set_members` on the leader
+- **Removing a regular member**: Forwards removal to `_handle_set_members` on the leader
 - **Static members cannot be removed** — raises `PlayerCommandFailed`
+
+### Dynamic Leader Switch
+
+Removing the sync leader from a *playing* group used to require a full dissolve + re-form cycle (a brief audio gap). Some protocols now support a **seamless leader handoff** at the protocol level: the live session keeps running while leadership transfers to another member. (#3672)
+
+The constant `PROVIDERS_WITH_DYNAMIC_LEADER_SWITCH` lists the eligible protocols — currently **AirPlay**, **Snapcast**, and **Sendspin**. `PlayerProvider.supports_dynamic_leader_switching` exposes the capability per provider.
+
+When the leader of a playing group is removed:
+
+1. **If the active protocol supports handoff** *and* the chosen new leader is part of the live session (not a freshly added player):
+   - On the *old* session player, call `set_members(player_ids_to_remove=[old_leader_protocol_player_id])` to drop just the old leader.
+   - On the *new* leader's protocol player, call `set_members(player_ids_to_add=[remaining_protocol_player_ids])` to take ownership.
+   - Remaining members keep playing; no audio gap.
+   - Implemented in `SyncGroupPlayer._dynamic_leader_switch(old_leader_id)`, which selects a new leader (preferring one that already supports the active protocol), drives the protocol-level membership changes directly via the `set_members` methods on the *protocol players*, and bypasses the controller's `cmd_set_members` (which would interpret self-removal as "dissolve the entire group").
+2. **Otherwise**: fall back to dissolve + re-form (brief audio gap).
 
 ## Universal Groups
 
@@ -275,7 +296,9 @@ All grouping commands converge on `cmd_set_members`, which flows through a two-p
 ```mermaid
 flowchart TD
     A[cmd_set_members] --> B[Validate: player available, SET_MEMBERS supported]
-    B --> C[Auto-ungroup if parent is already synced]
+    B --> AG{"Parent is non-GROUP and<br/>active_group is a SET_MEMBERS-capable GROUP?"}
+    AG -- Yes --> AGR[Redirect to cmd_set_members on the group player]
+    AG -- No --> C[Auto-ungroup if parent is already synced]
     C --> D[_handle_set_members]
     D --> E[Handle dissolve if target removed from itself]
     E --> F[Filter additions: availability, can_group_with]
@@ -290,16 +313,21 @@ flowchart TD
     M --> O[Forward native members to parent's set_members]
 ```
 
+### Active-Group Forwarding
+
+Before phase 1, `cmd_set_members` checks whether the targeted parent is itself a member of an active GROUP player (e.g. a `syncgroup_*`) that supports `SET_MEMBERS`. If so, the command is redirected to that group player so it can manage the membership change consistently. Without this redirect, calling `cmd_group(memberA, memberB)` on two existing members of a syncgroup could create a sync relationship at the protocol level that the group's internal state wouldn't know about (#3718).
+
 ### Phase 1: `_handle_set_members`
 
 Handles validation and common logic for all grouping types:
 
 1. **Dissolve detection**: If the target player is in the removal list, dissolve the entire group (remove all children, then stop)
 2. **Compatibility check**: Each child must be in `parent_player.state.can_group_with`
-3. **Auto-ungroup**: If a child is synced to a *different* player, ungroup it first
-4. **Power management**: Power on children if needed
-5. **GROUP type dispatch**: For `PlayerType.GROUP` that also has `PlayerFeature.SET_MEMBERS` in `supported_features`, call `player.set_members()` directly. Static sync groups (which lack this feature) fall through to phase 2 instead.
-6. **Regular player dispatch**: For non-GROUP players, proceed to phase 2
+3. **Auto-ungroup**: If a child is synced to a *different* player, ungroup it first. The auto-ungroup is skipped when the child is already part of *this* group via its sync leader (`active_group == target_player` and `child_player_id in group_members`) — that's a normal in-group state, not "synced elsewhere" (#3718).
+4. **Stale-state ungroup fallback**: When processing removals, the controller accepts a child for removal if either (a) the child is in `parent_player.state.group_members`, or (b) the child itself reports `state.synced_to == target_player`. The (b) branch handles race conditions where the parent's `group_members` is briefly stale after the child has already established the protocol-level sync (#3540).
+5. **Power management**: Power on children if needed
+6. **GROUP type dispatch**: For `PlayerType.GROUP` that also has `PlayerFeature.SET_MEMBERS` in `supported_features`, call `player.set_members()` directly. Static sync groups (which lack this feature) fall through to phase 2 instead.
+7. **Regular player dispatch**: For non-GROUP players, proceed to phase 2
 
 ### Phase 2: `_handle_set_members_with_protocols`
 

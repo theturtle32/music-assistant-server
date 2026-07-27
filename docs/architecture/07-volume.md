@@ -207,13 +207,18 @@ elif not muted:
 - **Muting a grouped player** → sets lock
 - **Unmuting any player** → clears lock
 
-In `_handle_cmd_volume_set`, the lock is checked before auto-unmute:
+In `_handle_cmd_volume_set`, the lock is checked on **both** the player itself and its protocol parent before auto-unmute:
 
 ```python
 has_mute_lock = player.extra_data.get(ATTR_MUTE_LOCK, False)
+if not has_mute_lock and player.protocol_parent_id:
+    if parent := self.get_player(player.protocol_parent_id):
+        has_mute_lock = parent.extra_data.get(ATTR_MUTE_LOCK, False)
 if not has_mute_lock and player.state.volume_muted:
     await self.cmd_volume_mute(player_id, False)  # auto-unmute
 ```
+
+The protocol-parent fallback is needed because `cmd_volume_mute` records the lock on the visible parent, while a group volume change may invoke `_handle_cmd_volume_set` with the *protocol player's* ID (PR #3655). Without the fallback, the deliberate mute on the parent would not be respected when group volume reroutes through the protocol child.
 
 ### Practical Scenario
 

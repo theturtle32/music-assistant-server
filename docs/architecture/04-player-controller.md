@@ -153,8 +153,9 @@ Power is a unifying abstraction that the controller normalizes across diverse ha
 4. **`PLAYER_CONTROL_NATIVE`** — `await player.power(powered)`, then `wait_for_power_on()`.
 5. **`PLAYER_CONTROL_FAKE`** — stores state in `extra_data[ATTR_FAKE_POWER]`, persists to cache.
 6. **External `PlayerControl`** — calls `control.power_on()` / `control.power_off()`, then `wait_for_power_on()`.
-7. **Protocol-as-power** — if `power_control` is a protocol player ID, recursively calls `_handle_cmd_power` on that player.
-8. **Auto-play on power on** — if `powered=True`, not grouped, `CONF_AUTO_PLAY` enabled, and no external source active, resumes the queue via `player_queues.resume()`.
+7. **Auto-play on power on** — if `powered=True`, not grouped, `CONF_AUTO_PLAY` enabled, and no external source active, resumes the queue via `player_queues.resume()`.
+
+> **Note (#3659):** Earlier versions of the controller forwarded power commands to a designated protocol player when `power_control` was a player ID. That forwarding has been removed — `power_control` now only accepts `NONE`, `NATIVE`, `FAKE`, or an external `PlayerControl` ID. Protocol players are no longer used as a delegated power target.
 
 **Power-on demand**: Several command handlers (`_handle_play_media`, `_handle_cmd_play`, `_handle_set_members`) call `_handle_cmd_power(player_id, True, skip_auto_play=True)` before executing, ensuring the player is powered on before receiving playback commands.
 
@@ -167,7 +168,11 @@ Volume and mute follow the same control-chain pattern as power: the per-player `
 `_handle_cmd_volume_set(player_id, volume_level)` resolves through the `volume_control` config:
 
 1. **GROUP type** — redirects to `cmd_group_volume`.
-2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first.
+2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first. The mute-lock check is extended to handle protocol players:
+    - It checks `extra_data[ATTR_MUTE_LOCK]` on both the player's own `extra_data` *and* the protocol parent's lock (when `protocol_parent_id` is set).
+    - This is necessary because `cmd_volume_mute` records the lock on the parent, while group volume changes may route through the child protocol player.
+    - Without this fallback, group volume changes on a Sonos-like player would incorrectly auto-unmute the parent (#3655).
+    - See [07-volume.md](07-volume.md#the-mute-lock-mechanism) for more details.
 3. **`NATIVE`** — scales the logical volume to the player's configured device range via `scale_volume_to_device`, then calls `player.volume_set(device_volume)`.
 4. **`FAKE`** — stores in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
 5. **`NONE`** — raises `UnsupportedFeaturedException`.
