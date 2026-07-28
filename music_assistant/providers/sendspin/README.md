@@ -199,8 +199,16 @@ Sendspin players support:
 | `provider.py` | Main provider class, handles WebRTC signaling and server lifecycle |
 | `player.py` | Player implementation with playback, grouping, and metadata handling |
 | `playback.py` | Playback pipeline with DSP channel processing and timed frame commits |
-| `__init__.py` | Provider setup and configuration |
+| `bridge_manager.py` | Shared lifecycle management for Sendspin bridges (see below) |
+| `bridge_role.py` | `BridgePlayerRole`: receives audio from the PushStream and forwards it to an external player |
+| `synchronizer_role.py` | `SynchronizerRole`: computes visualization features for external consumers (e.g. Hue Entertainment) |
+| `security.py` | Server identity (Noise keypair) persistence |
+| `helpers.py` | Shared helpers, including bridge client ID derivation |
+| `constants.py` | Prefixes and config keys |
+| `__init__.py` | Provider setup entry point |
 | `manifest.json` | Provider metadata |
+| `strings.json` | Translatable labels for the provider's config entries |
+| `icon.svg` | Provider icon (also `icon_dark.svg` and `icon_monochrome.svg`) |
 
 ## Dependencies
 
@@ -219,24 +227,31 @@ External players are registered programmatically via `server_api.register_extern
 1. The bridge provider creates a `ClientHelloPayload` with the device info and supported capabilities
 2. The Sendspin server creates a `SendspinClient` and triggers `ClientAddedEvent`
 3. The Sendspin provider creates a `SendspinPlayer` for this client
-4. Protocol linking matches the SendspinPlayer with the original player via device identifiers (e.g., MAC address)
+4. Protocol linking attaches the SendspinPlayer to the bridged player
+
+Step 4 is deterministic rather than identifier-based: a bridge calls `register_bridge_underlying_player()` before registering the external player, so the resulting SendspinPlayer carries a **derived-transport edge** (`underlying_player_id`) pointing at the player it rides on. Protocol linking then parents it alongside that player without any identifier matching, and records the edge as `derived_from` on the resulting `OutputProtocol`. Bridges additionally register device identifiers (MAC, CAST_UUID, AIRPLAY_ID, …) via `register_bridge_identifiers()` for cross-protocol matching, and the bridge's `client_id` is derived from the device's MAC or UUID (`bridge_client_id_from_mac` / `bridge_client_id_from_uuid`).
+
+`SendspinBridgeManagerBase` in `bridge_manager.py` owns the shared lifecycle: a bridge only exists while the player it rides on exists and is enabled.
 
 ### Implemented Bridges
 
-| Provider | Bridge Location | Identifier |
-|----------|-----------------|------------|
-| AirPlay | `airplay/sendspin_bridge.py` | MAC address |
+| Provider | Bridge Location | Client ID derived from | Audio path |
+|----------|-----------------|------------------------|------------|
+| AirPlay | `airplay/sendspin_bridge.py` | MAC address | Audio flows through the bridge into the AirPlay CLI |
+| Local Audio | `local_audio/sendspin_bridge.py` | Device UUID | Audio flows through the bridge to the local soundcard |
+| Chromecast | `chromecast/sendspin_bridge.py` | MAC address (UUID for cast groups) | No audio through the bridge: the Cast receiver app runs a JS Sendspin client that connects to the server directly |
+| MSX | `msx_bridge/sendspin_bridge.py` | MSX player id | No audio through the bridge: the TV kiosk runs a vendored Sendspin JS client |
 
 ### Implementing a New Bridge
 
 To bridge another protocol to Sendspin:
 
 1. Create a `ClientHelloPayload` with the device's capabilities
-2. Call `register_external_player()` with an `on_stream_start` callback
-3. Create a custom `Role` subclass to receive audio via `on_audio_chunk()`
-4. Ensure the client_id matches an identifier the protocol linking system recognizes
+2. Declare the derived-transport edge with `register_bridge_underlying_player()` (and any identifiers with `register_bridge_identifiers()`) before registering
+3. Call `register_external_player()` with an `on_stream_start` callback
+4. Create a custom `Role` subclass to receive audio via `on_audio_chunk()`, or reuse `BridgePlayerRole`
 
-See the [AirPlay Sendspin Bridge](../airplay/sendspin_bridge.py) for a complete implementation example.
+See the [AirPlay Sendspin Bridge](../airplay/sendspin_bridge.py) for a complete implementation example that streams audio, and the [Chromecast bridge](../chromecast/sendspin_bridge.py) for one where the device runs its own Sendspin client instead.
 
 ## Virtual Players
 

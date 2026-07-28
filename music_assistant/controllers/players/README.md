@@ -235,10 +235,23 @@ When protocol players are registered without a native match:
 
 When a native player appears for a device that has a Universal Player:
 1. Native player is registered
-2. Controller finds matching Universal Player
+2. Controller finds matching Universal Player (by identifiers, or because the native player's ID is in the Universal Player's stored protocol list)
 3. Active and cached protocol ownership transfers to the native player
-4. Universal Player is removed
-5. Native player becomes the visible entity
+4. The Universal Player's user configuration (custom name, config values, DSP and per-queue settings) is carried over and group memberships are re-pointed at the native player
+5. Universal Player is removed
+6. Native player becomes the visible entity
+
+A protocol link can be **refused**, most commonly when the native player already holds an active link from the same protocol domain. `_check_replace_universal_player()` therefore compares `active_protocol_ids - moved_protocol_ids`: if anything failed to move, the Universal Player is **kept** and only the protocols that actually moved are handed over, so the refused ones aren't left orphaned. Steps 4-6 only run once every active protocol transferred.
+
+### Derived Transports
+
+A protocol player can ride on top of another output instead of being an independent path to the device - a Sendspin bridge running inside an AirPlay or Chromecast session, for example. These players declare an `underlying_player_id`, and the controller resolves their parent from that edge rather than from device identifiers:
+
+- `_try_link_derived_protocol()` attaches the derived player to the parent of the player it rides on (or to that player itself when it is not a protocol player)
+- `_link_derived_protocols_of()` runs after a player is linked or registered natively, picking up derived players that registered before their underlying player had a parent
+- Derived players are skipped by identifier matching and never seed a Universal Player of their own
+
+The `OutputProtocol` entry for a derived transport carries `derived_from`, holding the `output_protocol_id` of the base output it runs on - or `"native"` when it rides on the parent player itself. A Sendspin bridge on a Sonos speaker's AirPlay protocol records that AirPlay protocol player's ID; a bridge riding on the Sonos player directly records `"native"`.
 
 ## Development Guide
 
@@ -315,13 +328,16 @@ Key scenarios to test:
 ### Configuration Storage
 
 Protocol links are persisted in player configuration:
-- `linked_protocol_ids` - List of protocol player IDs
+- `linked_protocol_ids` - List of protocol player IDs (on the native/universal parent)
+- `protocol_parent_id` - Cached parent player ID (on the protocol player)
+- `underlying_player_id` - Derived-transport edge (on a bridge protocol player)
 - Restored on restart for fast reconnection
 
 ### Key Methods (in protocol_linking.py)
 
 - `_evaluate_protocol_links()` - Entry point for link evaluation
 - `_try_link_protocol_to_native()` - Link protocol to existing native
+- `_try_link_derived_protocol()` / `_link_derived_protocols_of()` - Resolve derived transports via their underlying player
 - `_schedule_protocol_evaluation()` - Delay evaluation for batching
 - `_create_or_update_universal_player()` - Create/update Universal Player
 - `_check_replace_universal_player()` - Replace Universal with native

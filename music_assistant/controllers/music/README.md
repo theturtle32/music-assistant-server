@@ -8,6 +8,8 @@ Music Assistant's core controller for the music library. It aggregates and norma
 - `database.py`: `MusicDatabaseSetupMixin`, mixed into `MusicController` — owns the library database lifecycle (connection setup, schema creation, maintenance). Kept separate because the schema code is large and self-contained.
 - `migrations.py`: the versioned, step-by-step schema migrations (`migrate_database`), kept out of `database.py` as a dependency-injected function so this large block stays self-contained and individually testable.
 - `media/`: the per-media-type sub-controllers (`AlbumsController`, `ArtistsController`, `TracksController`, `RadioController`, `PlaylistController`, `AudiobooksController`, `PodcastsController`, `GenreController`), all sharing `MediaControllerBase`. `MusicController` instantiates one of each and delegates per-type work to them.
+- `recommendations/`: the recommendations sub-controller (`controller.py`), which aggregates the library-backed rows (`library.py`) with the rows offered by music providers.
+- `recency.py`: the shared recency engine — reads the playlog once and exposes fast in-memory "was this heard recently?" tests used by smart shuffle and smart playlist dedup.
 - `constants.py`: config keys, the database schema version, background-task ids and tuning constants.
 - `helpers.py`: stateless helper functions (needing no controller state) used by the controller.
 - `strings.json`: translatable strings for this module (`core.music.*`), including the `manifest` name/description.

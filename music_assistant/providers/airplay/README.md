@@ -62,16 +62,22 @@ The AirPlay provider enables Music Assistant to stream audio to AirPlay-enabled 
 
 ```
 airplay/
+├── __init__.py           # Provider setup entry point
 ├── provider.py           # Main provider class, MDNS discovery, DACP server, PTP daemon
-├── player.py             # AirPlayPlayer implementation
+├── player.py             # AirPlayPlayer base and GenericAirPlayPlayer (protocol endpoints)
+├── control_player.py     # AirPlayControlPlayer for control-capable devices (Apple TV, HomePod)
+├── dashboard.py          # Dashboard support for Apple TV via the tvOS app
 ├── stream_session.py     # Manages streaming sessions for synchronized playback
-├── pairing.py           # Pairing: HAP via cliairplay --pair-setup, RAOP native
-├── helpers.py           # Utility functions (binary lookup, TXT serialization, etc.)
-├── constants.py         # Constants and enums
-├── stream.py            # Unified AirPlayStream (RAOP + AirPlay 2) driving cliairplay
-└── bin/                 # Binary documentation and downloaded local artifacts
+├── pairing.py            # Pairing: HAP via cliairplay --pair-setup, RAOP native
+├── sendspin_bridge.py    # Sendspin bridge (see below)
+├── helpers.py            # Utility functions (binary lookup, TXT serialization, etc.)
+├── constants.py          # Constants and enums
+├── stream.py             # Unified AirPlayStream (RAOP + AirPlay 2) driving cliairplay
+├── strings.json          # Translatable labels for the provider's config entries
+├── icon.svg              # Provider icon (icon_monochrome.svg for monochrome contexts)
+└── bin/                  # Binary documentation and downloaded local artifacts
     ├── README.md
-    └── cliairplay-*     # Downloaded during container build or local setup; not tracked
+    └── cliairplay-*      # Downloaded during container build or local setup; not tracked
 ```
 
 ## Protocol Selection: RAOP vs AirPlay 2
@@ -602,8 +608,8 @@ AirPlay players can be bridged to the Sendspin protocol, enabling cross-protocol
 
 When the Sendspin provider is enabled, each AirPlay player is automatically registered as an external Sendspin client:
 
-1. **Registration**: The bridge registers the AirPlay player with the Sendspin server using the device's MAC address as the `client_id`
-2. **Protocol Linking**: The player controller links the SendspinPlayer (created by Sendspin provider) with the AirPlayPlayer via MAC address matching
+1. **Registration**: The bridge registers the AirPlay player with the Sendspin server, deriving the `client_id` from the device's MAC address
+2. **Protocol Linking**: Before registering, the bridge declares the AirPlay player as the SendspinPlayer's **underlying player** (a derived-transport edge). The player controller uses that edge to parent the SendspinPlayer next to the AirPlayPlayer, so linking is deterministic rather than dependent on identifier matching. The AirPlay player id is also registered as an `AIRPLAY_ID` identifier for cross-protocol matching
 3. **Audio Flow**: When grouped, Sendspin handles timing and synchronization while AirPlay streams the audio
 
 ```
@@ -612,8 +618,8 @@ When the Sendspin provider is enabled, each AirPlay player is automatically regi
 │  (protocol linked)  │     │                     │
 └─────────┬───────────┘     └──────────┬──────────┘
           │                            │
-          │ MAC address match          │
-          │                            │
+          │ derived-transport edge     │
+          │ (underlying_player_id)     │
 ┌─────────▼───────────┐     ┌──────────▼──────────┐
 │ Sendspin PushStream │────▶│ BridgePlayerRole    │
 │  (timing/sync)      │     │      │              │
@@ -626,14 +632,14 @@ When the Sendspin provider is enabled, each AirPlay player is automatically regi
 
 The bridge consists of:
 
-- **`BridgePlayerRole`**: A custom Sendspin role that receives audio chunks from PushStream
+- **`BridgePlayerRole`**: A shared Sendspin role (from the Sendspin provider) that receives audio chunks from PushStream
 - **`SendspinAirPlayBridge`**: Manages the bridge for a single AirPlay player
-- **`SendspinBridgeManager`**: Manages bridges for all AirPlay players
+- **`SendspinBridgeManager`**: Manages bridges for all AirPlay players (built on `SendspinBridgeManagerBase`)
 
 ### Requirements
 
 - Sendspin provider must be enabled
-- AirPlay player must have a valid MAC address for protocol linking
+- AirPlay player must have a valid MAC address (the bridge's `client_id` is derived from it)
 
 ### Files
 

@@ -130,6 +130,7 @@ The ALSA direct backend always uses 16-bit int PCM (PortAudio `int16` dtype) reg
 | `sendspin_bridge.py` | Bridge manager and per-device bridge (PA on Linux PulseAudio, sounddevice on Linux ALSA and macOS); also owns remap-sink topology lifecycle |
 | `pa_simple.py` | ctypes wrapper around `libpulse-simple`/`libpulse` for direct PCM output, PA sink/module hardware volume control, and module load/unload; PA sink enumeration via `pactl`; ALSA device enumeration via PortAudio; `suspend_resume_sink()` workaround in case a sound card stalls *(Linux only)* |
 | `remap_topology.py` | Computes the per-zone and full-channel passthrough `module-remap-sink` topology for multi-channel cards *(Linux PulseAudio only)* |
+| `coreaudio_volume.py` | ctypes wrapper around CoreAudio's AudioObject API for macOS hardware device volume. **Currently unused** — macOS players use software volume (see Volume Control above) |
 | `constants.py` | Shared constants (UUID namespace, buffer sizes, backend selector values) and the `volume_pct_to_amplitude` audio taper used by both the hardware and software volume paths; taper range is configurable via `_TAPER_A` (default 40dB, suited for receiver/outdoor setups) |
 | `manifest.json` | Provider metadata and dependencies |
 | `strings.json` | Localized config entry labels/descriptions (audio backend selector and its options) |

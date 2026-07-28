@@ -62,6 +62,12 @@ The Universal Player does NOT have `PLAY_MEDIA` capability. Instead:
 3. Playback is routed to the selected protocol player (e.g., Chromecast)
 4. User can switch to different protocol in player settings
 
+### Derived Transports
+
+Some protocol players ride on top of another output rather than being an independent path to the device - a Sendspin bridge running inside an AirPlay or Chromecast session, for example. Those players declare an `underlying_player_id`, which the controller resolves deterministically instead of matching on device identifiers: `_try_link_derived_protocol()` attaches them to the parent of the player they ride on, and `_link_derived_protocols_of()` picks up any that registered before their underlying player got linked. Derived protocol players never seed a Universal Player of their own.
+
+The resulting `OutputProtocol` entry carries `derived_from`, set to the `output_protocol_id` of the base output it runs on - or `"native"` when it rides on the parent player itself.
+
 ## Configuration
 
 Universal Players are auto-created and require no user configuration. However, users can:
@@ -74,7 +80,9 @@ Universal Players are auto-created and require no user configuration. However, u
 
 When a Universal Player is permanently removed, all protocol parent links are cleared so discovery can start over cleanly.
 
-If a native provider is later installed (e.g., Denon integration), the Universal Player is replaced by the native player, with all protocols linked to it instead.
+If a native provider is later installed (e.g., Denon integration), the controller tries to hand the device over: every protocol link is re-pointed at the native player, the user's configuration (name, config values, DSP and queue settings) is carried over, group memberships are re-pointed and the Universal Player is removed.
+
+The takeover is not unconditional. A protocol player may refuse the new link, for example when the native player already has an active link from that protocol domain. If any protocol stays behind, the Universal Player is **kept** and only the protocols that actually moved are handed over, so the refused ones are not orphaned. Both players then coexist until a later evaluation resolves the remaining links.
 
 ## Technical Details
 

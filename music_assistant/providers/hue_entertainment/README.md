@@ -50,11 +50,14 @@ and the audio-to-color analyzer (`analyzer.py`).
 
 ```
 hue_entertainment/
-├── __init__.py                Config flow (pairing, settings)
+├── __init__.py                Provider setup entry point
+├── setup_flow.py              Setup flow: bridge pairing (link button → app user + clientkey)
 ├── provider.py                mDNS discovery, lifecycle management
 ├── bridge.py                  Sendspin visualizer client → analyzer → EntertainmentSession
 ├── analyzer.py                Bass beat detection, color cycling, effect modes
 ├── constants.py               MA config keys + Sendspin spectrum request config
+├── strings.json               Translatable labels for config entries and the setup flow
+├── icon.svg                   Provider icon (icon_dark.svg for dark mode)
 └── manifest.json              Experimental plugin manifest (requires hue-entertainment)
 ```
 
