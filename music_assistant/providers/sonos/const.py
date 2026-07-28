@@ -75,3 +75,9 @@ PLAYER_SOURCE_MAP = {
 }
 
 UNSUPPORTED_MODELS_NATIVE_ANNOUNCEMENTS = ("Play:1", "Play:3")
+NON_HIRES_MODELS = (
+    "Play:1",
+    "Play:3",
+    "Connect",
+    "Connect:Amp",
+)

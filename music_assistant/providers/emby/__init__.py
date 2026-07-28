@@ -10,9 +10,16 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 from aiohttp import ClientResponseError
-from music_assistant_models.config_entries import ConfigEntry, ConfigValueType, ProviderConfig
-from music_assistant_models.enums import ConfigEntryType, MediaType, ProviderFeature, StreamType
-from music_assistant_models.errors import LoginFailed, MediaNotFoundError, ProviderPermissionDenied
+from music_assistant_models.enums import (
+    MediaType,
+    ProviderFeature,
+    StreamType,
+)
+from music_assistant_models.errors import (
+    LoginFailed,
+    MediaNotFoundError,
+    ProviderPermissionDenied,
+)
 from music_assistant_models.media_items import (
     Album,
     Artist,
@@ -49,6 +56,10 @@ from music_assistant.providers.emby.parsers import (
 )
 
 if TYPE_CHECKING:
+    from music_assistant_models.config_entries import (
+        ConfigEntry,
+        ProviderConfig,
+    )
     from music_assistant_models.provider import ProviderManifest
 
 from music_assistant.constants import (
@@ -78,47 +89,18 @@ async def setup(
     return EmbyProvider(mass, manifest, config, SUPPORTED_FEATURES)
 
 
-async def get_config_entries(
-    mass: MusicAssistant,
-    instance_id: str | None = None,
-    action: str | None = None,
-    values: dict[str, ConfigValueType] | None = None,
-) -> tuple[ConfigEntry, ...]:
-    """Get configuration entries for provider setup."""
-    # ruff: noqa: ARG001
-    return (
-        ConfigEntry(
-            key=CONF_IP_ADDRESS,
-            type=ConfigEntryType.STRING,
-            label="Server",
-            required=True,
-            description="The url of the Emby server to connect to.",
-        ),
-        ConfigEntry(
-            key=CONF_USERNAME,
-            type=ConfigEntryType.STRING,
-            label="Username",
-            required=True,
-            description="The username to authenticate to the remote server.",
-        ),
-        ConfigEntry(
-            key=CONF_PASSWORD,
-            type=ConfigEntryType.SECURE_STRING,
-            label="Password",
-            required=False,
-            description="The password to authenticate to the remote server.",
-        ),
-    )
-
-
 class EmbyProvider(MusicProvider):
     """Provider for an Emby music library (uses Emby REST API)."""
 
+    async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
+        """Get configuration entries for provider setup."""
+        return ()
+
     async def handle_async_init(self) -> None:
         """Initialize provider(instance) with given configuration."""
-        username = str(self.config.get_value(CONF_USERNAME))
-        password = str(self.config.get_value(CONF_PASSWORD) or "")
-        self._base_url = str(self.config.get_value(CONF_IP_ADDRESS)).rstrip("/") + "/"
+        username = str(self.get_setup_value(CONF_USERNAME))
+        password = str(self.get_setup_value(CONF_PASSWORD) or "")
+        self._base_url = str(self.get_setup_value(CONF_IP_ADDRESS)).rstrip("/") + "/"
         self._session = self.mass.http_session
 
         # stable device id
@@ -269,7 +251,7 @@ class EmbyProvider(MusicProvider):
             search_results.playlists = playlists.result()
         return search_results
 
-    async def get_library_artists(self) -> AsyncGenerator[Artist, None]:
+    async def get_library_artists(self) -> AsyncGenerator[Artist]:
         """Yield all artists from the music library."""
         libs = await self._get_music_libraries()
         for lib in libs:
@@ -292,7 +274,7 @@ class EmbyProvider(MusicProvider):
                     yield parse_artist(self.instance_id, self, artist)
                 page += 1
 
-    async def get_library_albums(self) -> AsyncGenerator[Album, None]:
+    async def get_library_albums(self) -> AsyncGenerator[Album]:
         """Yield all albums from the music library."""
         libs = await self._get_music_libraries()
         for lib in libs:
@@ -315,7 +297,7 @@ class EmbyProvider(MusicProvider):
                     yield parse_album(self.instance_id, self, album)
                 page += 1
 
-    async def get_library_tracks(self) -> AsyncGenerator[Track, None]:
+    async def get_library_tracks(self) -> AsyncGenerator[Track]:
         """Yield all tracks from the music library."""
         libs = await self._get_music_libraries()
         for lib in libs:
@@ -340,7 +322,7 @@ class EmbyProvider(MusicProvider):
                     yield parse_track(self.instance_id, self, track)
                 page += 1
 
-    async def get_library_playlists(self) -> AsyncGenerator[Playlist, None]:
+    async def get_library_playlists(self) -> AsyncGenerator[Playlist]:
         """Yield all playlists from the music library."""
         libs = await self._get_music_libraries()
         for lib in libs:
@@ -535,6 +517,8 @@ class EmbyProvider(MusicProvider):
         is_playing: bool = False,
     ) -> None:
         """Handle media item played event."""
+        if media_type != MediaType.TRACK:
+            return
         if fully_played:
             await self._post(f"Users/{self._user_id}/PlayedItems/{prov_item_id}")
         if is_playing:

@@ -11,15 +11,18 @@ from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from json import JSONDecodeError
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import mutagen
 from music_assistant_models.enums import AlbumType
 from music_assistant_models.errors import InvalidDataError
-from mutagen._vorbis import VCommentDict
-from mutagen.apev2 import APEv2
-from mutagen.id3 import ID3, TXXX  # type: ignore[attr-defined]
-from mutagen.mp4 import AtomDataType, MP4FreeForm, MP4Tags
+
+# mutagen is only needed when actually reading/writing tags of local files, so it is
+# imported inside the functions below to keep it off the server startup path
+if TYPE_CHECKING:
+    from mutagen._vorbis import VCommentDict
+    from mutagen.apev2 import APEv2
+    from mutagen.id3 import ID3Tags
+    from mutagen.mp4 import MP4Tags
 
 from music_assistant.constants import MASS_LOGGER_NAME, UNKNOWN_ARTIST
 from music_assistant.helpers.json import json_loads
@@ -91,6 +94,7 @@ FEATURING_SPLITTERS = [
     " feat. ",
     " feat ",
     " duet with ",
+    " presents ",
     " ft. ",
     " vs. ",
     " vs ",
@@ -257,7 +261,7 @@ class AudioTags:
     format: str
     bit_rate: int | None
     duration: float | None
-    tags: dict[str, str]
+    tags: dict[str, Any]
     has_cover_image: bool
     filename: str
 
@@ -265,7 +269,7 @@ class AudioTags:
     def title(self) -> str:
         """Return title tag (as-is)."""
         if tag := self.tags.get("title"):
-            return tag
+            return str(tag)
         # fallback to parsing from filename
         title = self.filename.rsplit(os.sep, 1)[-1].split(".")[0]
         if " - " in title:
@@ -278,7 +282,7 @@ class AudioTags:
     def version(self) -> str:
         """Return version tag (as-is)."""
         if tag := self.tags.get("version"):
-            return tag
+            return str(tag)
         album_type_tag = (
             self.tags.get("musicbrainzalbumtype")
             or self.tags.get("albumtype")
@@ -303,23 +307,15 @@ class AudioTags:
         if tag := self.tags.get("artists"):
             mb_id_count = len(self.musicbrainz_artistids)
             # Runtime check: mutagen returns list[str] for Vorbis multi-field
-            if isinstance(tag, list) and len(tag) > 1:  # type: ignore[unreachable]
+            if isinstance(tag, list) and len(tag) > 1:
                 # Multiple ARTIST fields from Vorbis - already separated, no splitting needed
-                artists = clean_tuple(tag)  # type: ignore[unreachable]
+                artists = clean_tuple(tag)
             elif mb_id_count == 1:
                 # Single MB ID confirms single artist - don't split
                 return (tag if isinstance(tag, str) else tag[0],)
             else:
                 # Split on semicolons
                 artists = split_items(tag)
-            # Warn if ARTISTS tag count doesn't match MB Artist ID count
-            if mb_id_count and mb_id_count != len(artists):
-                LOGGER.warning(
-                    "ARTISTS tag count (%d) doesn't match MusicBrainz Artist ID count (%d): %s",
-                    len(artists),
-                    mb_id_count,
-                    tag,
-                )
             return artists
         # Fallback to single artist string, splitting if necessary
         # All formats: parser returns artist (singular)
@@ -362,23 +358,15 @@ class AudioTags:
         if tag := self.tags.get("albumartists"):
             mb_id_count = len(self.musicbrainz_albumartistids)
             # Runtime check: mutagen returns list[str] for Vorbis multi-field
-            if isinstance(tag, list) and len(tag) > 1:  # type: ignore[unreachable]
+            if isinstance(tag, list) and len(tag) > 1:
                 # Multiple ALBUMARTIST fields from Vorbis - already separated, no splitting needed
-                artists = clean_tuple(tag)  # type: ignore[unreachable]
+                artists = clean_tuple(tag)
             elif mb_id_count == 1:
                 # Single MB ID confirms single artist - don't split
                 return (tag if isinstance(tag, str) else tag[0],)
             else:
                 # Split on semicolons
                 artists = split_items(tag)
-            # Warn if ALBUMARTISTS tag count doesn't match MB Album Artist ID count
-            if mb_id_count and mb_id_count != len(artists):
-                LOGGER.warning(
-                    "ALBUMARTISTS tag count (%d) doesn't match MB Album Artist ID count (%d): %s",
-                    len(artists),
-                    mb_id_count,
-                    tag,
-                )
             return artists
         # Fallback to single album artist string, splitting if necessary
         # All formats: parser returns albumartist (singular)
@@ -463,25 +451,27 @@ class AudioTags:
     def musicbrainz_recordingid(self) -> str | None:
         """Return musicbrainz_recordingid tag if present."""
         if tag := self.tags.get("UFID:http://musicbrainz.org"):
-            return tag
+            return str(tag)
         if tag := self.tags.get("musicbrainz.org"):
-            return tag
+            return str(tag)
         if tag := self.tags.get("musicbrainzrecordingid"):
-            return tag
-        return self.tags.get("musicbrainztrackid")
+            return str(tag)
+        if tag := self.tags.get("musicbrainztrackid"):
+            return str(tag)
+        return None
 
     @property
     def title_sort(self) -> str | None:
         """Return sort title tag (if exists)."""
         if tag := self.tags.get("titlesort"):
-            return tag
+            return str(tag)
         return None
 
     @property
     def album_sort(self) -> str | None:
         """Return album sort title tag (if exists)."""
         if tag := self.tags.get("albumsort"):
-            return tag
+            return str(tag)
         return None
 
     @property
@@ -555,8 +545,8 @@ class AudioTags:
                 chapters.append(
                     AudioTagsChapter(
                         chapter_id=chapter_data["id"],
-                        position_start=chapter_data["start_time"],
-                        position_end=chapter_data["end_time"],
+                        position_start=float(chapter_data["start_time"]),
+                        position_end=float(chapter_data["end_time"]),
                         title=chapter_data.get("tags", {}).get("title"),
                     )
                 )
@@ -567,8 +557,17 @@ class AudioTags:
         """Return lyrics tag (if exists)."""
         for key, value in self.tags.items():
             if key.startswith("lyrics"):
-                return value
+                return str(value)
         return None
+
+    @property
+    def synchronized_lyrics(self) -> list[tuple[str, int]] | None:
+        """
+        Return synchronized lyrics tag (if exists).
+
+        The tag consists of (text, timestamp in ms) pairs.
+        """
+        return self.tags.get("synchronizedlyrics")
 
     @property
     def track_loudness(self) -> float | None:
@@ -678,7 +677,7 @@ def parse_tags(
         "ffprobe",
         "-hide_banner",
         "-loglevel",
-        "fatal",
+        "error",
         "-threads",
         "0",
         "-show_error",
@@ -691,7 +690,7 @@ def parse_tags(
         input_file,
     )
     try:
-        res = subprocess.check_output(args)  # noqa: S603
+        res = subprocess.check_output(args, stderr=subprocess.PIPE)  # noqa: S603
         data = json.loads(res)
         if error := data.get("error"):
             raise InvalidDataError(error["string"])
@@ -724,11 +723,7 @@ def parse_tags(
                 tags.has_cover_image = True
         return tags
     except subprocess.CalledProcessError as err:
-        error_msg = f"Unable to retrieve info for {input_file}"
-        if output := getattr(err, "stdout", None):
-            err_details = json_loads(output)
-            with suppress(KeyError):
-                error_msg = f"{error_msg} ({err_details['error']['string']})"
+        error_msg = f"Unable to retrieve info for {input_file} ({_get_ffprobe_error(err)})"
         raise InvalidDataError(error_msg) from err
     except (KeyError, ValueError, JSONDecodeError, InvalidDataError) as err:
         try:
@@ -768,6 +763,40 @@ def get_file_duration(input_file: str) -> float:
     except Exception as err:
         error_msg = f"Unable to retrieve duration for {input_file}"
         raise InvalidDataError(error_msg) from err
+
+
+def _get_ffprobe_error(err: subprocess.CalledProcessError) -> str:
+    """
+    Return an actionable message for a failed FFprobe command.
+
+    :param err: The FFprobe process error.
+    """
+    unknown_error = "Unknown error occurred"
+    error_detail = "Invalid or unsupported media file"
+    if err.stdout:
+        with suppress(JSONDecodeError):
+            result = json_loads(err.stdout)
+            if (
+                isinstance(result, dict)
+                and isinstance(ffprobe_error := result.get("error"), dict)
+                and isinstance(message := ffprobe_error.get("string"), str)
+                and message != unknown_error
+            ):
+                error_detail = message
+
+    stderr = (
+        err.stderr.decode("utf-8", errors="replace")
+        if isinstance(err.stderr, bytes)
+        else err.stderr or ""
+    )
+    for line in stderr.splitlines():
+        stripped_line = line.strip()
+        if not stripped_line.startswith("["):
+            continue
+        _, separator, message = stripped_line.partition("] ")
+        if separator and message and unknown_error not in message:
+            return message
+    return error_detail
 
 
 def _decode_mp4_freeform_single(values: list[Any]) -> str:
@@ -917,79 +946,100 @@ def _parse_mp4_tags(tags: MP4Tags) -> dict[str, Any]:  # noqa: PLR0915
     return result
 
 
-def _parse_id3_tags(tags: dict[str, Any]) -> dict[str, Any]:
+def _id3_get_tag_text(tags: ID3Tags, key: str) -> Any | None:
     """
-    Parse ID3 tags (MP3 files) from mutagen tags dict.
+    Get text from ID3 tag (if exists).
+
+    :param tags: ID3Tags from mutagen.
+    :param key: Tag name.
+    """
+    if value := tags.get(key):  # type: ignore[no-untyped-call]
+        return value.text
+
+    return None
+
+
+def _parse_id3_tags(tags: ID3Tags) -> dict[str, Any]:
+    """
+    Parse ID3 tags (MP3 files) from mutagen ID3Tags object.
 
     See: https://mutagen-specs.readthedocs.io/en/latest/id3/id3v2.4.0-frames.html
     See: https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html
 
-    :param tags: Dictionary of ID3 tags from mutagen.
+    :param tags: The ID3Tags object from mutagen.
     """
     result: dict[str, Any] = {}
 
     # Basic tags (single value)
-    if (frame := tags.get("TIT2")) and frame.text:
-        result["title"] = frame.text[0]
-    if (frame := tags.get("TALB")) and frame.text:
-        result["album"] = frame.text[0]
+    if title := _id3_get_tag_text(tags, "TIT2"):
+        result["title"] = title[0]
+    if album := _id3_get_tag_text(tags, "TALB"):
+        result["album"] = album[0]
 
     # Artist tags - support ID3v2.4 null-separated multi-value
-    if (frame := tags.get("TPE1")) and (artist_values := frame.text):
+    if artist_values := _id3_get_tag_text(tags, "TPE1"):
         if len(artist_values) > 1:
             result["artists"] = list(artist_values)
         else:
             result["artist"] = artist_values[0]
-    if (frame := tags.get("TPE2")) and (albumartist_values := frame.text):
+    if albumartist_values := _id3_get_tag_text(tags, "TPE2"):
         if len(albumartist_values) > 1:
             result["albumartists"] = list(albumartist_values)
         else:
             result["albumartist"] = albumartist_values[0]
 
     # Genre (multi-value)
-    if (frame := tags.get("TCON")) and frame.text:
-        result["genre"] = frame.text
+    if genre := _id3_get_tag_text(tags, "TCON"):
+        result["genre"] = genre
 
     # Explicit multi-value artist tag (takes precedence)
-    if (frame := tags.get("TXXX:ARTISTS")) and frame.text:
-        result["artists"] = frame.text
+    if artists := _id3_get_tag_text(tags, "TXXX:ARTISTS"):
+        result["artists"] = artists
 
     # MusicBrainz tags (single value)
-    if (frame := tags.get("TXXX:MusicBrainz Album Id")) and frame.text:
-        result["musicbrainzalbumid"] = frame.text[0]
-    if (frame := tags.get("TXXX:MusicBrainz Release Group Id")) and frame.text:
-        result["musicbrainzreleasegroupid"] = frame.text[0]
-    if frame := tags.get("UFID:http://musicbrainz.org"):
-        result["musicbrainzrecordingid"] = frame.data.decode()
-    if (frame := tags.get("TXXX:MusicBrainz Track Id")) and frame.text:
-        result["musicbrainztrackid"] = frame.text[0]
+    if albumid := _id3_get_tag_text(tags, "TXXX:MusicBrainz Album Id"):
+        result["musicbrainzalbumid"] = albumid[0]
+    if releasegroupid := _id3_get_tag_text(tags, "TXXX:MusicBrainz Release Group Id"):
+        result["musicbrainzreleasegroupid"] = releasegroupid[0]
+    if frame := tags.get("UFID:http://musicbrainz.org"):  # type: ignore[no-untyped-call]
+        # Strip NULs and whitespace from MusicBrainz UFID data (support #5906).
+        result["musicbrainzrecordingid"] = frame.data.decode().replace("\x00", "").strip()
+    if trackid := _id3_get_tag_text(tags, "TXXX:MusicBrainz Track Id"):
+        result["musicbrainztrackid"] = trackid[0]
 
     # MusicBrainz tags (multi-value)
-    if (frame := tags.get("TXXX:MusicBrainz Album Artist Id")) and frame.text:
-        result["musicbrainzalbumartistid"] = frame.text
-    if (frame := tags.get("TXXX:MusicBrainz Artist Id")) and frame.text:
-        result["musicbrainzartistid"] = frame.text
+    if albumartistid := _id3_get_tag_text(tags, "TXXX:MusicBrainz Album Artist Id"):
+        result["musicbrainzalbumartistid"] = albumartistid
+    if artistid := _id3_get_tag_text(tags, "TXXX:MusicBrainz Artist Id"):
+        result["musicbrainzartistid"] = artistid
     # album type may be multi-value; join them
-    if (frame := tags.get("TXXX:MusicBrainz Album Type")) and frame.text:
-        result["musicbrainzalbumtype"] = ";".join(frame.text)
+    if album_type := _id3_get_tag_text(tags, "TXXX:MusicBrainz Album Type"):
+        result["musicbrainzalbumtype"] = ";".join(album_type)
 
     # Additional tags
-    if (frame := tags.get("TXXX:BARCODE")) and frame.text:
-        result["barcode"] = frame.text
-    if (frame := tags.get("TXXX:TSRC")) and frame.text:
-        result["tsrc"] = frame.text
+    if barcode := _id3_get_tag_text(tags, "TXXX:BARCODE"):
+        result["barcode"] = barcode
+    if tsrc := _id3_get_tag_text(tags, "TXXX:TSRC"):
+        result["tsrc"] = tsrc
 
     # Sort tags (multi-value to support multiple artists)
-    if (frame := tags.get("TSOP")) and frame.text:
-        result["artistsort"] = frame.text
-    if (frame := tags.get("TSO2")) and frame.text:
-        result["albumartistsort"] = frame.text
+    if artistsort := _id3_get_tag_text(tags, "TSOP"):
+        result["artistsort"] = artistsort
+    if albumartistsort := _id3_get_tag_text(tags, "TSO2"):
+        result["albumartistsort"] = albumartistsort
 
     # Sort tags (single value)
-    if (frame := tags.get("TSOT")) and frame.text:
-        result["titlesort"] = frame.text[0]
-    if (frame := tags.get("TSOA")) and frame.text:
-        result["albumsort"] = frame.text[0]
+    if titlesort := _id3_get_tag_text(tags, "TSOT"):
+        result["titlesort"] = titlesort[0]
+    if albumsort := _id3_get_tag_text(tags, "TSOA"):
+        result["albumsort"] = albumsort[0]
+
+    # Synchronized lyrics
+    for frame in tags.getall("SYLT"):  # type: ignore[no-untyped-call]
+        # Only consider lyrics type and millisecond timestamp format
+        if frame.type == 1 and frame.format == 2 and frame.text:
+            result["synchronizedlyrics"] = frame.text
+            break
 
     return result
 
@@ -1288,9 +1338,15 @@ def parse_tags_mutagen(input_file: str) -> dict[str, Any]:
 
     :param input_file: Path to the audio file.
     """
+    import mutagen  # noqa: PLC0415
+    from mutagen._vorbis import VCommentDict  # noqa: PLC0415
+    from mutagen.apev2 import APEv2  # noqa: PLC0415
+    from mutagen.id3 import ID3Tags  # noqa: PLC0415
+    from mutagen.mp4 import MP4Tags  # noqa: PLC0415
+
     result: dict[str, Any] = {}
     try:
-        audio = mutagen.File(input_file)  # type: ignore[attr-defined]
+        audio = mutagen.File(input_file)
         if audio is None or not audio.tags:
             return result
 
@@ -1303,10 +1359,9 @@ def parse_tags_mutagen(input_file: str) -> dict[str, Any]:
         # Check if APEv2 tags (WavPack, Musepack, Monkey's Audio, etc.)
         elif isinstance(audio.tags, APEv2):
             result = _parse_apev2_tags(audio.tags)
-        else:
-            # ID3 tags (MP3) and other formats
-            tags_dict = dict(audio.tags)
-            result = _parse_id3_tags(tags_dict)
+        # Check if ID3 tags (MP3, AIFF, WAV, etc.)
+        elif isinstance(audio.tags, ID3Tags):
+            result = _parse_id3_tags(audio.tags)
 
         return result
     except Exception as err:
@@ -1344,7 +1399,9 @@ def get_apev2_image(input_file: str) -> bytes | None:
 
     :param input_file: Path to the local audio file.
     """
-    audio = mutagen.File(input_file)  # type: ignore[attr-defined]
+    import mutagen  # noqa: PLC0415
+
+    audio = mutagen.File(input_file)
     if audio is None or not hasattr(audio, "tags") or audio.tags is None:
         return None
 
@@ -1373,7 +1430,8 @@ def get_apev2_image(input_file: str) -> bytes | None:
 
 
 async def get_embedded_image(input_file: str) -> bytes | None:
-    """Return embedded image data.
+    """
+    Return embedded image data.
 
     Input_file may be a (local) filename or URL accessible by ffmpeg.
     """
@@ -1422,8 +1480,18 @@ async def write_replaygain_track_gain(path: str, track_gain_db: float) -> bool:
 
 
 def _write_replaygain_track_gain_sync(path: str, track_gain_db: float) -> bool:
+    import mutagen  # noqa: PLC0415
+    from mutagen._vorbis import VCommentDict  # noqa: PLC0415
+    from mutagen.apev2 import APEv2  # noqa: PLC0415
+
+    # TXXX and UFID are ID3 frame classes pulled into mutagen.id3 via a dynamic
+    # frames-table import that mypy's stubs do not follow, hence the attr-defined
+    # ignores on the mutagen.id3 imports here and below.
+    from mutagen.id3 import ID3, TXXX  # noqa: PLC0415
+    from mutagen.mp4 import AtomDataType, MP4FreeForm, MP4Tags  # noqa: PLC0415
+
     try:
-        audio = mutagen.File(path)  # type: ignore[attr-defined]
+        audio = mutagen.File(path)
     except Exception as err:
         LOGGER.debug("mutagen could not open %s: %s", path, err)
         return False
@@ -1466,4 +1534,222 @@ def _write_replaygain_track_gain_sync(path: str, track_gain_db: float) -> bool:
         return False
     except Exception as err:
         LOGGER.warning("unexpected failure writing replaygain tag to %s: %s", path, err)
+        return False
+
+
+async def write_identifier_tags(
+    path: str,
+    *,
+    mbid: str | None = None,
+    acoustid: str | None = None,
+    isrcs: list[str] | None = None,
+    artist_mbids: list[str] | None = None,
+) -> bool:
+    """
+    Write any combination of identifier tags to an audio file in a single open/save cycle.
+
+    Supported identifiers: MusicBrainz Recording Id, AcoustID, ISRCs, MusicBrainz Artist Ids.
+    Only identifiers passed as non-empty arguments are written; the rest are left untouched.
+
+    Returns True when at least one tag was applied and the file was saved, False otherwise.
+
+    :param path: Absolute path to the audio file.
+    :param mbid: MusicBrainz Recording UUID to persist.
+    :param acoustid: AcoustID UUID to persist.
+    :param isrcs: ISRC codes to persist.
+    :param artist_mbids: MusicBrainz Artist UUIDs to persist.
+    """
+    return await asyncio.to_thread(
+        _write_identifier_tags_sync,
+        path,
+        mbid=mbid,
+        acoustid=acoustid,
+        isrcs=isrcs,
+        artist_mbids=artist_mbids,
+    )
+
+
+def _open_mutagen_for_write(path: str) -> Any | None:
+    """Open a file for tag writing, returning the mutagen object or None on failure."""
+    import mutagen  # noqa: PLC0415
+
+    try:
+        audio = mutagen.File(path)
+    # Broad: mutagen.File can raise format-specific parse errors, struct errors,
+    # and IOError variants whose hierarchy is not stable across mutagen versions.
+    except Exception as err:
+        LOGGER.debug("mutagen could not open %s: %s", path, err)
+        return None
+    if audio is None:
+        return None
+    if audio.tags is None:
+        try:
+            audio.add_tags()
+        # Broad: add_tags() can raise per-format exceptions that don't share a base class.
+        except Exception as err:
+            LOGGER.debug("could not initialise tags on %s: %s", path, err)
+            return None
+    return audio
+
+
+def _write_identifier_tags_sync(
+    path: str,
+    *,
+    mbid: str | None,
+    acoustid: str | None,
+    isrcs: list[str] | None,
+    artist_mbids: list[str] | None,
+) -> bool:
+    audio = _open_mutagen_for_write(path)
+    if audio is None:
+        return False
+    tags = audio.tags
+
+    applied = False
+    if mbid:
+        applied = _apply_mbid_tag(tags, mbid) or applied
+    if acoustid:
+        applied = _apply_acoustid_tag(tags, acoustid) or applied
+    if isrcs:
+        applied = _apply_isrc_tag(tags, isrcs) or applied
+    if artist_mbids:
+        applied = _apply_artist_mbid_tag(tags, artist_mbids) or applied
+
+    if not applied:
+        return False
+
+    try:
+        audio.save()
+        return True
+    except (OSError, PermissionError) as err:
+        LOGGER.debug("could not save identifier tags to %s: %s", path, err)
+        return False
+    # Broad boundary: mutagen's save() can raise per-format exceptions; logged as
+    # warning so unexpected surprises are visible but never crash the scan.
+    except Exception as err:
+        LOGGER.warning("unexpected failure saving identifier tags to %s: %s", path, err)
+        return False
+
+
+def _apply_mbid_tag(tags: Any, mbid: str) -> bool:
+    from mutagen._vorbis import VCommentDict  # noqa: PLC0415
+    from mutagen.apev2 import APEv2  # noqa: PLC0415
+    from mutagen.id3 import ID3, UFID  # noqa: PLC0415
+    from mutagen.mp4 import AtomDataType, MP4FreeForm, MP4Tags  # noqa: PLC0415
+
+    try:
+        if isinstance(tags, ID3):
+            # MusicBrainz Recording Id lives in a UFID frame (Picard convention).
+            tags.delall("UFID:http://musicbrainz.org")  # type: ignore[no-untyped-call]
+            tags.add(  # type: ignore[no-untyped-call]
+                UFID(  # type: ignore[no-untyped-call]
+                    owner="http://musicbrainz.org", data=mbid.encode("ascii")
+                )
+            )
+        elif isinstance(tags, MP4Tags):
+            tags["----:com.apple.iTunes:MusicBrainz Track Id"] = [
+                MP4FreeForm(  # type: ignore[no-untyped-call]
+                    mbid.encode("utf-8"), dataformat=AtomDataType.UTF8
+                )
+            ]
+        elif isinstance(tags, (VCommentDict, APEv2)):
+            # historic naming: this key holds the MusicBrainz Recording UUID, not the
+            # track-in-release ID despite being spelled MUSICBRAINZ_TRACKID.
+            tags["MUSICBRAINZ_TRACKID"] = mbid
+        else:
+            return False
+        return True
+    # Broad: mutagen's tag APIs are untyped and per-format exceptions don't share a base.
+    except Exception as err:
+        LOGGER.warning("unexpected failure applying MusicBrainz Recording Id: %s", err)
+        return False
+
+
+def _apply_acoustid_tag(tags: Any, acoustid: str) -> bool:
+    from mutagen._vorbis import VCommentDict  # noqa: PLC0415
+    from mutagen.apev2 import APEv2  # noqa: PLC0415
+    from mutagen.id3 import ID3, TXXX  # noqa: PLC0415
+    from mutagen.mp4 import AtomDataType, MP4FreeForm, MP4Tags  # noqa: PLC0415
+
+    try:
+        if isinstance(tags, ID3):
+            tags.delall("TXXX:Acoustid Id")  # type: ignore[no-untyped-call]
+            tags.add(  # type: ignore[no-untyped-call]
+                TXXX(  # type: ignore[no-untyped-call]
+                    encoding=3, desc="Acoustid Id", text=acoustid
+                )
+            )
+        elif isinstance(tags, MP4Tags):
+            tags["----:com.apple.iTunes:Acoustid Id"] = [
+                MP4FreeForm(  # type: ignore[no-untyped-call]
+                    acoustid.encode("utf-8"), dataformat=AtomDataType.UTF8
+                )
+            ]
+        elif isinstance(tags, (VCommentDict, APEv2)):
+            # Picard tag map: ACOUSTID_ID for both Vorbis Comments and APEv2.
+            tags["ACOUSTID_ID"] = acoustid
+        else:
+            return False
+        return True
+    except Exception as err:
+        LOGGER.warning("unexpected failure applying Acoustid Id: %s", err)
+        return False
+
+
+def _apply_isrc_tag(tags: Any, isrcs: list[str]) -> bool:
+    from mutagen._vorbis import VCommentDict  # noqa: PLC0415
+    from mutagen.apev2 import APEv2  # noqa: PLC0415
+    from mutagen.id3 import ID3, TSRC  # noqa: PLC0415
+    from mutagen.mp4 import AtomDataType, MP4FreeForm, MP4Tags  # noqa: PLC0415
+
+    try:
+        if isinstance(tags, ID3):
+            # TSRC is ID3's dedicated ISRC frame; ID3v2.4 supports multiple values.
+            tags.delall("TSRC")  # type: ignore[no-untyped-call]
+            tags.add(TSRC(encoding=3, text=list(isrcs)))  # type: ignore[no-untyped-call]
+        elif isinstance(tags, MP4Tags):
+            tags["----:com.apple.iTunes:ISRC"] = [
+                MP4FreeForm(  # type: ignore[no-untyped-call]
+                    isrc.encode("utf-8"), dataformat=AtomDataType.UTF8
+                )
+                for isrc in isrcs
+            ]
+        elif isinstance(tags, (VCommentDict, APEv2)):
+            tags["ISRC"] = list(isrcs)
+        else:
+            return False
+        return True
+    except Exception as err:
+        LOGGER.warning("unexpected failure applying ISRC: %s", err)
+        return False
+
+
+def _apply_artist_mbid_tag(tags: Any, artist_mbids: list[str]) -> bool:
+    from mutagen._vorbis import VCommentDict  # noqa: PLC0415
+    from mutagen.apev2 import APEv2  # noqa: PLC0415
+    from mutagen.id3 import ID3, TXXX  # noqa: PLC0415
+    from mutagen.mp4 import AtomDataType, MP4FreeForm, MP4Tags  # noqa: PLC0415
+
+    try:
+        if isinstance(tags, ID3):
+            tags.delall("TXXX:MusicBrainz Artist Id")  # type: ignore[no-untyped-call]
+            tags.add(  # type: ignore[no-untyped-call]
+                TXXX(  # type: ignore[no-untyped-call]
+                    encoding=3, desc="MusicBrainz Artist Id", text=list(artist_mbids)
+                )
+            )
+        elif isinstance(tags, MP4Tags):
+            tags["----:com.apple.iTunes:MusicBrainz Artist Id"] = [
+                MP4FreeForm(  # type: ignore[no-untyped-call]
+                    artist_id.encode("utf-8"), dataformat=AtomDataType.UTF8
+                )
+                for artist_id in artist_mbids
+            ]
+        elif isinstance(tags, (VCommentDict, APEv2)):
+            tags["MUSICBRAINZ_ARTISTID"] = list(artist_mbids)
+        else:
+            return False
+        return True
+    except Exception as err:
+        LOGGER.warning("unexpected failure applying MusicBrainz Artist Id: %s", err)
         return False

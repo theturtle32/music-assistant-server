@@ -32,6 +32,7 @@ from music_assistant_models.errors import (
 from music_assistant_models.media_items import Album, Artist, BrowseFolder, Track
 from music_assistant_models.streamdetails import StreamDetails
 
+from music_assistant.helpers.throttle_retry import ThrottlerManager
 from music_assistant.providers.bandcamp import BandcampProvider, split_id
 from music_assistant.providers.bandcamp.constants import (
     CACHE_EMPTY_RESULTS,
@@ -63,8 +64,13 @@ def mass_mock() -> Mock:
     mass.http_session = AsyncMock()
     mass.metadata.locale = "en_US"
     mass.cache.get = AsyncMock(return_value=None)
+    mass.cache.get_with_freshness = AsyncMock(return_value=(None, False, False))
     mass.cache.set = AsyncMock()
     mass.cache.delete = AsyncMock()
+    # setup_data is unset in these unit tests, so get_setup_value falls through to
+    # the provider config's get_value (which the config mock stubs)
+    mass.config.get = Mock(return_value=None)
+    mass.config.get_raw_provider_config_value = Mock(return_value=None)
     return mass
 
 
@@ -83,6 +89,7 @@ def config_mock() -> Mock:
     config.name = "Bandcamp Test"
     config.instance_id = "bandcamp_test"
     config.enabled = True
+    config.values = {}
     config.get_value.side_effect = lambda key, default=None: {
         "identity": "mock_identity_token",
         "search_limit": 10,
@@ -101,6 +108,12 @@ def config_mock() -> Mock:
 async def provider(mass_mock: Mock, manifest_mock: Mock, config_mock: Mock) -> BandcampProvider:
     """Return a BandcampProvider instance."""
     provider = BandcampProvider(mass_mock, manifest_mock, config_mock, SUPPORTED_FEATURES)
+    provider.throttler = ThrottlerManager(
+        rate_limit=provider.throttler.throttler.rate_limit,
+        period=provider.throttler.throttler.period,
+        retry_attempts=provider.throttler.retry_attempts,
+        initial_backoff=provider.throttler.initial_backoff,
+    )
 
     # Initialize the provider
     with patch("music_assistant.providers.bandcamp.BandcampAPIClient") as mock_client_class:
@@ -150,6 +163,7 @@ async def test_handle_async_init_with_identity(provider: BandcampProvider) -> No
 async def test_handle_async_init_without_identity(mass_mock: Mock, manifest_mock: Mock) -> None:
     """Test async initialization without identity token."""
     config = Mock()
+    config.values = {}
     config.get_value.side_effect = lambda key, default=None: (
         default if default is not None else ("INFO" if key == "log_level" else None)
     )
@@ -587,7 +601,8 @@ async def test_fetch_api_track_not_found_error(provider: BandcampProvider) -> No
 
 
 async def test_fetch_api_track_rate_limit_error(provider: BandcampProvider) -> None:
-    """Test _fetch_api_track converts BandcampRateLimitError.
+    """
+    Test _fetch_api_track converts BandcampRateLimitError.
 
     Since @throttle_with_retries is on _fetch_api_track, persistent rate
     limiting exhausts retries and raises RetriesExhausted.
@@ -607,9 +622,7 @@ async def test_fetch_api_track_rate_limit_error(provider: BandcampProvider) -> N
         await provider._fetch_api_track("123-456-789")
 
     assert mock_get_album.call_count == provider.throttler.retry_attempts
-    # At least retry_attempts - 1 sleeps from backoff; may be higher if the
-    # class-level Throttler also called asyncio.sleep due to accumulated entries.
-    assert mock_sleep.call_count >= provider.throttler.retry_attempts - 1
+    assert mock_sleep.call_count == provider.throttler.retry_attempts - 1
 
 
 async def test_fetch_api_track_generic_api_error(provider: BandcampProvider) -> None:
@@ -750,7 +763,7 @@ async def test_get_library_tracks_success(provider: BandcampProvider) -> None:
         patch.object(provider, "get_album_tracks", new_callable=AsyncMock) as mock_get_tracks,
     ):
         # Make get_library_albums an async generator
-        async def mock_albums_gen() -> AsyncGenerator[Mock, None]:
+        async def mock_albums_gen() -> AsyncGenerator[Mock]:
             yield Mock(item_id="123-456")
 
         mock_get_albums.return_value = mock_albums_gen()
@@ -785,6 +798,55 @@ async def test_fetch_api_track_login_error(provider: BandcampProvider) -> None:
         pytest.raises(LoginFailed, match=r"login is invalid or expired"),
     ):
         await provider._fetch_api_track("123-456-789")
+
+
+# --- Feed tests (the feed powers a recommendation row and a browse path) ---
+
+
+async def test_browse_feed_returns_tracks(provider: BandcampProvider) -> None:
+    """Test browsing the feed slug resolves to the feed tracks (the play path for the folder)."""
+    feed_track = Mock()
+    with patch.object(provider, "_get_feed_tracks", new_callable=AsyncMock) as mock_feed:
+        mock_feed.return_value = [feed_track]
+
+        result = await provider.browse("bandcamp_test://feed")
+
+        assert result == [feed_track]
+
+
+async def test_get_feed_tracks_filters_non_streamable(provider: BandcampProvider) -> None:
+    """Test _get_feed_tracks skips tracks without a streaming URL and caches the result."""
+    streamable = Mock(streaming_url={"mp3-128": "https://example.com/feed.mp3"})
+    silent = Mock(streaming_url=None)
+    converted = Mock()
+
+    with (
+        patch.object(provider, "_fetch_feed", new_callable=AsyncMock) as mock_fetch,
+        patch.object(
+            provider._converters, "track_from_feed", return_value=converted
+        ) as mock_convert,
+    ):
+        mock_fetch.return_value = Mock(track_list=[streamable, silent])
+
+        result = await provider._get_feed_tracks()
+
+        mock_convert.assert_called_once_with(streamable)
+        assert result == [converted]
+        cast("AsyncMock", provider.mass.cache.set).assert_called_once()
+
+
+async def test_get_feed_tracks_cache_hit(provider: BandcampProvider) -> None:
+    """Test _get_feed_tracks returns cached tracks without hitting the API."""
+    cached = [Mock()]
+
+    with (
+        patch.object(provider.mass.cache, "get", new_callable=AsyncMock, return_value=cached),
+        patch.object(provider, "_fetch_feed", new_callable=AsyncMock) as mock_fetch,
+    ):
+        result = await provider._get_feed_tracks()
+
+        mock_fetch.assert_not_called()
+        assert result == cached
 
 
 # --- Browse tests ---
@@ -1907,7 +1969,8 @@ async def test_get_all_collection_items_error_mid_pagination(
 async def test_browse_person_content_returns_only_resolved_items(
     provider: BandcampProvider,
 ) -> None:
-    """Test that _browse_person_content returns only resolved Album/Track objects.
+    """
+    Test that _browse_person_content returns only resolved Album/Track objects.
 
     Regression test: a previous version reused the same list variable for both
     the raw API items and the resolved results, which mixed CollectionItem

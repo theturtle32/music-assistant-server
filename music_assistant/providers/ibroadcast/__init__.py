@@ -6,9 +6,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 
 from ibroadcastaio import IBroadcastClient
-from music_assistant_models.config_entries import ConfigEntry, ConfigValueType
 from music_assistant_models.enums import (
-    ConfigEntryType,
     ContentType,
     ImageType,
     MediaType,
@@ -53,7 +51,7 @@ SUPPORTED_FEATURES = {
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from music_assistant_models.config_entries import ProviderConfig
+    from music_assistant_models.config_entries import ConfigEntry, ProviderConfig
     from music_assistant_models.provider import ProviderManifest
 
     from music_assistant.mass import MusicAssistant
@@ -64,40 +62,7 @@ async def setup(
     mass: MusicAssistant, manifest: ProviderManifest, config: ProviderConfig
 ) -> ProviderInstanceType:
     """Initialize provider(instance) with given configuration."""
-    if not config.get_value(CONF_USERNAME) or not config.get_value(CONF_PASSWORD):
-        msg = "Invalid login credentials"
-        raise LoginFailed(msg)
     return IBroadcastProvider(mass, manifest, config, SUPPORTED_FEATURES)
-
-
-async def get_config_entries(
-    mass: MusicAssistant,
-    instance_id: str | None = None,
-    action: str | None = None,
-    values: dict[str, ConfigValueType] | None = None,
-) -> tuple[ConfigEntry, ...]:
-    """
-    Return Config entries to setup this provider.
-
-    instance_id: id of an existing provider instance (None if new instance setup).
-    action: [optional] action key called from config entries UI.
-    values: the (intermediate) raw values for config entries sent with the action.
-    """
-    # ruff: noqa: ARG001
-    return (
-        ConfigEntry(
-            key=CONF_USERNAME,
-            type=ConfigEntryType.STRING,
-            label="Username",
-            required=True,
-        ),
-        ConfigEntry(
-            key=CONF_PASSWORD,
-            type=ConfigEntryType.SECURE_STRING,
-            label="Password",
-            required=True,
-        ),
-    )
 
 
 class IBroadcastProvider(MusicProvider):
@@ -106,19 +71,25 @@ class IBroadcastProvider(MusicProvider):
     _user_id: str
     _client: IBroadcastClient
 
+    async def get_config_entries(self) -> tuple[ConfigEntry, ...]:
+        """Return Config entries to setup this provider."""
+        return ()
+
     async def handle_async_init(self) -> None:
         """Set up the iBroadcast provider."""
+        username = self.get_setup_value(CONF_USERNAME)
+        password = self.get_setup_value(CONF_PASSWORD)
+        if not username or not password:
+            msg = "Invalid login credentials"
+            raise LoginFailed(msg)
         self._client = IBroadcastClient(self.mass.http_session)
-        status = await self._client.login(
-            self.config.get_value(CONF_USERNAME),
-            self.config.get_value(CONF_PASSWORD),
-        )
+        status = await self._client.login(username, password)
         self._user_id = status["user"]["id"]
 
         # temporary call to refresh library until ibroadcast provides a detailed api
         await self._client.refresh_library()
 
-    async def get_library_albums(self) -> AsyncGenerator[Album, None]:
+    async def get_library_albums(self) -> AsyncGenerator[Album]:
         """Retrieve library albums from ibroadcast."""
         for album in (await self._client.get_albums()).values():
             try:
@@ -133,7 +104,7 @@ class IBroadcastProvider(MusicProvider):
         album_obj = await self._client.get_album(int(prov_album_id))
         return await self._parse_album(album_obj)
 
-    async def get_library_artists(self) -> AsyncGenerator[Artist, None]:
+    async def get_library_artists(self) -> AsyncGenerator[Artist]:
         """Retrieve all library artists from iBroadcast."""
         for artist in (await self._client.get_artists()).values():
             try:
@@ -142,7 +113,7 @@ class IBroadcastProvider(MusicProvider):
                 self.logger.debug("Parse artist failed: %s", artist, exc_info=error)
                 continue
 
-    @use_cache(3600 * 24 * 7)  # Cache for 7 days
+    @use_cache(3600 * 24 * 7, allow_expired_cache=True)  # Cache for 7 days
     async def get_artist_albums(self, prov_artist_id: str) -> list[Album]:
         """Get a list of albums for the given artist."""
         albums_objs = [
@@ -159,7 +130,7 @@ class IBroadcastProvider(MusicProvider):
                 continue
         return albums
 
-    @use_cache(3600 * 24 * 7)  # Cache for 7 days
+    @use_cache(3600 * 24 * 7, allow_expired_cache=True)  # Cache for 7 days
     async def get_album_tracks(self, prov_album_id: str) -> list[Track]:
         """Get album tracks for given album id."""
         album = await self._client.get_album(int(prov_album_id))
@@ -177,7 +148,7 @@ class IBroadcastProvider(MusicProvider):
         artist_obj = await self._client.get_artist(int(prov_artist_id))
         return await self._parse_artist(artist_obj)
 
-    async def get_library_tracks(self) -> AsyncGenerator[Track, None]:
+    async def get_library_tracks(self) -> AsyncGenerator[Track]:
         """Retrieve library tracks from iBroadcast."""
         for track in (await self._client.get_tracks()).values():
             try:
@@ -201,7 +172,7 @@ class IBroadcastProvider(MusicProvider):
             name=name,
         )
 
-    async def get_library_playlists(self) -> AsyncGenerator[Playlist, None]:
+    async def get_library_playlists(self) -> AsyncGenerator[Playlist]:
         """Retrieve playlists from iBroadcast."""
         for playlist in (await self._client.get_playlists()).values():
             # Skip the auto generated playlist
@@ -219,7 +190,7 @@ class IBroadcastProvider(MusicProvider):
             raise MediaNotFoundError(f"Playlist {prov_playlist_id} could not be parsed") from error
         return playlist
 
-    @use_cache(3600)  # Cache for 1 hour
+    @use_cache(3600, allow_expired_cache=True)  # Cache for 1 hour
     async def get_playlist_tracks(self, prov_playlist_id: str, page: int = 0) -> list[Track]:
         """Get playlist tracks."""
         tracks: list[Track] = []

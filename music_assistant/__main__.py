@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import os
+import resource
 import signal
 import subprocess
 import sys
@@ -19,8 +20,10 @@ from typing import Any, Final
 from colorlog import ColoredFormatter
 
 from music_assistant.constants import MASS_LOGGER_NAME, VERBOSE_LOG_LEVEL
+from music_assistant.helpers.diagnostics import install_diagnostics_log_handler
 from music_assistant.helpers.json import json_loads
 from music_assistant.helpers.logging import activate_log_queue_handler
+from music_assistant.helpers.util import cap_native_thread_pools
 from music_assistant.mass import MusicAssistant
 
 FORMAT_DATE: Final = "%Y-%m-%d"
@@ -107,6 +110,10 @@ def setup_logger(data_path: str, level: str = "DEBUG") -> logging.Logger:
     # This way they're where other messages are, and can be filtered as usual.
     logging.captureWarnings(True)
 
+    # install the always-on diagnostics capture handler as early as possible
+    # so boot-time warnings/errors end up in the diagnostics report
+    install_diagnostics_log_handler()
+
     # setup file handler
     log_filename = os.path.join(data_path, "musicassistant.log")
     file_handler = RotatingFileHandler(log_filename, maxBytes=MAX_LOG_FILESIZE, backupCount=1)
@@ -134,6 +141,8 @@ def setup_logger(data_path: str, level: str = "DEBUG") -> logging.Logger:
     logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
     logging.getLogger("numba").setLevel(logging.WARNING)
     logging.getLogger("torio._extension.utils").setLevel(logging.WARNING)
+    logging.getLogger("quic").setLevel(logging.WARNING)
+    logging.getLogger("http3").setLevel(logging.WARNING)
 
     # Add a filter to suppress slow callback warnings from buffered audio streaming
     # These warnings are expected when audio buffers fill up and producers wait for consumers
@@ -231,6 +240,22 @@ def main() -> None:
 
     # setup logger
     logger = setup_logger(data_dir, log_level)
+
+    # Size the native BLAS/OpenMP pools before any provider imports a math library,
+    # because those pools read the environment once at load time.
+    blas_budget = cap_native_thread_pools()
+    LOGGER.debug("Native BLAS/OpenMP thread pools capped to %d thread(s)", blas_budget)
+
+    # Raise the open-file soft limit to the hard limit so the concurrent provider
+    # imports at startup can't exhaust it (default soft=1024 in HAOS add-on containers).
+    # Skip when the hard limit is unlimited (e.g. macOS), which setrlimit won't apply.
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if hard != resource.RLIM_INFINITY and soft < hard:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+        except (ValueError, OSError) as err:
+            LOGGER.warning("Could not raise open-file limit: %s", err)
+
     mass = MusicAssistant(data_dir, cache_dir, safe_mode)
 
     # enable alpine subprocess workaround
