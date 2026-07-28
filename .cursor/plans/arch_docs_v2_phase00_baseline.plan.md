@@ -9,7 +9,7 @@ todos:
     content: "Fast-forward origin/dev to upstream/dev and push"
     status: pending
   - id: branch
-    content: "Cut docs/architecture-refresh from an up-to-date local docs/architecture"
+    content: "Check out docs/architecture-refresh (already created, carrying the plan-stack commit)"
     status: pending
   - id: merge
     content: "Merge origin/dev into docs/architecture-refresh; resolve any conflicts (expected: none)"
@@ -41,6 +41,9 @@ inspecting `upstream/dev` from a side worktree.
   fast-forward is safe.
 - `origin/dev` (the fork's `dev`) is stale at the old baseline.
 - PR #6 (`docs/architecture` → `dev`, fork) is open and stays open.
+- **`docs/architecture-refresh` already exists** on `origin`, cut from `docs/architecture` and
+  carrying one commit: the round-2 plan stack. So this phase checks it out rather than creating it,
+  and the baseline merge becomes the branch's second commit. No PR has been opened yet.
 
 ## Steps
 
@@ -55,10 +58,9 @@ git merge-base --is-ancestor 4b67568d6 upstream/dev && echo "ff safe"
 # Fast-forward the fork's dev to upstream/dev.
 git push origin upstream/dev:refs/heads/dev
 
-# Cut the long-lived refresh branch from docs/architecture.
-git checkout docs/architecture
-git pull --ff-only origin docs/architecture
-git checkout -b docs/architecture-refresh
+# The long-lived refresh branch already exists with the plan-stack commit.
+git checkout docs/architecture-refresh
+git pull --ff-only origin docs/architecture-refresh
 
 # Bring the new code baseline in.
 git fetch origin dev
@@ -85,7 +87,7 @@ is fork-only. If conflicts do appear, they will be in fork-only files — keep t
 Open **one** PR that every later phase will add commits to:
 
 ```bash
-git push -u origin docs/architecture-refresh
+git push origin docs/architecture-refresh
 gh pr create -R theturtle32/music-assistant-server \
   --base docs/architecture \
   --title "docs(architecture): refresh against current upstream/dev" \
