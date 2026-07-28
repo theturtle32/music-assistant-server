@@ -18,10 +18,10 @@ The `models` package is the shared contract between server and client. It uses `
 
 The `MusicAssistant` class in `music_assistant/mass.py` is the nucleus of the server. Every other component holds a reference to it. It owns:
 
-- **10 core controllers** (see component map below)
+- **13 controllers** (see component map below)
 - **The event bus** (`signal_event`, `subscribe`, `_subscribers`)
 - **The command handler registry** (`command_handlers`, `register_api_command`)
-- **The provider registry** (`_providers`, `_provider_manifests`)
+- **The provider registry** (`_providers`, `_provider_manifests`, `_provider_icons`)
 - **Task tracking** (`_tracked_tasks`, `_tracked_timers`, `create_task`, `call_later`)
 - **Shared HTTP sessions** (`http_session`, `http_session_no_ssl`)
 
@@ -29,16 +29,21 @@ The `MusicAssistant` class in `music_assistant/mass.py` is the nucleus of the se
 class MusicAssistant:
     loop: asyncio.AbstractEventLoop
     config: ConfigController
-    cache: CacheController
-    discovery: DiscoveryController
-    tasks: TasksController
     webserver: WebserverController
+    cache: CacheController
     metadata: MetaDataController
+    tasks: TasksController
     music: MusicController
     players: PlayerController
     player_queues: PlayerQueuesController
+    discovery: DiscoveryController
     streams: StreamsController
+    translations: TranslationController
+    diagnostics: DiagnosticsController
+    dashboard: DashboardController
 ```
+
+Twelve of these are `CoreController` subclasses. `ConfigController` is the exception: it is deliberately *not* a `CoreController`, because it must be usable before the core-controller machinery exists — `CoreController.setup()` takes a `CoreConfig` that only the config controller can produce. It is composed from mixins (`ProviderConfigMixin`, `PlayerConfigMixin`, `PlayerQueueConfigMixin`, `DSPConfigMixin`, `CoreConfigMixin`, `SetupFlowMixin`) and exposes a plain `initialized: bool` rather than the `asyncio.Event` the other controllers carry.
 
 ## Component Map
 
@@ -54,10 +59,32 @@ class MusicAssistant:
 | `PlayerController` | `players` | Player state machine, command routing, protocol linking |
 | `PlayerQueuesController` | `player_queues` | Per-player queue management, playback progression |
 | `WebserverController` | `webserver` | aiohttp web server, JSON-RPC API, WebSocket connections, auth |
+| `TranslationController` | `translations` | Loads and resolves translation strings for server-provided objects |
+| `DiagnosticsController` | `diagnostics` | Assembles on-demand, privacy-safe troubleshooting reports |
+| `DashboardController` | `dashboard` | Casts Music Assistant dashboards (e.g. Party mode) to display devices |
 
-Each controller inherits from `CoreController` (`music_assistant/models/core_controller.py`), which provides `setup()`, `post_setup()`, `close()`, `reload()`, and `update_config()` lifecycle hooks. Controllers that appear in `CONFIGURABLE_CORE_CONTROLLERS` also get a `ProviderManifest` registered so the UI can display their settings.
+Every controller except `ConfigController` inherits from `CoreController` (`music_assistant/models/core_controller.py`), which provides `setup()`, `post_setup()`, `close()`, `reload()`, and `update_config()` lifecycle hooks. See [15-provider-lifecycle.md](15-provider-lifecycle.md#corecontroller-lifecycle) for the full `CoreController` contract.
 
 For details on the event system, see [01-event-system.md](01-event-system.md). For configuration and persistence, see [02-configuration.md](02-configuration.md). For the webserver, API, and authentication, see [12-webserver-api.md](12-webserver-api.md). For network discovery, see [13-discovery.md](13-discovery.md). For metadata enrichment, see [14-metadata.md](14-metadata.md). For the provider loading lifecycle, see [15-provider-lifecycle.md](15-provider-lifecycle.md).
+
+## Core Modules as Settings Entities
+
+Core controllers are not just internal plumbing — the configurable ones are surfaced in the settings UI alongside providers, using the same models the frontend already renders for providers.
+
+Every `CoreController` builds a `ProviderManifest` with `type=ProviderType.CORE` in its `__init__` (`builtin=True`, `allow_disable=False`), and subclasses customize `manifest.name`, `manifest.description` and `manifest.icon` from there. But only the domains listed in `CONFIGURABLE_CORE_CONTROLLERS` (`music_assistant/constants.py`) are registered into `mass._provider_manifests`, which is what the `providers/manifests` API returns:
+
+```python
+CONFIGURABLE_CORE_CONTROLLERS = (
+    "discovery", "streams", "webserver", "players", "metadata",
+    "cache", "music", "player_queues", "tasks",
+)
+```
+
+`_load_core_controllers()` registers each of those nine manifests and, for each, calls `detect_provider_icons()` on the controller's own package directory — so a controller ships `icon.svg` / `icon_dark.svg` next to its code exactly like a provider does, and the detected variants are recorded in `manifest.icon_images`. All nine configurable controllers ship both icon variants.
+
+`translations`, `diagnostics` and `dashboard` are full core controllers but are **not** user-configurable settings modules: they build a manifest like everyone else, but it is never registered and no icons are loaded for them.
+
+A controller with user-visible strings also ships a `strings.json` in its package, which `scripts/build_translations.py` compiles into the flat `translations/en.json` under a `core.{domain}.` prefix — the namespace a controller's `translation_owner` property returns. This is the same pipeline providers use with their `provider.{domain}.` prefix; see [02-configuration.md](02-configuration.md) for how config entries pick up their localized labels. All nine configurable controllers ship one, as does `dashboard` (for its manifest text and error messages); `config`, `diagnostics` and `translations` currently have no localizable strings of their own.
 
 ## Startup Lifecycle
 
@@ -67,43 +94,52 @@ The startup sequence in `MusicAssistant.start()` is deliberately ordered — con
 flowchart TD
     A["__main__.py: parse args, setup logger"] --> B["MusicAssistant(storage_path, cache_path, safe_mode)"]
     B --> C["start()"]
-    C --> D["1. ConfigController.setup() — sequential, alone"]
-    D --> E["2. DiscoveryController instantiation"]
-    E --> F["3. __load_provider_manifests() — scan providers/*/manifest.json"]
-    F --> G["4. _setup_storage() — ensure storage/cache dirs exist"]
-    G --> H["5. Instantiate remaining 8 controllers"]
-    H --> I["6. Register core controller manifests for CONFIGURABLE_CORE_CONTROLLERS"]
-    I --> J["7. Parallel setup() of 7 controllers via asyncio.TaskGroup"]
-    J --> K["8. Sequential post_setup() for each controller"]
-    K --> L["9. _register_api_commands() — scan @api_command decorators"]
-    L --> M["10. WebserverController.setup() — sequential, after controllers ready"]
-    M --> N["11. DiscoveryController.setup()"]
-    N --> O["12. _load_builtin_providers() — awaited, failure = fatal"]
+    C --> C2["1. install_diagnostics_log_handler() — capture boot-time errors"]
+    C2 --> D["2. ConfigController.setup() — sequential, alone"]
+    D --> E["3. DiscoveryController instantiation"]
+    E --> F["4. __load_provider_manifests() — scan providers/*/manifest.json"]
+    F --> G["5. _setup_storage() — ensure storage/cache dirs exist"]
+    G --> H["6. _load_core_controllers() — instantiate 11 controllers, register configurable manifests + icons"]
+    H --> I["7. TranslationController.setup() — sequential, before anything serializes"]
+    I --> J["8. Parallel setup() of 9 controllers via asyncio.TaskGroup"]
+    J --> K["9. Sequential post_setup() for 7 of them"]
+    K --> L["10. _register_api_commands() — scan @api_command decorators"]
+    L --> M["11. WebserverController.setup() — sequential, after commands are registered"]
+    M --> N["12. DiscoveryController.setup()"]
+    N --> O["13. _load_builtin_providers() — awaited, failure = fatal"]
     O --> P{"safe_mode?"}
-    P -- No --> Q["13. _load_providers() — background tasks, failure = non-fatal"]
+    P -- No --> Q["14. _load_providers() — bounded concurrency, failure = non-fatal"]
     P -- Yes --> R["Skip regular providers"]
-    Q --> S["14. CoreState.RUNNING"]
+    Q --> S["15. CoreState.RUNNING"]
     R --> S
 ```
 
 **Key details:**
 
-- **Step 1**: `ConfigController` must be first — it loads `settings.json` and provides the server ID used for encryption. No other controller can function without it.
-- **Step 3**: Manifest loading scans `music_assistant/providers/*/manifest.json` in parallel via `TaskManager`. Directories prefixed with `_` are skipped unless `dev_mode` is active.
-- **Step 7**: The seven controllers (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`) are set up in parallel inside an `asyncio.TaskGroup`. Each receives its `CoreConfig` from the config controller.
-- **Step 12**: Builtin providers (like `sync_group`, `universal_group`, `theaudiodb`) are loaded synchronously via `TaskGroup` — if any fails, startup aborts.
-- **Step 13**: Regular providers are loaded concurrently as background tasks via `TaskManager`. Failures trigger auto-retry after 120 seconds for `MusicAssistantError` subclasses.
+- **Step 1**: The always-on diagnostics log handler is installed before anything else that can fail, so boot-time errors land in the diagnostics report. It is idempotent — `__main__.py` installs it too, but embedded usage boots the server directly.
+- **Step 2**: `ConfigController` must be first — it loads `settings.json`, and it installs the encrypt/decrypt callbacks that every `SECURE_STRING` config value depends on. Encryption uses a dedicated, randomly generated `CONF_ENCRYPTION_KEY` rather than a key derived from the server ID; see [02-configuration.md](02-configuration.md) for the key handling and the one-time migration of legacy secrets.
+- **Step 4**: Manifest loading scans `music_assistant/providers/*/manifest.json` in parallel via `TaskManager`. Directories prefixed with `_` are skipped unless `dev_mode` is active.
+- **Step 6**: Instantiating the controllers and registering their manifests is a single step: `_load_core_controllers()` constructs all eleven remaining controllers, then registers a `ProviderManifest` plus icons for each domain in `CONFIGURABLE_CORE_CONTROLLERS`.
+- **Step 7**: `translations` is set up **first and on its own**, because localized strings must exist before any object is serialized — manifests, config entries and error messages all resolve through it.
+- **Step 8**: Nine controllers (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`, `diagnostics`, `dashboard`) are set up in parallel inside an `asyncio.TaskGroup`. Each is handed its `CoreConfig`, which is also stored on the controller as `self.config` so internal code can read values without rebuilding the entries.
+- **Step 9**: `post_setup()` runs for only the original seven (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`) — not for `translations`, `diagnostics` or `dashboard`.
+- **Steps 10–11**: API command registration happens **before** the webserver is set up, so every `@api_command` handler exists by the time the first request can arrive.
+- **Step 13**: Builtin providers (like `sync_group`, `universal_player`, `sendspin`, `theaudiodb`) are loaded via `TaskGroup` and fully awaited — if any fails, startup aborts.
+- **Step 14**: Regular providers load concurrently under `TaskManager(self, PROVIDER_LOAD_CONCURRENCY)` (8 at a time). Failures are non-fatal and trigger auto-retry after 120 seconds for `MusicAssistantError` subclasses.
 
 ## Shutdown Lifecycle
 
-`MusicAssistant.stop()` reverses the startup:
+`MusicAssistant.stop()` broadly reverses the startup:
 
 1. State → `CoreState.STOPPING` (suppresses new events)
 2. Cancel all tracked tasks
 3. Unload all providers (via `asyncio.gather`, tolerating exceptions)
-4. Close controllers in order: `discovery` → `streams` → `webserver` → `tasks` → `metadata` → `music` → `player_queues` → `players` → `config` → `cache`
-5. Close shared HTTP sessions
-6. State → `CoreState.STOPPED`
+4. Close controllers in order: `discovery` → `streams` → `webserver` → `tasks` → `metadata` → `music` → `player_queues` → `players` → `translations` → `diagnostics` → `dashboard`
+5. Close `config` (flushing any pending save) and then `cache`
+6. Close shared HTTP sessions
+7. State → `CoreState.STOPPED`
+
+`config` and `cache` close last because the controllers ahead of them may still persist state as they shut down.
 
 ## Safe Mode
 
@@ -154,8 +190,10 @@ The `__main__.py` entry point respects `XDG_DATA_HOME` and `XDG_CACHE_HOME` envi
 
 | File | Description |
 |---|---|
-| [`music_assistant/mass.py`](../../music_assistant/mass.py) | `MusicAssistant` class — the central hub (~1077 lines) |
-| [`music_assistant/__main__.py`](../../music_assistant/__main__.py) | CLI entry point, argument parsing, logging setup (~271 lines) |
+| [`music_assistant/mass.py`](../../music_assistant/mass.py) | `MusicAssistant` class — the central hub (~1344 lines) |
+| [`music_assistant/__main__.py`](../../music_assistant/__main__.py) | CLI entry point, argument parsing, logging setup (~296 lines) |
 | [`music_assistant/constants.py`](../../music_assistant/constants.py) | Config keys (`CONF_*`), DB tables (`DB_TABLE_*`), reusable config entries, `CONFIGURABLE_CORE_CONTROLLERS`, `DEFAULT_PROVIDERS` |
-| [`music_assistant/models/core_controller.py`](../../music_assistant/models/core_controller.py) | `CoreController` base class for all controllers (~110 lines) |
+| [`music_assistant/models/core_controller.py`](../../music_assistant/models/core_controller.py) | `CoreController` base class for every controller except `config` (~183 lines) |
+| [`music_assistant/controllers/config/`](../../music_assistant/controllers/config) | `ConfigController` package — the one controller that is not a `CoreController` |
+| [`scripts/build_translations.py`](../../scripts/build_translations.py) | Compiles per-controller/per-provider `strings.json` into `translations/en.json` |
 | `music_assistant_models` (installed package) | Shared data models: `EventType`, `MassEvent`, `ProviderManifest`, config entries, `CoreState` |

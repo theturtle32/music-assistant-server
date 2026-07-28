@@ -2,7 +2,7 @@
 
 ## Getting Started
 
-Music Assistant is a single-process async Python server that aggregates music from streaming services (Spotify, Tidal, Qobuz, local files) into a unified library and streams audio to speakers (Chromecast, AirPlay, DLNA, Sonos, and more). It integrates with Home Assistant but also runs standalone. The server is built on `asyncio` and `aiohttp`, with 10 core controllers orchestrated by a central `MusicAssistant` hub, and a modular provider system for all external integrations.
+Music Assistant is a single-process async Python server that aggregates music from streaming services (Spotify, Tidal, Qobuz, local files) into a unified library and streams audio to speakers (Chromecast, AirPlay, DLNA, Sonos, and more). It integrates with Home Assistant but also runs standalone. The server is built on `asyncio` and `aiohttp`, with 13 controllers orchestrated by a central `MusicAssistant` hub, and a modular provider system for all external integrations.
 
 ```mermaid
 graph TB
