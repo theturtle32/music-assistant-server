@@ -1,6 +1,6 @@
 ---
 name: arch_docs_v2_index
-overview: "INDEX (no todos). Master overview for the second architecture-docs refresh: bringing docs/architecture up to date with the 1096 upstream/dev commits landed since the first refresh, plus fixing stale upstream in-tree README.md files. Links to 17 sequential phase plans, each independently buildable as one commit on a single long-lived branch."
+overview: "INDEX (no todos). Master overview for the second architecture-docs refresh: bringing the docs/arch branch up to date with the 1096 upstream/dev commits landed since the first refresh, plus fixing stale upstream in-tree README.md files. Links to 17 sequential phase plans, each independently buildable as one commit on a single long-lived branch."
 todos: []
 isProject: false
 ---
@@ -9,14 +9,14 @@ isProject: false
 
 ## Why
 
-The `docs/architecture` branch is based on upstream commit `4b67568d6` (May 2026). Upstream
+The `docs/arch` branch was based on upstream commit `4b67568d6` (May 2026). Upstream
 `dev` is now at `76422b305`, **1096 commits ahead**, with 1217 files changed
 (+183,340 / −58,301). Four monolithic controllers became packages, two core abstractions the
 docs are built around were replaced outright, API authorization was redesigned, and roughly a
 dozen genuinely new subsystems have no documentation at all.
 
-This index tracks the work to make `docs/architecture` an accurate description of
-current `upstream/dev`, so that PR #6 (`docs/architecture` → `dev`) can be submitted upstream.
+This index tracks the work to make `docs/arch` an accurate description of
+current `upstream/dev`, so that PR #17 (`docs/arch` → `dev`) can be submitted upstream.
 
 ## Headline changes driving the work
 
@@ -39,12 +39,17 @@ current `upstream/dev`, so that PR #6 (`docs/architecture` → `dev`) can be sub
 
 ## Structural decisions
 
-- **Baseline:** Phase 0 fast-forwards `origin/dev` to `upstream/dev` and merges it into a new
-  branch off `docs/architecture`. Every later phase therefore edits docs *in a working tree that
-  contains the code being described* — no side worktree needed after Phase 0.
-- **Branch and PR shape:** one long-lived branch, `docs/architecture-refresh`, with a single PR
-  into `docs/architecture`. Each phase lands **one commit** on that branch and pushes, so the PR
+- **Baseline (done in Phase 0):** `upstream/dev` was merged into **both** `docs/arch` and the
+  refresh branch stacked on it. Merging into the base is what keeps the refresh PR's diff
+  documentation-only, since GitHub computes the diff against the merge base. Every later phase
+  therefore edits docs *in a working tree that contains the code being described* — no side
+  worktree needed.
+- **Branch and PR shape:** one long-lived branch, `docs/arch-refresh`, with a single PR
+  into `docs/arch`. Each phase lands **one commit** on that branch and pushes, so the PR
   grows incrementally and can be reviewed as a whole at the end.
+- **Branch naming:** the branches are `docs/arch` and `docs/arch-refresh`, deliberately *not*
+  `docs/architecture`, which collided with the `docs/architecture/` directory and made bare git
+  revision arguments ambiguous (`git reset --hard docs/architecture` fails).
 - **New doc files (5):** `17-smart-fades.md`, `18-ai-and-mcp.md`, `19-authentication.md`,
   `20-background-tasks.md`, `21-localization.md`. Everything else folds into the existing
   docs as new sections: dashboard casting → `12-webserver-api.md`, diagnostics →
@@ -61,7 +66,7 @@ Build these in order. Each is a separate plan file and produces exactly one comm
 
 | Phase | Plan file | Scope | Size |
 | --- | --- | --- | --- |
-| 0 | `arch_docs_v2_phase00_baseline.plan.md` | Sync `origin/dev` to `upstream/dev`, cut `docs/architecture-refresh`, merge, open the PR | S |
+| 0 | `arch_docs_v2_phase00_baseline.plan.md` | Sync `origin/dev` to `upstream/dev`, cut `docs/arch-refresh`, merge, open the PR | S |
 | 1 | `arch_docs_v2_phase01_intree_readmes.plan.md` | Fix the 11 stale upstream in-tree `README.md` files (of 20 audited) | M |
 | 2 | `arch_docs_v2_phase02_core_framework.plan.md` | `00-overview.md` + core-controller framework + `15-provider-lifecycle.md` | M |
 | 3 | `arch_docs_v2_phase03_configuration.plan.md` | `02-configuration.md` rewrite: package split, encryption, migrations, setup flows, queue/DSP config, cache SWR | L |
@@ -92,7 +97,7 @@ Build these in order. Each is a separate plan file and produces exactly one comm
    existing docs already do.
 5. **Verify before committing.** Run `pre-commit run --all-files`, then confirm
    `git diff --stat` touches only documentation files.
-6. **One commit per phase**, `docs(architecture): ...`, pushed to `docs/architecture-refresh`.
+6. **One commit per phase**, `docs(architecture): ...`, pushed to `docs/arch-refresh`.
 
 ## Sources
 

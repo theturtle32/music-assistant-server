@@ -1,28 +1,28 @@
 ---
 name: arch_docs_v2_phase00_baseline
-overview: "Phase 0 of the round-2 architecture docs refresh. Fast-forward origin/dev to upstream/dev (1096 commits), cut docs/architecture-refresh from docs/architecture, merge the new dev baseline in, and open the single PR into docs/architecture that all later phases will grow. No doc edits in this phase."
+overview: "COMPLETE. Phase 0 of the round-2 architecture docs refresh: sync the fork's dev to upstream/dev (1096 commits), merge that baseline into both the docs branch and the refresh branch stacked on it, and open the single PR that all later phases will grow. No doc edits in this phase. Final branch names are docs/arch and docs/arch-refresh; see Outcome at the end for what actually happened."
 todos:
   - id: fetch
-    content: "Fetch upstream and origin; confirm upstream/dev tip and that the current docs/architecture base (4b67568d6) is an ancestor of it"
-    status: pending
+    content: Fetch upstream and origin; confirm upstream/dev tip and that the current docs/architecture base (4b67568d6) is an ancestor of it
+    status: completed
   - id: ff_dev
-    content: "Fast-forward origin/dev to upstream/dev and push"
-    status: pending
+    content: Fast-forward origin/dev to upstream/dev and push
+    status: completed
   - id: branch
-    content: "Check out docs/architecture-refresh (already created, carrying the plan-stack commit)"
-    status: pending
+    content: Check out docs/architecture-refresh (already created, carrying the plan-stack commit)
+    status: completed
   - id: merge
     content: "Merge origin/dev into docs/architecture-refresh; resolve any conflicts (expected: none)"
-    status: pending
+    status: completed
   - id: sanity
     content: "Sanity-check the merged tree: docs/architecture/ intact, controller packages present, pre-commit passes"
-    status: pending
+    status: completed
   - id: pr
-    content: "Push the branch and open the PR into docs/architecture with the phase checklist as its body"
-    status: pending
+    content: Push the branch and open the PR into docs/architecture with the phase checklist as its body
+    status: completed
   - id: cleanup
-    content: "Remove the /tmp/ma-dev scratch worktree if one exists, since the working tree is now current dev"
-    status: pending
+    content: Remove the /tmp/ma-dev scratch worktree if one exists, since the working tree is now current dev
+    status: completed
 isProject: false
 ---
 
@@ -113,3 +113,51 @@ git worktree prune
 
 After this phase, `git log --oneline 4b67568d6..HEAD -- <path>` is the way to find the upstream
 PRs behind any given change, and code can be read straight from the working tree.
+
+## Outcome
+
+Completed, with three deviations from the plan above. The names and numbers below are the current
+ones; the `docs/architecture*` names used earlier in this file are dead.
+
+**Branches were renamed.** `docs/architecture` collided with the `docs/architecture/` directory,
+which makes bare git revision arguments ambiguous — `git reset --hard docs/architecture` fails with
+"ambiguous argument" and silently does nothing useful. Final names:
+
+| Role | Branch |
+| --- | --- |
+| Docs base branch, submitted upstream | `docs/arch` |
+| Long-lived refresh branch, one commit per phase | `docs/arch-refresh` |
+
+Renaming via the GitHub API auto-closed the two open PRs, because GitHub treats a renamed head
+branch as deleted and closed PRs cannot be reopened once the head is gone. They were recreated:
+
+| Old | New | Shape |
+| --- | --- | --- |
+| #6 | **#17** | `docs/arch` → `dev` |
+| #16 | **#18** | `docs/arch-refresh` → `docs/arch` |
+
+**`upstream/dev` was merged into the base branch too.** The plan only merged it into the refresh
+branch, which left the refresh PR showing all 1096 upstream commits. GitHub diffs against the merge
+base, so the base branch must also contain upstream for a stacked PR to read as documentation-only.
+`docs/arch` therefore carries its own merge (`ba9adaf8e`) and `docs/arch-refresh` was rebuilt on top
+of it carrying only the plan commits. PR #18 is now 18 files, 2848 insertions, 0 deletions.
+
+**The fork's `dev` was already current.** The plan assumed `origin/dev` was stale; it was already at
+`76422b305`, verified with `git ls-remote` against both remotes. Something auto-syncs the fork, so
+the fast-forward was a no-op.
+
+### Known issue for later phases
+
+`pre-commit run --all-files` fails its **mypy** hook with ~140 errors across 42 upstream-owned
+files. This is a stale local venv, not a code problem: `aiosendspin` 5.1.1 is installed while the
+merged tree requires 7.0.0, so mypy sees a library missing methods the new code calls. All 26 other
+hooks pass (`SKIP=mypy pre-commit run --all-files` is green). Running `scripts/setup.sh` fixes it but
+reinstalls a large dependency set. Do not "fix" upstream code to satisfy mypy.
+
+### Loose ends, deliberately not addressed
+
+- A local `backup/refresh-pre-restructure` ref points at the pre-rebuild tip of the refresh branch.
+  Safe to delete once PR #18 looks right.
+- PR #17 carries 9 round-1 `.cursor/plans/*.plan.md` files, and `docs/architecture/plans/` holds 10
+  more verification reports and sub-plans. These are working notes, not architecture documentation,
+  and probably should not go upstream. Stripping them is a separate decision.

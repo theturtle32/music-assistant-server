@@ -129,13 +129,14 @@ table list (Phases 3 and 10).
 ## PR readiness
 
 - `pre-commit run --all-files`.
-- `git diff --stat docs/architecture-refresh...docs/architecture` — confirm only `docs/` and
-  `.cursor/plans/` changed beyond the Phase 0 baseline merge, and that Phase 1's in-tree README
-  edits are the only changes under `music_assistant/`.
+- `git diff --stat docs/arch...docs/arch-refresh` — confirm only `docs/` and `.cursor/plans/`
+  changed, and that Phase 1's in-tree README edits are the only changes under `music_assistant/`.
+  Because `upstream/dev` was merged into the base branch in Phase 0, the diff should contain no
+  upstream code at all.
 - Update the PR description: check off all phases, and add a short summary of what changed and how to
-  review it (by commit, since the combined diff includes the 1096-commit baseline merge).
-- Leave PR #6 (`docs/architecture` → `dev`) alone. Merging this PR down into `docs/architecture` and
-  submitting #6 upstream is a separate, explicit step for the user to decide on.
+  review it (by commit, since each commit is one subsystem).
+- Leave PR #17 (`docs/arch` → `dev`) alone. Merging this PR down into `docs/arch` and
+  submitting #17 upstream is a separate, explicit step for the user to decide on.
 
 ## Commit
 
