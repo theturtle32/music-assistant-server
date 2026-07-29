@@ -74,7 +74,7 @@ graph TB
 | [07-volume.md](07-volume.md) | Individual/group volume routing, interpolation-based scaling, volume limits, mute lock, announcement volume |
 | [08-media-library.md](08-media-library.md) | Music controller, media sub-controllers, match-and-store pattern, library sync |
 | [09-player-queues.md](09-player-queues.md) | `PlayerQueue`/`PlayerQueueData` split, playback flow, dynamic playlists and the managed pool, autoplay, smart shuffle, queue persistence |
-| [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, DSP, HTTP delivery |
+| [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, audio overlay, DSP and output plans, bit-perfect fidelity, HTTP delivery |
 | [11-plugin-system.md](11-plugin-system.md) | `PluginSource` model, receiver/scrobbler/feature plugins, callback routing |
 | [12-webserver-api.md](12-webserver-api.md) | JSON-RPC API, WebSocket, authentication, remote access via WebRTC |
 | [13-discovery.md](13-discovery.md) | Shared Zeroconf, aggregated mDNS browser, SSDP/UPnP, server advertisement |
