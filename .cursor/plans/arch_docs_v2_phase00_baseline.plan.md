@@ -114,6 +114,12 @@ git worktree prune
 After this phase, `git log --oneline 4b67568d6..HEAD -- <path>` is the way to find the upstream
 PRs behind any given change, and code can be read straight from the working tree.
 
+**Write long docs incrementally.** These phases produce doc files of many hundreds of lines, and a
+single write of a whole file at that size fails or silently truncates. Build each doc across several
+tool calls instead: write the opening sections first, then append or replace section-by-section with
+targeted edits. Rewriting an existing doc in place (section by section, preserving what is still
+accurate) is both safer and cheaper than regenerating the file wholesale.
+
 ## Outcome
 
 Completed, with three deviations from the plan above. The names and numbers below are the current
@@ -146,13 +152,22 @@ of it carrying only the plan commits. PR #18 is now 18 files, 2848 insertions, 0
 `76422b305`, verified with `git ls-remote` against both remotes. Something auto-syncs the fork, so
 the fast-forward was a no-op.
 
-### Known issue for later phases
+### Resolved: the mypy hook
 
-`pre-commit run --all-files` fails its **mypy** hook with ~140 errors across 42 upstream-owned
-files. This is a stale local venv, not a code problem: `aiosendspin` 5.1.1 is installed while the
-merged tree requires 7.0.0, so mypy sees a library missing methods the new code calls. All 26 other
-hooks pass (`SKIP=mypy pre-commit run --all-files` is green). Running `scripts/setup.sh` fixes it but
-reinstalls a large dependency set. Do not "fix" upstream code to satisfy mypy.
+**This is fixed — later phases should run the full `pre-commit run --all-files`, mypy included, and
+expect it to pass.** Verified green during Phase 7.
+
+Historical note, since the workaround it prompted outlived the problem. Immediately after the
+baseline merge the **mypy** hook failed with ~140 errors across 42 upstream-owned files, because the
+local venv was stale relative to the merged tree. Phases 1–7 were therefore run with
+`SKIP=mypy`, and that habit persisted after it stopped being necessary. The venv has since been
+rebuilt. Note also that the original diagnosis (an `aiosendspin` version skew) was not quite right:
+`aiosendspin` is not a base dependency at all — it appears only in `requirements_all.txt` as a
+provider requirement installed at runtime by the provider loader — and is not present in the venv
+today, yet mypy passes without it.
+
+Do not "fix" upstream code to satisfy mypy. If the hook fails again, suspect the venv first and
+re-run `scripts/setup.sh`.
 
 ### Loose ends, deliberately not addressed
 
