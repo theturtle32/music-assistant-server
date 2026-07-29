@@ -72,7 +72,7 @@ graph TB
 | [05-protocol-linking.md](05-protocol-linking.md) | Multi-protocol device merging, identifier matching, Universal Player, output selection |
 | [06-grouping.md](06-grouping.md) | Sync groups, universal groups, ad-hoc sync, `set_members` pipeline |
 | [07-volume.md](07-volume.md) | Individual/group volume routing, interpolation-based scaling, volume limits, mute lock, announcement volume |
-| [08-media-library.md](08-media-library.md) | Music controller, media sub-controllers, match-and-store pattern, library sync |
+| [08-media-library.md](08-media-library.md) | Music controller package, media sub-controllers, match-and-store pattern, search and FTS indexing, library sync, schema, recommendations, recency engine |
 | [09-player-queues.md](09-player-queues.md) | `PlayerQueue`/`PlayerQueueData` split, playback flow, dynamic playlists and the managed pool, autoplay, smart shuffle, queue persistence |
 | [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, audio overlay, DSP and output plans, bit-perfect fidelity, HTTP delivery |
 | [11-plugin-system.md](11-plugin-system.md) | `PluginSource` model, receiver/scrobbler/feature plugins, callback routing |

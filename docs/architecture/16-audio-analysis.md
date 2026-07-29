@@ -371,4 +371,4 @@ The Sendspin/Hue split is worth stating explicitly because it is easy to assume 
 | [`controllers/streams/smart_fades/`](../../music_assistant/controllers/streams/smart_fades/) | Crossfade **execution** engine — see [17-smart-fades.md](17-smart-fades.md) |
 | `DB_TABLE_AUDIO_ANALYSIS` (`audio_analysis`) | Per-track, per-provider analysis JSON + version |
 | `DB_TABLE_AUDIO_ANALYSIS_FAILURES` (`audio_analysis_failures`) | Recorded failures with reason and optional `next_retry` |
-| `DB_TABLE_LOUDNESS_MEASUREMENTS` (`loudness_measurements`) | External-source loudness (file tags, ReplayGain) — auto-cleaned on item deletion |
+| `DB_TABLE_PROVIDER_MAPPINGS` (`provider_mappings`) | Resolves a library item to the `(provider, item_id)` pairs analysis rows are keyed by; both analysis tables are cleaned up per mapping on item deletion |

@@ -394,7 +394,7 @@ The mode is resolved twice: once in `get_stream_details`, then again in `get_que
 
 ### Loudness Analysis
 
-Loudness measurement runs through the **builtin `loudness_analysis` audio-analysis provider** (EBU R128 via FFmpeg `ebur128`). Live playback and the nightly background scan share the same provider. Results are stored in `DB_TABLE_AUDIO_ANALYSIS` plus a denormalized fast-path in `DB_TABLE_LOUDNESS_MEASUREMENTS` (which also accepts loudness values supplied by file tags or ReplayGain — in which case runtime ebur128 is skipped). See [16-audio-analysis.md](16-audio-analysis.md#built-in-loudness-analysis) for the full provider model.
+Loudness measurement runs through the **builtin `loudness_analysis` audio-analysis provider** (EBU R128 via FFmpeg `ebur128`). Live playback and the nightly background scan share the same provider. Results are stored in `DB_TABLE_AUDIO_ANALYSIS` under the `loudness_analysis` provider domain. Loudness supplied externally — by file tags or ReplayGain — is written to the same place through `set_track_loudness()`, in which case runtime ebur128 is skipped. There is no separate loudness table: the former `loudness_measurements` was folded into `audio_analysis` and dropped at schema v39. See [16-audio-analysis.md](16-audio-analysis.md#built-in-loudness-analysis) for the full provider model.
 
 ## Crossfade
 
