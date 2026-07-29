@@ -50,7 +50,7 @@ graph TB
 
 - **I want to understand the streaming pipeline** — Read [09-player-queues.md](09-player-queues.md) for queue management, the playback flow, and the pre-warm/enqueue-next hand-off, then [10-streaming-pipeline.md](10-streaming-pipeline.md) for audio decoding, buffering, normalization, crossfade, and output encoding.
 
-- **I want to build a plugin** — Read [11-plugin-system.md](11-plugin-system.md) for the `PluginSource` model, callback system, and receiver/scrobbler patterns. See `_demo_plugin_provider` for a template.
+- **I want to build a plugin** — Read [11-plugin-system.md](11-plugin-system.md) for the `AudioSource` media-item model, the selection lifecycle hooks, and the receiver/scrobbler/bridge patterns. See `_demo_plugin_provider` for a template.
 
 - **I want to understand the API** — Read [12-webserver-api.md](12-webserver-api.md) for JSON-RPC, WebSocket, authentication, and remote access, plus [01-event-system.md](01-event-system.md) for the event/command duality.
 
@@ -75,7 +75,7 @@ graph TB
 | [08-media-library.md](08-media-library.md) | Music controller package, media sub-controllers, match-and-store pattern, search and FTS indexing, library sync, schema, recommendations, recency engine |
 | [09-player-queues.md](09-player-queues.md) | `PlayerQueue`/`PlayerQueueData` split, playback flow, dynamic playlists and the managed pool, autoplay, smart shuffle, queue persistence |
 | [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, audio overlay, DSP and output plans, bit-perfect fidelity, HTTP delivery |
-| [11-plugin-system.md](11-plugin-system.md) | `PluginSource` model, receiver/scrobbler/feature plugins, callback routing |
+| [11-plugin-system.md](11-plugin-system.md) | `AudioSource` media items, `PluginProvider` hooks, selection lifecycle and ownership, receiver/scrobbler/bridge plugins |
 | [12-webserver-api.md](12-webserver-api.md) | JSON-RPC API, WebSocket, authentication, remote access via WebRTC |
 | [13-discovery.md](13-discovery.md) | Shared Zeroconf, aggregated mDNS browser, SSDP/UPnP, server advertisement |
 | [14-metadata.md](14-metadata.md) | Metadata enrichment, provider priorities, opaque image proxy, thumbnail and source caches, colour palettes, radio artwork, genre system |
@@ -107,7 +107,7 @@ graph TB
 
 | Document | Description |
 |----------|-------------|
-| [`spotify_connect/ARCHITECTURE.md`](../../music_assistant/providers/spotify_connect/ARCHITECTURE.md) | Spotify Connect: librespot integration, event flow, credential management |
+| [`spotify_connect/ARCHITECTURE.md`](../../music_assistant/providers/spotify_connect/ARCHITECTURE.md) | Spotify Connect: go-librespot integration, HTTP + WebSocket API, event flow, audio transport |
 | [`sync_group/README.md`](../../music_assistant/providers/sync_group/README.md) | Sync group player: sync leader delegation, formation/dissolution |
 | [`universal_player/README.md`](../../music_assistant/providers/universal_player/README.md) | Universal player: protocol merging, virtual player lifecycle |
 | [`sendspin/README.md`](../../music_assistant/providers/sendspin/README.md) | Sendspin protocol: native MA playback, synchronized audio |
@@ -115,7 +115,6 @@ graph TB
 | [`itunes_podcasts/README.md`](../../music_assistant/providers/itunes_podcasts/README.md) | iTunes podcast data: country code attribution |
 | [`gpodder/README.md`](../../music_assistant/providers/gpodder/README.md) | gPodder icon attribution |
 | [`airplay_receiver/bin/README.md`](../../music_assistant/providers/airplay_receiver/bin/README.md) | AirPlay receiver binary attribution |
-| [`ariacast_receiver/bin/README.md`](../../music_assistant/providers/ariacast_receiver/bin/README.md) | AriaCast receiver binary attribution |
 | [`apple_music/bin/README.md`](../../music_assistant/providers/apple_music/bin/README.md) | Apple Music binary attribution |
 
 ### GitHub and CI (`/.github/`)

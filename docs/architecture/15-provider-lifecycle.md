@@ -165,8 +165,14 @@ classDiagram
         +resolve_image()
     }
     class PluginProvider {
-        +get_source() PluginSource
+        +get_audio_sources() list~AudioSource~
+        +get_stream_details()
         +get_audio_stream()
+        +on_source_control()
+        +on_source_selected() / on_source_unselected()
+        +on_volume_change()
+        +browse() / search() / recommendations
+        +get_tts_message() / ai_query()
         +resolve_image()
     }
     class AudioAnalysisProvider {
@@ -217,7 +223,7 @@ Adds metadata resolution: `get_artist_metadata()`, `get_album_metadata()`, `get_
 
 ### `PluginProvider` (`music_assistant/models/plugin.py`)
 
-Adds audio source capabilities via `PluginSource` — a model for bridging external audio sources into the MA player model. Receiver plugins (Spotify Connect, AirPlay, AriaCast, VBAN) inject audio from external apps; scrobbler plugins (Last.fm, ListenBrainz) report plays to external services; feature plugins (Party) provide UI/access extensions. The `PluginSource` dataclass carries the PCM audio format, stream type, and optional playback control callbacks (`on_play`, `on_pause`, `on_volume`, etc.). See [11-plugin-system.md](11-plugin-system.md) for the full plugin architecture.
+The catch-all provider type. Receiver plugins (Spotify Connect, AirPlay, AriaCast, VBAN, Yandex Ynison) expose live inputs as **`AudioSource` media items** (`ProviderFeature.AUDIO_SOURCE`) that are browsed, enqueued, and streamed like radio stations, with transport and volume routed back through `on_source_control` / `on_volume_change` and ownership handled by the `on_source_selected` / `on_source_unselected` lifecycle pair. This replaced the old `PluginSource` model in #3938. Since #3811 a plugin can also implement music features (`BROWSE`, `SEARCH`, `RECOMMENDATIONS`, `SIMILAR_TRACKS`, playlist resolution), which is how the playlist and discovery plugins work; `TTS` and `AI_QUERY` make it a text-to-speech or AI backend. Scrobblers (Last.fm, ListenBrainz, Subsonic) declare no features and just subscribe to `MEDIA_ITEM_PLAYED`; bridges (Plex Connect, Yandex Smart Home) and guest experiences (Party, Music Quiz) register their own API surfaces. See [11-plugin-system.md](11-plugin-system.md) for the full plugin architecture.
 
 ### `AudioAnalysisProvider` (`music_assistant/models/audio_analysis_provider.py`)
 
@@ -486,7 +492,7 @@ This exists so internal code can read a config value cheaply. The alternative �
 | [`music_assistant/models/music_provider.py`](../../music_assistant/models/music_provider.py) | `MusicProvider` — media browsing, search, library sync interface |
 | [`music_assistant/models/player_provider.py`](../../music_assistant/models/player_provider.py) | `PlayerProvider` — player discovery, group management |
 | [`music_assistant/models/metadata_provider.py`](../../music_assistant/models/metadata_provider.py) | `MetadataProvider` — metadata resolution interface |
-| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider` and `PluginSource` — audio source plugins |
+| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider` — `AudioSource` hooks, music features, TTS/AI backends |
 | [`music_assistant/models/audio_analysis_provider.py`](../../music_assistant/models/audio_analysis_provider.py) | `AudioAnalysisProvider` — PCM chunk analysis (see [16-audio-analysis.md](16-audio-analysis.md)) |
 | [`music_assistant/models/core_controller.py`](../../music_assistant/models/core_controller.py) | `CoreController` — core module lifecycle, config, diagnostics |
 | [`music_assistant/models/__init__.py`](../../music_assistant/models/__init__.py) | `ProviderModuleType` — the protocol a provider module must satisfy |
