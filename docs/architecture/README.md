@@ -48,7 +48,7 @@ graph TB
 
 - **I want to understand player behavior and grouping** — Read [03-player-model.md](03-player-model.md), [06-grouping.md](06-grouping.md) for the three grouping models (sync groups, universal groups, ad-hoc sync), and [07-volume.md](07-volume.md) for volume routing and group volume.
 
-- **I want to understand the streaming pipeline** — Read [09-player-queues.md](09-player-queues.md) for queue management and playback flow, then [10-streaming-pipeline.md](10-streaming-pipeline.md) for audio decoding, buffering, normalization, crossfade, and output encoding.
+- **I want to understand the streaming pipeline** — Read [09-player-queues.md](09-player-queues.md) for queue management, the playback flow, and the pre-warm/enqueue-next hand-off, then [10-streaming-pipeline.md](10-streaming-pipeline.md) for audio decoding, buffering, normalization, crossfade, and output encoding.
 
 - **I want to build a plugin** — Read [11-plugin-system.md](11-plugin-system.md) for the `PluginSource` model, callback system, and receiver/scrobbler patterns. See `_demo_plugin_provider` for a template.
 
@@ -73,7 +73,7 @@ graph TB
 | [06-grouping.md](06-grouping.md) | Sync groups, universal groups, ad-hoc sync, `set_members` pipeline |
 | [07-volume.md](07-volume.md) | Individual/group volume routing, interpolation-based scaling, volume limits, mute lock, announcement volume |
 | [08-media-library.md](08-media-library.md) | Music controller, media sub-controllers, match-and-store pattern, library sync |
-| [09-player-queues.md](09-player-queues.md) | Queue state, playback flow, shuffle/repeat, radio mode, transition guards |
+| [09-player-queues.md](09-player-queues.md) | `PlayerQueue`/`PlayerQueueData` split, playback flow, dynamic playlists and the managed pool, autoplay, smart shuffle, queue persistence |
 | [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, DSP, HTTP delivery |
 | [11-plugin-system.md](11-plugin-system.md) | `PluginSource` model, receiver/scrobbler/feature plugins, callback routing |
 | [12-webserver-api.md](12-webserver-api.md) | JSON-RPC API, WebSocket, authentication, remote access via WebRTC |
@@ -96,6 +96,7 @@ graph TB
 | Document | Description |
 |----------|-------------|
 | [`players/README.md`](../../music_assistant/controllers/players/README.md) | Player controller internals: Player/PlayerState model, protocol linking, universal players |
+| [`player_queues/README.md`](../../music_assistant/controllers/player_queues/README.md) | Player queues controller internals: module layout, mixin boundaries, invariants, config inventory |
 | [`streams/README.md`](../../music_assistant/controllers/streams/README.md) | Streams controller internals: audio buffering, streaming pipeline, smart fades |
 | [`tasks/README.md`](../../music_assistant/controllers/tasks/README.md) | Background task manager: scheduling, progress tracking, recurring jobs |
 | [`discovery/README.md`](../../music_assistant/controllers/discovery/README.md) | Discovery controller: shared Zeroconf, mDNS/UPnP patterns |

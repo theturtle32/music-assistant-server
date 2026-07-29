@@ -85,15 +85,18 @@ Dynamic routes (registered via `register_dynamic_route`) handle UGP streams (`/u
 
 ### Session ID Validation
 
-The `/single/` handler validates the session ID from the URL against `queue.session_id`:
+**Both** `/single/` and `/flow/` enforce the session ID. The session no longer lives on the wire `PlayerQueue` — it is `PlayerQueueData.session_id`, reached through `mass.player_queues.queue_data()`:
 
 ```python
 session_id = request.match_info["session_id"]
-if queue.session_id and session_id != queue.session_id:
+pq_data = self.mass.player_queues.queue_data(queue.queue_id)
+if pq_data.session_id is None or session_id != pq_data.session_id:
     raise web.HTTPNotFound(reason=f"Unknown (or invalid) session: {session_id}")
 ```
 
-The `/flow/` handler carries a session segment in the URL for shape consistency but does not enforce it.
+Note the `is None` check: a queue with no active session rejects every request rather than accepting any. `PlayerQueuesController.play_index` rotates the session on every new playback session, which is what makes a stale player request for a superseded track fail fast. See [09-player-queues.md](09-player-queues.md#playerqueue-vs-playerqueuedata).
+
+`get_queue_flow_stream` re-validates beyond the handler: it snapshots the session at the top and exits cleanly on the next yield or play-log append if `PlayerQueueData.session_id` has moved on, so a newer producer taking over the queue (rapid track switch, sync-group reform, dynamic leader handoff) can never end up with two producers writing to the same `flow_mode_stream_log`.
 
 ### Stream Entry Points
 
@@ -158,7 +161,9 @@ Streams a single queue item from the `AudioBuffer` with optional per-item filter
 3. Optional `atempo` for playback speed adjustment.
 4. Optional `afade` for fade-in on resume.
 
-**Buffer pre-warm trigger:** When the consumed position passes `duration - 60` seconds, the stream calls `_prepare_next_audio_buffer()` on the queue controller to start filling the next track's buffer (see [09-player-queues.md](09-player-queues.md)).
+**Buffer pre-warm trigger:** when the consumed position passes `duration - 60` seconds, the stream calls `player_queues.prepare_next_audio_buffer(queue_id)` to start filling the next track's buffer. The method is public now and lives on `StreamFeederMixin` (`controllers/player_queues/stream_feeder.py`); it was previously the private `_prepare_next_audio_buffer()` on the queue controller. The trigger fires once per stream, resolves the queue via `get_active_queue()` rather than assuming the streaming player owns one, and only fires when the next item is a `TRACK` — a live source (radio, `AudioSource`) would open an upstream connection that sits idle and likely times out before the player consumes it. See [09-player-queues.md](09-player-queues.md#pre-warming-the-next-track).
+
+**Track hand-off chain:** once a track is loaded into the buffer, `player_queues.track_loaded_in_buffer(queue_id, item_id)` records `index_in_buffer` and kicks off `_preload_next_item`, which waits for that item to actually become the queue's current item, resolves the next item's stream details via `load_next_queue_item()`, and then has `_enqueue_next_item` hand it to the player through `enqueue_next_media()`. That last step re-validates the session before enqueueing, so a track switch mid-preload cannot enqueue against a superseded session.
 
 ### `get_queue_item_stream_with_smartfade` — Crossfade Streaming
 
@@ -176,7 +181,8 @@ Flow mode produces a continuous PCM stream across all queue tracks. It is used b
 
 - Infinite loop: calls `load_next_queue_item()` until the queue is empty.
 - Sets `queue.flow_mode = True`.
-- Maintains `flow_mode_stream_log` tracking which items have been played.
+- Maintains the play log on `PlayerQueueData.flow_mode_stream_log` — appending a `PlayLogEntry` per item, with the seconds actually streamed. It lives on the server-side record, not the wire model, and is written from here; the queue controller reads it to map the player's single cumulative position back to a track index and a per-track elapsed time.
+- On EOF, calls `player_queues.queue_buffer_completed(queue_id)` so the queue can wait for the player to go idle and resume if items were added meanwhile. `player_queues.flow_stream_finished(queue_id)` exposes the same fact to player providers whose devices never report idle.
 - With crossfade enabled: buffers the tail of each track, mixes overlap with `SmartFadesMixer`, yields the blended audio.
 - If smart crossfade is enabled but buffer preset is MINIMAL, downgrades to standard crossfade (smart crossfade needs enough buffer to hold 45s of analysis data).
 
