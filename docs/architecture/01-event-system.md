@@ -113,18 +113,22 @@ Defined in `music_assistant/helpers/api.py`, this decorator marks methods for au
 def get_server_info(self) -> ServerInfoMessage:
     ...
 
-@api_command("config/providers/save", required_role="admin")
+@api_command("config/providers/save", required_scope=Scope.CONFIG_PROVIDERS_WRITE)
 async def save_provider_config(self, ...):
     ...
 ```
 
-The decorator sets three attributes on the function:
+The decorator sets five attributes on the function:
 
 | Attribute | Purpose |
 |---|---|
 | `api_cmd` | The command path string (e.g. `"config/providers/save"`) |
 | `api_authenticated` | Whether the command requires authentication (default: `True`) |
-| `api_required_role` | Required user role: `"admin"`, `"user"`, or `None` (any authenticated user) |
+| `api_required_scope` | `Scope \| None` — the scope required to call it; `None` means any authenticated user |
+| `api_allow_impersonation` | Whether the command accepts an injected `user` argument |
+| `api_alias` | Whether this is a backward-compatible alias, hidden from the API docs |
+
+Authorization is **scope-based** since #4613; the earlier `required_role` parameter no longer exists. See [19-authentication.md](19-authentication.md) for the scope model and [12-webserver-api.md](12-webserver-api.md#the-api_command-decorator) for the dispatch that enforces it.
 
 ### `APICommandHandler` Dataclass
 
@@ -136,7 +140,8 @@ class APICommandHandler:
     type_hints: dict[str, Any]
     target: Callable[...]
     authenticated: bool = True
-    required_role: str | None = None
+    required_scope: Scope | None = None
+    allow_impersonation: bool = False
     alias: bool = False
 ```
 
@@ -152,7 +157,8 @@ During startup, `_register_api_commands()` scans all controllers (and the webser
 def _register_api_commands(self) -> None:
     for cls in (self, self.config, self.metadata, self.tasks,
                 self.music, self.players, self.player_queues,
-                self.webserver, self.webserver.auth):
+                self.translations, self.webserver, self.webserver.auth,
+                self.streams.audio_analysis, self.diagnostics, self.dashboard):
         for attr_name in dir(cls):
             obj = getattr(cls, attr_name)
             if hasattr(obj, "api_cmd"):

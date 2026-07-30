@@ -54,7 +54,7 @@ graph TB
 
 - **I want to work with AI, or connect an LLM agent** — Read [18-ai-and-mcp.md](18-ai-and-mcp.md) for the `AI_QUERY`/`TTS` provider-feature contract and its consumers, and for the MCP server that exposes MA to external agents.
 
-- **I want to understand the API** — Read [12-webserver-api.md](12-webserver-api.md) for JSON-RPC, WebSocket, authentication, and remote access, plus [01-event-system.md](01-event-system.md) for the event/command duality.
+- **I want to understand the API** — Read [12-webserver-api.md](12-webserver-api.md) for JSON-RPC, WebSocket, routes, and remote access, plus [01-event-system.md](01-event-system.md) for the event/command duality. For who is allowed to call what, read [19-authentication.md](19-authentication.md).
 
 - **I just want a complete picture** — Read the documents in order, 00 through 15. They are structured to build understanding incrementally.
 
@@ -85,6 +85,7 @@ graph TB
 | [16-audio-analysis.md](16-audio-analysis.md) | Audio analysis subsystem: passive buffer observer, `AudioAnalysisProvider` ABC, `AudioAnalysisData`, CPU throttling, the loudness/smart-fades/sonic/AcoustID providers, background scan, failure tracking |
 | [17-smart-fades.md](17-smart-fades.md) | Smart fades execution: candidate/policy transition planner, `TransitionPlan`, band EQ, vocal awareness, renderer and filter chain |
 | [18-ai-and-mcp.md](18-ai-and-mcp.md) | The `AI_QUERY`/`TTS` provider-feature pattern, `hass` as the reference backend, AI Radio's generation pipeline, Music Quiz and Smart Playlist consumers, the FastMCP server and its tool surface |
+| [19-authentication.md](19-authentication.md) | Scope-based authorization, roles, impersonation, token lifecycle, join codes and guest access, the two OAuth flows, ingress auto-provisioning, multi-user filtering |
 
 ### Root Documentation
 
