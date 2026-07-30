@@ -443,24 +443,46 @@ Scrobblers are event-driven and touch no audio. They share the `ScrobblerHelper`
 
 ## Bridge and feature plugins
 
-These declare no `ProviderFeature`s (or only music features) and never expose an `AudioSource`. Phase 13 of this documentation set covers the wider plugin ecosystem — shared playback, the AI/MCP surface, the discovery plugins — in depth; the sections below cover what the plugin system itself needs to know.
+These declare no `ProviderFeature`s (or only music features) and never expose an `AudioSource`. What they have in common is that they extend the server through some surface other than audio input: API commands, HTTP routes, virtual players, event subscriptions, or the music-provider feature set. [18-ai-and-mcp.md](18-ai-and-mcp.md) covers the AI-facing plugins in depth — the `AI_QUERY`/`TTS` contract, AI Radio's generation pipeline, and the MCP tool surface; the sections here state each plugin's shape and its integration points.
+
+### Shared playback sessions
+
+Two plugins need the same thing: a queue that a group of guests listens to together, with guests optionally joining on their own devices. `helpers/shared_playback.py` (#4672) factors that out as `SharedPlaybackSession`, used by Party and Music Quiz.
+
+A session is a thin wrapper around **a player that owns a queue**, in one of two modes:
+
+| Mode | Queue host | Guest experience | Factory |
+|---|---|---|---|
+| `VENUE` | An existing real player, playing out loud | Guests may optionally *listen in* on their own device, when the venue player can group with it | `create_venue(mass, venue_player_id)` |
+| `REMOTE` | A hidden Sendspin virtual player | Every guest's web player attaches, so all playback happens on guests' devices (silent-disco style) | `create_remote(mass, owner_instance_id, display_name, session_id=None)` |
+
+The owning plugin drives playback on `session.queue_id` and calls `close()` when the session ends. `queue_id` is simply `player_id` — a player-owned queue always shares its player's id — which is why the same code path works for a real speaker and a virtual one.
+
+**Listening in is a grouping operation, not a second stream.** `can_listen_in(web_player_id)` requires the host player to support `PlayerFeature.SET_MEMBERS` and the guest player to appear in the host's `state.can_group_with` or existing `state.group_members`; `add_guest_listener` then just calls `cmd_set_members`. Delegating the compatibility question to `can_group_with` means all protocol expansion and translation is already handled, for both a real venue player and a virtual Sendspin host — see [06-grouping.md](06-grouping.md).
+
+Guest listeners are **tracked, not merely added**. The session keeps its own `_guest_listeners` set, and `restore_guest_listeners()` re-attaches any tracked guest missing from the host's group. A guest whose player is offline or temporarily incompatible stays tracked rather than being dropped, so a later playback transition can restore it once the device reconnects. Teardown is mode-dependent: `REMOTE` removes the virtual player (and its queue) entirely, while `VENUE` detaches only the guests this session added and leaves the venue player untouched.
+
+The one sharp edge is documented in the module docstring: a `REMOTE` session's virtual player lives in the **Sendspin provider's memory**, so it disappears when that provider reloads. The owning plugin is responsible for re-creating the session, and passing the same `session_id` yields the same `player_id`. `create_remote` also carries a fair amount of cancellation-safety machinery, because a cancelled creation that nevertheless completes must not leak an orphaned virtual player.
+
+Guest tokens, join codes, and the guest-access flow itself belong to [19-authentication.md](19-authentication.md).
 
 ### Party
 
-`providers/party/` provides guest access with no audio involvement of its own. Since #4672 it builds on **`SharedPlaybackSession`** (`helpers/shared_playback.py`), a reusable abstraction with two modes:
-
-| Mode | Host of the queue | Guest experience |
-|---|---|---|
-| `VENUE` | An existing real player, playing out loud | Guests may optionally *listen in* on their own device, when the venue player supports grouping with it |
-| `REMOTE` | A hidden Sendspin virtual player | Every guest's web player attaches, so all playback happens on guests' own devices (silent-disco style) |
-
-The mode is a config option; `create_venue()` / `create_remote()` are the factories. A `REMOTE` session's virtual player lives in the Sendspin provider's memory, so it evaporates when that provider reloads and the owning plugin must re-create it — passing the same `session_id` yields the same `player_id`.
+`providers/party/` provides guest access with no audio involvement of its own. Its playback host is a `SharedPlaybackSession` whose mode comes from the provider's `mode` config option, so an installation picks venue or remote once rather than per game.
 
 **Guest access:** a `UserRole.GUEST` user named `party_guest` (display name "Party Guest"), a join code with an 8-hour default expiry from the auth controller, and a join URL that is either remote (`https://app.music-assistant.io/?remote_id=…&join=…`) or local. Guest tokens are revoked when the plugin is removed *or* when guest access is switched off in config, read from the live config rather than the init-time snapshot.
 
 **API commands** (each with an explicit `required_scope`): `party/url`, `party/player`, `party/config`, `party/add_to_queue`, `party/boost_queue_item`, `party/skip`, `party/listen_in`, `party/stop_listen_in`, `party/can_listen_in`.
 
 **Queue management** is unchanged in shape. Guest-added tracks go into a priority section after the current track; boosted items form their own sub-section at the front of the guest section, selected by scanning for the most specific marker attribute (`party_boosted` before `party_guest`). `_add_to_priority_section` uses `index_in_buffer` while playing rather than `current_index`, so an insert cannot land before an already-buffered track and get skipped. A single `_queue_lock` serialises reading queue state, computing the insert index, and loading the item, so concurrent guests cannot interleave — and when the queue is idle the same lock covers the resolve-insert-`play_index` sequence so two guests do not both start playback.
+
+### Music Quiz
+
+`music_quiz` (#4572, stage `experimental`) is a multiplayer quiz game and, at roughly 7,400 lines, the largest plugin in the tree. It declares no `ProviderFeature`s but is the heaviest consumer of other subsystems: `SharedPlaybackSession` for playback (mode chosen **per game**, unlike Party), guest access for joining, `ProviderFeature.AI_QUERY` for two of its three quiz types, and twenty `music_quiz/*` API commands.
+
+Three quiz types register as strategy classes in `QUIZ_TYPES`: `guess_the_song` (multiple choice, optional AI distractors), `music_timeline` (a shared chronological timeline with optional artist and title bonuses, no AI), and `trivia` (AI-worded questions grounded in library metadata, AI required). `get_available_quiz_types` filters on each class's `is_available(mass)`, so trivia disappears from the options rather than failing when no AI plugin is loaded.
+
+State reaches guests as `PROVIDER_EVENT` events scoped to the provider's `instance_id`, and the public state is guest-safe by construction rather than by edge filtering — private player IDs never enter a broadcast, and the correct answer, current song, and bonus answers are withheld until the reveal phase. The generation pipeline, the AI grounding-and-validation approach, and the full event contract are covered in [18-ai-and-mcp.md](18-ai-and-mcp.md#music-quiz).
 
 ### Yandex Smart Home
 
@@ -480,7 +502,54 @@ The `auto_skill.py` module described by earlier revisions was deleted in #3834; 
 
 ### Library and discovery plugins
 
-`radio_playlist` (builtin), `smart_playlist`, `sonic_similarity`, and `ai_radio` are plugins that behave like music providers through the #3811 feature surface: `smart_playlist` declares `BROWSE` + `RECOMMENDATIONS` and implements the playlist pair; `sonic_similarity` declares `SIMILAR_TRACKS` + `RECOMMENDATIONS` and adds `SEARCH` in its `setup()` when the `enable_text_search` option is on (read from raw config, since option entries are not resolved until the instance exists); `radio_playlist` implements only `get_playlist` / `get_playlist_tracks`, which is enough for its synthesised playlist URIs to resolve. See [08-media-library.md](08-media-library.md) and [09-player-queues.md](09-player-queues.md) for how dynamic playlists feed the queue.
+Four plugins behave like music providers through the #3811 feature surface without being music providers. This is the pattern that makes a "plugin" a genuinely open extension point rather than an audio-only one.
+
+#### Radio Playlists
+
+`radio_playlist` (#4498) is **builtin** and always on. It generates a dynamic "radio" playlist from any seed media item — artist, album, track, genre, or playlist — mixing the seed's own tracks with similar tracks. It declares **no** `ProviderFeature`s at all and implements only `get_playlist` / `get_playlist_tracks`, which is enough because the playlist pair is ungated.
+
+The neat part is the identity trick: the playlist's `item_id` **is the seed item's own URI**, so `radio_playlist://playlist/<seed-uri>` round-trips straight back to the seed with no state to persist. The result is a normal dynamic playlist (`is_dynamic=True`), so the queue treats it exactly like a provider station or a smart playlist. This is what replaced the old radio mode — see [09-player-queues.md](09-player-queues.md) for the bounded managed pool that consumes it.
+
+#### Smart Playlists
+
+`smart_playlist` (#3630, stage `beta`) builds playlists from rules: genres, artists, albums, favorites, similar tracks, release year, album type, explicit content, and more. It declares `BROWSE` and `RECOMMENDATIONS` and implements the playlist pair, so its playlists browse and resolve like any provider's. Rules are persisted to disk per playlist, and a cached dynamic sample is invalidated through the provider-scoped cache whenever they change. Its optional AI-generated descriptions are covered in [18-ai-and-mcp.md](18-ai-and-mcp.md#smart-playlists).
+
+#### Sonic Similarity
+
+`sonic_similarity` (#3943, stage `beta`, `depends_on: sonic_analysis`) declares `SIMILAR_TRACKS` and `RECOMMENDATIONS`, and adds `SEARCH` in its `setup()` when the `enable_text_search` option is on — read through `get_raw_provider_config_value` because a provider's option entries are not resolved until the instance exists, which is after `setup()` returns.
+
+It hosts **two** similarity engines, both backed by usearch HNSW indices, and consumes analysis output that another provider produced:
+
+| Engine | Vector | Source | Availability |
+|---|---|---|---|
+| Traits | 18-dim weighted Euclidean | `sonic_analysis` scalars (BPM, energy, loudness, …) | Always on |
+| Character | 1024-dim CLAP cosine | The CLAP embedding `sonic_analysis` stores in `audio_analysis.extra_data["clap_embedding"]` | Opt-in via `enable_clap_index` |
+
+Weight presets are deliberately non-uniform, tuned per feature-group informativeness, and a genre/year rerank bonus is scaled down (`METADATA_BONUS_SCALE`) so metadata nudges the audio distance rather than dominating it. Index rebuilds are atomic mmap-view swaps, exposed as config actions and refreshed by a scheduled background task. See [16-audio-analysis.md](16-audio-analysis.md) for the analysis pipeline that feeds it and [20-background-tasks.md](20-background-tasks.md) for the scheduling.
+
+#### AI Radio
+
+`ai_radio` (#3407, stage `alpha`) generates AI-moderated radio programs: an LLM writes spoken host segments, a TTS backend renders them, and the result is interleaved with a source playlist either as a generated playlist or by batch-feeding a live queue. `SUPPORTED_FEATURES` is empty — it is a pure consumer of other plugins' `AI_QUERY` and `TTS` hooks. Fully covered in [18-ai-and-mcp.md](18-ai-and-mcp.md#ai-radio-the-orchestrator).
+
+### Server extension plugins
+
+#### MCP Server
+
+`fastmcp_server` (#3858, stage `experimental`) exposes MA's library, queue, playback, player, metadata, debug, and config surfaces as Model Context Protocol tools for external LLM clients, mounted into MA's own aiohttp webserver at `/mcp/v1` through an ASGI bridge. It declares no `ProviderFeature`s — it is the inverse of the AI consumers, publishing MA as the tool provider rather than calling out. See [18-ai-and-mcp.md](18-ai-and-mcp.md#the-fastmcp-server-ma-as-the-tool-provider).
+
+#### Hue Lights Sync
+
+`hue_entertainment` (#3627, reworked in #4042, moved onto the standalone `hue-entertainment` library in #4152) syncs Philips Hue lights to the music. Its integration shape is unusual for a plugin in two ways.
+
+First, **it creates players.** Each entertainment area on a paired Hue bridge becomes a virtual Sendspin player (`depends_on: sendspin`), so playing music to that player activates entertainment mode and makes the lights react. A plugin provider producing players is legal — nothing ties player creation to `PlayerProvider` — and it is the cleanest way to make lights a routable playback target.
+
+Second, **it consumes the analysis pipeline as an in-process client.** The bridge registers with the local Sendspin server via `register_external_player` (no WebSocket involved) and its visualizer and color roles subscribe directly to the playing group's roles, receiving spectrum, onset peaks, beat schedule, and colour palette through callbacks. Because in-process delivery follows the audio *push*, features arrive **ahead of the playhead** — audio is buffered seconds in advance — so the analyzer queues them by playback timestamp and a fixed 30 Hz render loop drains at the server clock plus a configurable Hue-latency lead. Frames then go out as DTLS 1.2 PSK / HueStream v2 over UDP.
+
+The in-tree [`README.md`](../../music_assistant/providers/hue_entertainment/README.md) owns the effect-mode catalog, the streaming-layer detail, and the known limitations; [16-audio-analysis.md](16-audio-analysis.md) covers the analysis side.
+
+#### Profiler
+
+`profiler` (#4653, stage `alpha`) is a diagnostics plugin meant to be installed temporarily: while loaded it continuously records CPU, memory, and event-loop health, optionally takes periodic CPU profile windows, and exposes the aggregated result as a shareable report through the `profiler/report` API command (scope `Scope.SYSTEM_MANAGE`). It adds a logging handler, subscribes to the whole event bus, and runs three background tasks — a loop-lag monitor, a flight recorder, and a CPU profile scheduler — all torn down on unload. The in-tree [`README.md`](../../music_assistant/providers/profiler/README.md) documents the workflow, what is measured, and how to interpret the report; [20-background-tasks.md](20-background-tasks.md) covers the diagnostics framework it complements.
 
 ---
 
@@ -505,5 +574,13 @@ The `auto_skill.py` module described by earlier revisions was deleted in #3834; 
 | [`music_assistant/providers/vban_receiver/`](../../music_assistant/providers/vban_receiver/) | VBAN UDP receiver; the only `can_initiate=True` receiver |
 | [`music_assistant/providers/yandex_ynison/`](../../music_assistant/providers/yandex_ynison/) | Multi-track receiver bridging the Ynison protocol |
 | [`music_assistant/providers/party/`](../../music_assistant/providers/party/) | Guest access, shared playback, priority-section queue management |
+| [`music_assistant/providers/music_quiz/`](../../music_assistant/providers/music_quiz/) | Quiz engine: per-game shared playback, guest-safe state broadcast, AI-grounded trivia |
 | [`music_assistant/providers/plex_connect/`](../../music_assistant/providers/plex_connect/) | External control bridge for the Plex apps |
 | [`music_assistant/providers/yandex_smarthome/`](../../music_assistant/providers/yandex_smarthome/) | External control bridge for Yandex Alice |
+| [`music_assistant/providers/radio_playlist/`](../../music_assistant/providers/radio_playlist/) | Builtin seed-URI-addressed dynamic radio playlists |
+| [`music_assistant/providers/smart_playlist/`](../../music_assistant/providers/smart_playlist/) | Rule-based playlists via the plugin music-feature surface |
+| [`music_assistant/providers/sonic_similarity/`](../../music_assistant/providers/sonic_similarity/) | Two usearch similarity engines over `sonic_analysis` output |
+| [`music_assistant/providers/ai_radio/`](../../music_assistant/providers/ai_radio/) | AI-moderated radio programs; pure consumer of `AI_QUERY` and `TTS` |
+| [`music_assistant/providers/fastmcp_server/`](../../music_assistant/providers/fastmcp_server/) | MCP server mounted into MA's webserver — MA as a tool provider |
+| [`music_assistant/providers/hue_entertainment/`](../../music_assistant/providers/hue_entertainment/) | Virtual Sendspin players per Hue entertainment area; in-process visualizer client |
+| [`music_assistant/providers/profiler/`](../../music_assistant/providers/profiler/) | Temporary diagnostics plugin; `profiler/report` |

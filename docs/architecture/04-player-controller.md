@@ -289,6 +289,8 @@ On expiry the controller clears the stored value and calls `cmd_stop`. Every tra
 4. **Native path**: finds a control target with `PLAY_ANNOUNCEMENT` support, resolves announcement volume from config, calls `player.play_announcement()`.
 5. **Fallback path** (`_play_announcement`): saves current sync/group/source/media state → ungroups if needed → stops playback → adjusts volume on members → plays announcement via `play_media` with streaming URL → waits for play/idle/duration → restores volume → restores sync/group/source or resumes.
 
+**Announcements take a URL, not text.** `play_announcement` rejects anything that does not start with `http`, and it never calls `PluginProvider.get_tts_message` — synthesis has already happened upstream (typically by Home Assistant's own TTS integration, whose proxy URL an automation passes in). MA re-hosts the audio on its own stream server via `streams.get_announcement_url` so the pre-announce chime can be prepended and players that dislike HTTPS still work. The only link to the TTS *feature* is a heuristic: when `pre_announce` is not specified, it is enabled if the substring `"tts"` appears in the URL, which recognises an HA `tts_proxy` URL without chiming for arbitrary announcement audio. `ProviderFeature.TTS` is a separate path with one in-tree consumer — see [18-ai-and-mcp.md](18-ai-and-mcp.md#what-providerfeaturetts-is-not).
+
 ## Source Selection
 
 `select_source(player_id, source)` manages the active source:
