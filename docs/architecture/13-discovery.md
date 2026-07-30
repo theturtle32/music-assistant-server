@@ -277,7 +277,9 @@ AsyncServiceInfo(
 )
 ```
 
-**The registration publishes a list of addresses, not one.** `webserver.publish_addresses` replaced the single `publish_ip` in #4646, so a record can carry both IPv4 and IPv6 (and several interfaces on a multi-homed host) in one advertisement. The webserver computes the list at setup: when a specific bind IP is configured it is respected, otherwise the server's detected addresses are used. That matters for clients on a dual-stack LAN, which would otherwise only ever see whichever single family happened to be picked. See [10-streaming-pipeline.md](10-streaming-pipeline.md#network-architecture) for the equivalent on the streams server.
+**The registration publishes a list of addresses, not one.** The mDNS record used to carry the single `webserver.publish_ip`; #4646 introduced `webserver.publish_addresses` and advertises all of them, so one record can cover both IPv4 and IPv6 (and several interfaces on a multi-homed host). That matters on a dual-stack LAN, where a client would otherwise only ever see whichever single family happened to be picked.
+
+The webserver keeps both: `publish_ip` is still the single primary address baked into `base_url`, while `publish_addresses` is computed alongside it at setup by `_get_publish_addresses(bind_ip, publish_ip, all_addresses)` — respecting a specific configured bind IP, otherwise using the host's detected addresses. The **streams** controller is unaffected and still publishes one `publish_ip`, because a player is handed exactly one stream URL; see [10-streaming-pipeline.md](10-streaming-pipeline.md#network-architecture).
 
 The service properties include the full `ServerInfo` dict, allowing other MA instances or clients to discover the server's capabilities. On subsequent config reloads, `async_update_service` is called instead of re-registering. A `NonUniqueNameException` is handled gracefully — logged as an error — when another MA instance with the same name exists on the same LAN.
 

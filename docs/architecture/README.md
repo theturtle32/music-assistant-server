@@ -56,7 +56,11 @@ graph TB
 
 - **I want to understand the API** — Read [12-webserver-api.md](12-webserver-api.md) for JSON-RPC, WebSocket, routes, and remote access, plus [01-event-system.md](01-event-system.md) for the event/command duality. For who is allowed to call what, read [19-authentication.md](19-authentication.md).
 
-- **I just want a complete picture** — Read the documents in order, 00 through 15. They are structured to build understanding incrementally.
+- **I am operating or debugging a running server** — Read [20-background-tasks.md](20-background-tasks.md) for the job system and the diagnostics report, [13-discovery.md](13-discovery.md) for why a device is or isn't being found, and [02-configuration.md](02-configuration.md) for where settings and databases live.
+
+- **I am adding user-facing text** — Read [21-localization.md](21-localization.md) for the `strings.json` authoring pipeline and how a translation key reaches the client already localized.
+
+- **I just want a complete picture** — Read the documents in order, 00 through 21. They are structured to build understanding incrementally: core framework (00–02), players (03–07), media and playback (08–11), interfaces (12–15), audio analysis (16–17), and the newer subsystems (18–21).
 
 ---
 
@@ -67,7 +71,7 @@ graph TB
 | Document | Description |
 |----------|-------------|
 | [00-overview.md](00-overview.md) | Central hub, controller map, startup/shutdown lifecycle, task management |
-| [01-event-system.md](01-event-system.md) | Pub/sub events, command handlers, `@api_command` decorator |
+| [01-event-system.md](01-event-system.md) | Pub/sub events and the `EventType` set, subscription internals and dispatch, `mass.create_task`, command handlers and the `@api_command` decorator |
 | [02-configuration.md](02-configuration.md) | JSON config, `ConfigEntry` schema, encryption, SQLite databases, caching |
 | [03-player-model.md](03-player-model.md) | `Player` class, `_attr_*` pattern, `__final_*` computed properties, `PlayerState` snapshots |
 | [04-player-controller.md](04-player-controller.md) | Command routing, registration, power/volume management, announcements, polling |
@@ -78,14 +82,16 @@ graph TB
 | [09-player-queues.md](09-player-queues.md) | `PlayerQueue`/`PlayerQueueData` split, playback flow, dynamic playlists and the managed pool, autoplay, smart shuffle, queue persistence |
 | [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, audio overlay, DSP and output plans, bit-perfect fidelity, HTTP delivery |
 | [11-plugin-system.md](11-plugin-system.md) | `AudioSource` media items, `PluginProvider` hooks, selection lifecycle and ownership, receiver/scrobbler/bridge plugins |
-| [12-webserver-api.md](12-webserver-api.md) | JSON-RPC API, WebSocket, authentication, remote access via WebRTC |
-| [13-discovery.md](13-discovery.md) | Shared Zeroconf, aggregated mDNS browser, SSDP/UPnP, server advertisement |
+| [12-webserver-api.md](12-webserver-api.md) | Routes, dynamic routes, the command registry and dispatch, WebSocket lifecycle and event filtering, remote access via WebRTC, the dashboard/diagnostics/MCP namespaces |
+| [13-discovery.md](13-discovery.md) | Shared Zeroconf, aggregated mDNS browser, exact-match on-demand lookup, SSDP/UPnP, multi-address server advertisement, the provider discovery matrix |
 | [14-metadata.md](14-metadata.md) | Metadata enrichment, provider priorities, opaque image proxy, thumbnail and source caches, colour palettes, radio artwork, genre system |
 | [15-provider-lifecycle.md](15-provider-lifecycle.md) | Provider taxonomy, manifest system, loading/unloading, dependency management |
 | [16-audio-analysis.md](16-audio-analysis.md) | Audio analysis subsystem: passive buffer observer, `AudioAnalysisProvider` ABC, `AudioAnalysisData`, CPU throttling, the loudness/smart-fades/sonic/AcoustID providers, background scan, failure tracking |
 | [17-smart-fades.md](17-smart-fades.md) | Smart fades execution: candidate/policy transition planner, `TransitionPlan`, band EQ, vocal awareness, renderer and filter chain |
 | [18-ai-and-mcp.md](18-ai-and-mcp.md) | The `AI_QUERY`/`TTS` provider-feature pattern, `hass` as the reference backend, AI Radio's generation pipeline, Music Quiz and Smart Playlist consumers, the FastMCP server and its tool surface |
 | [19-authentication.md](19-authentication.md) | Scope-based authorization, roles, impersonation, token lifecycle, join codes and guest access, the two OAuth flows, ingress auto-provisioning, multi-user filtering |
+| [20-background-tasks.md](20-background-tasks.md) | `TasksController` job model, scheduling, concurrency, contextvar log capture, per-user visibility; plus the diagnostics report, always-on capture and sanitization |
+| [21-localization.md](21-localization.md) | The `strings.json` → Lokalise → locale-file pipeline, key namespaces and the candidate chain, `translation_owner`, resolution during serialization, reverse media-name lookup |
 
 ### Root Documentation
 
@@ -94,17 +100,21 @@ graph TB
 | [`CLAUDE.md`](../../CLAUDE.md) | AI assistant instructions: dev commands, code style, branching conventions |
 | [`DEVELOPMENT.md`](../../DEVELOPMENT.md) | Developer setup: prerequisites, venv, running locally, testing |
 | [`README.md`](../../README.md) | Project overview, installation, Home Assistant integration |
-| [`SECURITY.md`](../../SECURITY.md) | Vulnerability reporting policy and responsible disclosure process |
 
 ### Controller Documentation (`music_assistant/controllers/`)
 
+All nine in-tree controller READMEs. These own module inventories and config-key lists; the architecture docs above own the cross-cutting flows and design rationale.
+
 | Document | Description |
 |----------|-------------|
-| [`players/README.md`](../../music_assistant/controllers/players/README.md) | Player controller internals: Player/PlayerState model, protocol linking, universal players |
+| [`cache/README.md`](../../music_assistant/controllers/cache/README.md) | Cache controller: SQLite-backed cache, categories, SWR refresh, maintenance |
+| [`discovery/README.md`](../../music_assistant/controllers/discovery/README.md) | Discovery controller: shared Zeroconf, mDNS/UPnP patterns |
+| [`metadata/README.md`](../../music_assistant/controllers/metadata/README.md) | Metadata controller package: module layout, image proxy, provider priorities |
+| [`music/README.md`](../../music_assistant/controllers/music/README.md) | Music controller package: sub-controllers, sync, search, recommendations |
 | [`player_queues/README.md`](../../music_assistant/controllers/player_queues/README.md) | Player queues controller internals: module layout, mixin boundaries, invariants, config inventory |
+| [`players/README.md`](../../music_assistant/controllers/players/README.md) | Player controller internals: Player/PlayerState model, protocol linking, universal players |
 | [`streams/README.md`](../../music_assistant/controllers/streams/README.md) | Streams controller internals: audio buffering, streaming pipeline, smart fades |
 | [`tasks/README.md`](../../music_assistant/controllers/tasks/README.md) | Background task manager: scheduling, progress tracking, recurring jobs |
-| [`discovery/README.md`](../../music_assistant/controllers/discovery/README.md) | Discovery controller: shared Zeroconf, mDNS/UPnP patterns |
 | [`webserver/README.md`](../../music_assistant/controllers/webserver/README.md) | Webserver architecture: auth system, WebSocket API, remote access |
 
 ### Provider Documentation (`music_assistant/providers/`)

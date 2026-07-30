@@ -160,7 +160,7 @@ flowchart TD
     G -- No --> H[Return — empty group]
     G -- Yes --> I[Set sync_leader]
     E -- Yes --> I
-    I --> J[Reorder: leader first in group_members]
+    I --> J["Reorder: leader first in group_members"]
     J --> K{Leader still reports synced_to?}
     K -- Yes --> L[_wait_member_unsynced]
     L --> M{Settled?}
@@ -437,7 +437,7 @@ All grouping commands converge on `cmd_set_members`, which flows through a two-p
 
 ```mermaid
 flowchart TD
-    A[cmd_set_members] --> B[Validate: player available, SET_MEMBERS supported]
+    A[cmd_set_members] --> B["Validate: player available, SET_MEMBERS supported"]
     B --> AG{"Parent is non-GROUP and<br/>active_group is a SET_MEMBERS-capable GROUP?"}
     AG -- Yes --> AGR[Redirect to cmd_set_members on the group player]
     AG -- No --> C[Auto-ungroup if parent is already synced]
@@ -446,7 +446,7 @@ flowchart TD
     D --> E{Target removed from itself?}
     E -- "Yes, members remain and queue is active" --> ET[_transfer_ad_hoc_leadership]
     E -- "Yes, otherwise" --> ED[Remove all children, stop after]
-    E -- No --> F[Filter additions: availability, can_group_with]
+    E -- No --> F["Filter additions: availability, can_group_with"]
     ED --> F
     F --> G[Auto-ungroup children synced elsewhere]
     G --> H[Power on children if needed]
