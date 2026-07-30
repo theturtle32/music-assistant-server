@@ -4,40 +4,40 @@ overview: "Phase 7. Rewrite most of 09-player-queues.md: the monolith became a 1
 todos:
   - id: preflight
     content: "Pre-flight: verify the package module map, PlayerQueueData field split, managed pool, autoplay, and smart shuffle against the working tree"
-    status: pending
+    status: completed
   - id: structure
     content: "09-player-queues.md: replace the controller architecture section with the package + mixin overview and a PlayerQueue vs PlayerQueueData split; link to the in-tree README for the module table"
-    status: pending
+    status: completed
   - id: fields
     content: "09-player-queues.md: rebuild the PlayerQueue and QueueItem field tables field by field"
-    status: pending
+    status: completed
   - id: locking
     content: "09-player-queues.md: correct the handle_play_action decorator (helpers.py, wrapped methods, PlayerQueueData.play_action_refcount)"
-    status: pending
+    status: completed
   - id: dynamic
     content: "09-player-queues.md: replace the Radio Mode and Dynamic Playlists sections with the ManagedPool / is_dynamic model"
-    status: pending
+    status: completed
   - id: autoplay
     content: "09-player-queues.md: replace 'Don't Stop the Music' with the Autoplay modes section"
-    status: pending
+    status: completed
   - id: shuffle
     content: "09-player-queues.md: rewrite shuffle for SmartShuffle recency tiers and dynamic-mode forcing"
-    status: pending
+    status: completed
   - id: playback
     content: "09-player-queues.md: refresh play_media / play_index / _load_item / pre-warm sections including the renamed prepare_next_audio_buffer"
-    status: pending
+    status: completed
   - id: persistence
     content: "09-player-queues.md: rewrite queue restore for PlayerQueueData.from_cache and the versioned two-category cache"
-    status: pending
+    status: completed
   - id: perqueue
     content: "09-player-queues.md: add a per-queue configuration section and cross-link 02-configuration.md"
-    status: pending
+    status: completed
   - id: streams_boundary
     content: "10-streaming-pipeline.md: patch the queue boundary (session_id on PlayerQueueData, flow session validation, prepare_next_audio_buffer)"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: in_progress
 isProject: false
 ---
 

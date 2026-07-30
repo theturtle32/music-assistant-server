@@ -4,28 +4,28 @@ overview: "Phase 6. Refresh 05-protocol-linking.md: Sendspin bridges are now fir
 todos:
   - id: preflight
     content: "Pre-flight: verify protocol restore/merge behavior, derived transports, and output protocol release against the working tree"
-    status: pending
+    status: completed
   - id: restore
     content: "05-protocol-linking.md: update the cached-parent restore flow with identifier merge and universal merge checks"
-    status: pending
+    status: completed
   - id: migration
     content: "05-protocol-linking.md: correct Flow 3 — universal players are kept when links cannot migrate; settings and group memberships are preserved"
-    status: pending
+    status: completed
   - id: derived
     content: "05-protocol-linking.md: add a derived transports section for Sendspin bridges and derived_from"
-    status: pending
+    status: completed
   - id: selection
     content: "05-protocol-linking.md: add active output protocol release at session end and disabled-protocol recovery"
-    status: pending
+    status: completed
   - id: setup
     content: "05-protocol-linking.md: document pairing / needs_setup gating and its effect on availability"
-    status: pending
+    status: completed
   - id: providers
     content: "05-protocol-linking.md: refresh the participating-provider notes (AirPlay rearchitecture, local_audio, new native providers) and fix the line-count reference"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

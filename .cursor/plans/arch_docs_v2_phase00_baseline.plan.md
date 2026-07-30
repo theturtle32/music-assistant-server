@@ -173,6 +173,40 @@ re-run `scripts/setup.sh`.
 
 - A local `backup/refresh-pre-restructure` ref points at the pre-rebuild tip of the refresh branch.
   Safe to delete once PR #18 looks right.
-- PR #17 carries 9 round-1 `.cursor/plans/*.plan.md` files, and `docs/architecture/plans/` holds 10
-  more verification reports and sub-plans. These are working notes, not architecture documentation,
-  and probably should not go upstream. Stripping them is a separate decision.
+
+### DECIDED: strip working notes before submitting upstream
+
+**The upstream PR must not include the `.cursor/` tree.** Confirmed by the developer after Phase 16.
+
+PR #17 (`docs/arch` → `dev`) currently adds **19 working-note files** that are not architecture
+documentation:
+
+| Path | Count | Contents |
+| --- | --- | --- |
+| `.cursor/plans/*.plan.md` | 9 | Round-1 plan stack |
+| `docs/architecture/plans/*.md` | 10 | Round-1 verification reports and sub-plans |
+
+The `.cursor/` removal is decided. The `docs/architecture/plans/` files are the same category of
+thing and were flagged together originally, but stripping them is still the developer's call —
+confirm before removing.
+
+**Ordering matters.** Do the removal on `docs/arch` **after** PR #18 has merged down into it, not
+before. `docs/arch-refresh` still tracks the round-2 plan stack (20 files) and carries it as review
+context; strip first and the merge just brings everything back.
+
+Mechanism, once #18 has landed on `docs/arch`:
+
+```bash
+git checkout docs/arch
+git rm -r --quiet .cursor
+# and, if confirmed:
+git rm -r --quiet docs/architecture/plans
+git commit -m "docs(architecture): drop working notes from the upstream submission"
+git push origin docs/arch
+```
+
+A `git rm` commit is sufficient — GitHub diffs against the merge base, so a file added and later
+deleted on the same branch nets to nothing in PR #17's diff. No history rewrite needed.
+
+Do **not** solve this by adding `.cursor/` to `.gitignore` in this PR: it would not untrack the
+existing files, and it puts an unrelated repo-config change into a documentation PR.

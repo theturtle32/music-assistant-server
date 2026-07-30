@@ -4,34 +4,34 @@ overview: "Phase 4. Refresh 03-player-model.md and 04-player-controller.md: the 
 todos:
   - id: preflight
     content: "Pre-flight: verify the Player attribute/method surface, update_state pipeline, lock semantics, and command surface against the working tree"
-    status: pending
+    status: completed
   - id: model_update_state
     content: "03-player-model.md: rewrite the update_state() pipeline and caching sections (selective invalidation, input snapshot, state fingerprint, mark_state_dirty)"
-    status: pending
+    status: completed
   - id: model_attrs
     content: "03-player-model.md: refresh the attribute and method tables; add sleep timer, palette, setup-flow surface, position anchor reconciliation"
-    status: pending
+    status: completed
   - id: model_controls
     content: "03-player-model.md: document PLAYER_CONTROL_PROTOCOL/follow_protocol, POWER degradation to NONE, and the group_volume exclude_self nuance"
-    status: pending
+    status: completed
   - id: model_protocols
     content: "03-player-model.md: add derived_from to output_protocols and the native-protocol-endpoint case"
-    status: pending
+    status: completed
   - id: ctrl_registration
     content: "04-player-controller.md: fix the registration flow (throttler removed, CONF_REPORTED_MAC, group players do not restore fake power)"
-    status: pending
+    status: completed
   - id: ctrl_locking
     content: "04-player-controller.md: fix the command decorator and concurrency table (PlayerLockPurpose keys, no throttling, 30s lock timeout); remove the duplicated locking section"
-    status: pending
+    status: completed
   - id: ctrl_commands
     content: "04-player-controller.md: refresh the command surface (sleep timer API, scopes, play_media group override, cmd_set_members/cmd_power locking, AudioSource pause)"
-    status: pending
+    status: completed
   - id: ctrl_volume_fanout
     content: "04-player-controller.md: fix volume routing for AudioSource plugin notification and device_volume redirect; add external power-off unsync to the fan-out section"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

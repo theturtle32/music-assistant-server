@@ -1,22 +1,22 @@
 ---
 name: arch_docs_stack4_cache
-overview: "Refresh docs/architecture/ to reflect the cache controller package split (cache.py -> cache/{controller,helpers,constants,__init__}.py + README.md), update path references, and cross-link to the new in-tree music_assistant/controllers/cache/README.md. Includes a brief mention of the JSON serialization consistency fix (#3542)."
+overview: Refresh docs/architecture/ to reflect the cache controller package split (cache.py -> cache/{controller,helpers,constants,__init__}.py + README.md), update path references, and cross-link to the new in-tree music_assistant/controllers/cache/README.md. Includes a brief mention of the JSON serialization consistency fix (#3542).
 todos:
   - id: preflight
     content: "Pre-flight: switch to Plan mode and write a detailed sub-plan for this stack against current upstream/dev (file paths, code citations, exact wording)"
-    status: pending
+    status: completed
   - id: branch
     content: Cut docs/architecture-cache-split from docs/architecture
-    status: pending
+    status: completed
   - id: implement
     content: Apply the doc edits per the pre-flight sub-plan
-    status: pending
+    status: completed
   - id: verify
     content: pre-commit + sweep
-    status: pending
+    status: completed
   - id: commit_pr
     content: Single commit, push, open PR -> docs/architecture
-    status: pending
+    status: completed
 isProject: false
 ---
 

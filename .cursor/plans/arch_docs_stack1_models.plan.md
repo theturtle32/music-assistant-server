@@ -4,19 +4,19 @@ overview: "Refresh docs/architecture/03-player-model.md and docs/architecture/11
 todos:
   - id: branch
     content: Cut docs/architecture-models-update from docs/architecture
-    status: pending
+    status: completed
   - id: edit_player_model
     content: Update docs/architecture/03-player-model.md — add the five player notification hooks and the SELECT_SOURCE auto-set behavior
-    status: pending
+    status: completed
   - id: edit_plugin
     content: Update docs/architecture/11-plugin-system.md — add get_tts_message, ai_query, and PluginSource.elapsed_time
-    status: pending
+    status: completed
   - id: verify
     content: pre-commit + visual diff vs docs/architecture
-    status: pending
+    status: completed
   - id: commit_pr
     content: Single commit, push, open PR -> docs/architecture
-    status: pending
+    status: completed
 isProject: false
 ---
 

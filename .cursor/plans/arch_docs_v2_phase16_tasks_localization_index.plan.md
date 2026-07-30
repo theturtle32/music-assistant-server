@@ -1,34 +1,34 @@
 ---
 name: arch_docs_v2_phase16_tasks_localization_index
-overview: "Phase 16, final. Create 20-background-tasks.md (TasksController plus diagnostics) and 21-localization.md (the strings.json to Lokalise pipeline and runtime resolution), update the docs README catalog and reading paths for all five new files, then run a cross-doc consistency sweep and prepare the PR for review."
+overview: Phase 16, final. Create 20-background-tasks.md (TasksController plus diagnostics) and 21-localization.md (the strings.json to Lokalise pipeline and runtime resolution), update the docs README catalog and reading paths for all five new files, then run a cross-doc consistency sweep and prepare the PR for review.
 todos:
   - id: preflight
     content: "Pre-flight: verify the TasksController surface, diagnostics sections, and translation pipeline against the working tree"
-    status: pending
+    status: completed
   - id: newdoc_tasks
-    content: "Create docs/architecture/20-background-tasks.md covering TasksController, scheduling, API, events, and config"
-    status: pending
+    content: Create docs/architecture/20-background-tasks.md covering TasksController, scheduling, API, events, and config
+    status: completed
   - id: newdoc_diagnostics
     content: "20-background-tasks.md: add the diagnostics section (DiagnosticsController, pluggable sections, log capture, sanitization)"
-    status: pending
+    status: completed
   - id: newdoc_localization
-    content: "Create docs/architecture/21-localization.md covering the translation pipeline and runtime resolution"
-    status: pending
+    content: Create docs/architecture/21-localization.md covering the translation pipeline and runtime resolution
+    status: completed
   - id: readme_catalog
     content: "docs/architecture/README.md: add catalog rows for 17-21, fix the controller count, and update the reading paths"
-    status: pending
+    status: completed
   - id: sweep_stale
-    content: "Cross-doc sweep for stale symbols and paths across the whole docs tree"
-    status: pending
+    content: Cross-doc sweep for stale symbols and paths across the whole docs tree
+    status: completed
   - id: sweep_links
-    content: "Verify every internal doc link and every in-tree README link resolves"
-    status: pending
+    content: Verify every internal doc link and every in-tree README link resolves
+    status: completed
   - id: sweep_consistency
-    content: "Reconcile facts stated in more than one doc so the phases do not contradict each other"
-    status: pending
+    content: Reconcile facts stated in more than one doc so the phases do not contradict each other
+    status: completed
   - id: pr_ready
-    content: "Update the PR description, check all phase boxes, and summarize the refresh for review"
-    status: pending
+    content: Update the PR description, check all phase boxes, and summarize the refresh for review
+    status: completed
 isProject: false
 ---
 

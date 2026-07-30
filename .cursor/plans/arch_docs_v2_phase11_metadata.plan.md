@@ -1,40 +1,40 @@
 ---
 name: arch_docs_v2_phase11_metadata
-overview: "Phase 11. Refresh 14-metadata.md for the metadata mixin package, the opaque image-ID proxy that replaced query-string URLs, corrected provider priority ordering, the Wikipedia and playlist_metadata providers, colour palette extraction, LRC normalization, and the genre taxonomy split."
+overview: Phase 11. Refresh 14-metadata.md for the metadata mixin package, the opaque image-ID proxy that replaced query-string URLs, corrected provider priority ordering, the Wikipedia and playlist_metadata providers, colour palette extraction, LRC normalization, and the genre taxonomy split.
 todos:
   - id: preflight
     content: "Pre-flight: verify the metadata package layout, provider priorities, imageproxy behavior, and radio artwork pipeline against the working tree"
-    status: pending
+    status: completed
   - id: package
     content: "14-metadata.md: replace the monolith description with the mixin package layout; link to the in-tree README"
-    status: pending
+    status: completed
   - id: priorities
     content: "14-metadata.md: correct the provider priority ordering and add a priority column to the capabilities table"
-    status: pending
+    status: completed
   - id: enrichment
     content: "14-metadata.md: fix Phase 2 gating for tracks, derived-genre masking, and add the artist description selection policy"
-    status: pending
+    status: completed
   - id: imageproxy
     content: "14-metadata.md: rewrite the image proxy section for opaque image IDs, allowed sizes, and dynamic route registration"
-    status: pending
+    status: completed
   - id: thumbnails
     content: "14-metadata.md: fix the thumbnail cache key and add the shared source-image cache; correct the collage story"
-    status: pending
+    status: completed
   - id: palette
     content: "14-metadata.md: add a colour palette extraction section and cache invalidation"
-    status: pending
+    status: completed
   - id: providers
     content: "14-metadata.md: add Wikipedia and playlist_metadata; correct the MetadataProvider ABC surface and the MusicBrainz rate limit and path"
-    status: pending
+    status: completed
   - id: lyrics
     content: "14-metadata.md: fix lyrics provider ordering and add LRC normalization"
-    status: pending
+    status: completed
   - id: radio_genres_tasks
     content: "14-metadata.md: correct the radio artwork cache key and lookup pipeline, the genre taxonomy split, the maintenance schedule, and the locale count"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

@@ -1,25 +1,25 @@
 ---
 name: arch_docs_v2_phase01_intree_readmes
-overview: "Phase 1, first pass. Upstream ships README.md files inside controller and provider directories, and 11 of the 20 have drifted from the code next to them. Fix those before the architecture docs start linking to them, so the two layers agree from the outset. This is the only phase that edits files under music_assistant/."
+overview: Phase 1, first pass. Upstream ships README.md files inside controller and provider directories, and 11 of the 20 have drifted from the code next to them. Fix those before the architecture docs start linking to them, so the two layers agree from the outset. This is the only phase that edits files under music_assistant/.
 todos:
   - id: batch1_players
     content: "Batch 1: controllers/players, providers/universal_player, providers/sync_group — protocol linking retention, derived_from, and the sync group session lifecycle"
-    status: pending
+    status: completed
   - id: batch2_streams
     content: "Batch 2: controllers/streams — rewrite the analyze-callbacks section for the passive observer model and fix the file inventory, loudness cap, and config table"
-    status: pending
+    status: completed
   - id: batch3_webserver
     content: "Batch 3: controllers/webserver — password hashing, Remote ID, JWT token model, scope-based auth, roles, file inventory"
-    status: pending
+    status: completed
   - id: batch4_providers
     content: "Batch 4: providers/sendspin, providers/airplay, providers/local_audio, providers/hue_entertainment — bridge lists and inventory touch-ups"
-    status: pending
+    status: completed
   - id: batch5_layouts
     content: "Batch 5: controllers/music, controllers/player_queues — package layout gaps"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only in-tree README/ARCHITECTURE files, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only in-tree README/ARCHITECTURE files, commit and push
+    status: completed
 isProject: false
 ---
 

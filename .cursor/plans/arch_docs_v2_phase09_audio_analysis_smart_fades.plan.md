@@ -1,37 +1,37 @@
 ---
 name: arch_docs_v2_phase09_audio_analysis_smart_fades
-overview: "Phase 9. Rewrite the session model, throttling, and data model in 16-audio-analysis.md, add the two new analysis providers (sonic_analysis, acoustid_lookup) and the failure-tracking subsystem, and create a new 17-smart-fades.md covering the planner/selection/assembly/renderer stack that replaced the old monolithic mixer."
+overview: Phase 9. Rewrite the session model, throttling, and data model in 16-audio-analysis.md, add the two new analysis providers (sonic_analysis, acoustid_lookup) and the failure-tracking subsystem, and create a new 17-smart-fades.md covering the planner/selection/assembly/renderer stack that replaced the old monolithic mixer.
 todos:
   - id: preflight
     content: "Pre-flight: verify the analysis session model, throttle constants, provider hook surface, AudioAnalysisData fields, and the smart fades planner stack against the working tree"
-    status: pending
+    status: completed
   - id: aa_session
     content: "16-audio-analysis.md: rewrite the session model and architecture diagram as a passive buffer observer"
-    status: pending
+    status: completed
   - id: aa_throttle
     content: "16-audio-analysis.md: rewrite CPU throttling and background scan (semaphore, niced pool, solo lock, model unload, concurrency clamp, pacing floor)"
-    status: pending
+    status: completed
   - id: aa_hooks
     content: "16-audio-analysis.md: extend the AudioAnalysisProvider hook surface (model loading, offloading, AudioAnalysisError, failure recording)"
-    status: pending
+    status: completed
   - id: aa_data
     content: "16-audio-analysis.md: correct AudioAnalysisData field types and add rhythmic_regularity and extra_data"
-    status: pending
+    status: completed
   - id: aa_providers
     content: "16-audio-analysis.md: add sonic_analysis and acoustid_lookup; update the smart_fades provider entry for analysis_version 3"
-    status: pending
+    status: completed
   - id: aa_api
     content: "16-audio-analysis.md: add the failure/coverage/waveform API commands, persistence cleanup, and downstream consumers"
-    status: pending
+    status: completed
   - id: sf_newdoc
-    content: "Create docs/architecture/17-smart-fades.md covering the planner to renderer execution stack"
-    status: pending
+    content: Create docs/architecture/17-smart-fades.md covering the planner to renderer execution stack
+    status: completed
   - id: crosslinks
-    content: "Add cross-links from 16-audio-analysis.md and 10-streaming-pipeline.md to 17-smart-fades.md"
-    status: pending
+    content: Add cross-links from 16-audio-analysis.md and 10-streaming-pipeline.md to 17-smart-fades.md
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

@@ -33,7 +33,7 @@ todos:
     content: "08-media-library.md: add collections, cue sheets, track filter, dynamic playlists, and a short new-provider-ecosystem note; refresh Key Files"
     status: pending
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
+    content: pre-commit, confirm the diff touches only docs, commit and push
     status: pending
 isProject: false
 ---

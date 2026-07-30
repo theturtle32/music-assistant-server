@@ -1,34 +1,34 @@
 ---
 name: arch_docs_v2_phase02_core_framework
-overview: "Phase 2. Refresh 00-overview.md for the 13-controller lineup, the new CoreController contract (per-controller strings.json/icons, config, diagnostics, config actions), and the rewritten startup/shutdown order. Fix the provider loading flow, error model, and manifest discovery in 15-provider-lifecycle.md."
+overview: Phase 2. Refresh 00-overview.md for the 13-controller lineup, the new CoreController contract (per-controller strings.json/icons, config, diagnostics, config actions), and the rewritten startup/shutdown order. Fix the provider loading flow, error model, and manifest discovery in 15-provider-lifecycle.md.
 todos:
   - id: preflight
     content: "Pre-flight: verify the controller inventory, init/shutdown order, CoreController surface, and provider load flow against the working tree"
-    status: pending
+    status: completed
   - id: overview_inventory
     content: "00-overview.md: correct the controller count and Component Map; add translations, diagnostics, dashboard rows; note ConfigController is not a CoreController"
-    status: pending
+    status: completed
   - id: overview_lifecycle
     content: "00-overview.md: rewrite the startup and shutdown lifecycle sections to match mass.py"
-    status: pending
+    status: completed
   - id: overview_coremodule
     content: "00-overview.md: add a subsection on core modules as first-class settings entities (icon.svg, icon_dark.svg, strings.json, ProviderType.CORE manifests)"
-    status: pending
+    status: completed
   - id: lifecycle_manifest
     content: "15-provider-lifecycle.md: fix manifest discovery (has_setup_flow, on-demand icons) and the CORE provider-type description"
-    status: pending
+    status: completed
   - id: lifecycle_loadflow
     content: "15-provider-lifecycle.md: fix the provider loading flow (config seeding/rehydration, timeouts, load concurrency) and the get_config_entries contract"
-    status: pending
+    status: completed
   - id: lifecycle_errors
     content: "15-provider-lifecycle.md: replace the last_error string model with structured ProviderError / ProviderStatus; update DEFAULT_PROVIDERS"
-    status: pending
+    status: completed
   - id: lifecycle_core
     content: "15-provider-lifecycle.md: add a CoreController lifecycle section (config, get_config_value, translation_owner, get_diagnostics, handle_config_action, reload)"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

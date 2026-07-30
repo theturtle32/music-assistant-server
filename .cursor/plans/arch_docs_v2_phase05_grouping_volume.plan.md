@@ -4,34 +4,34 @@ overview: "Phase 5. The biggest single correction in the refresh: sync groups mo
 todos:
   - id: preflight
     content: "Pre-flight: verify SyncGroupPlayer session lifecycle, supported_features, dissolve triggers, leader switch, and the AudioSource volume path against the working tree"
-    status: pending
+    status: completed
   - id: group_table
     content: "06-grouping.md: fix the three-grouping-models comparison table, especially the inverted 'dissolves on stop' row"
-    status: pending
+    status: completed
   - id: group_session
     content: "06-grouping.md: rewrite the sync group lifecycle around is_active_session, idle grace, and reform debounce; POWER is opt-in via fake power"
-    status: pending
+    status: completed
   - id: group_formation
     content: "06-grouping.md: rewrite the formation and dissolution flows and diagrams for the session model"
-    status: pending
+    status: completed
   - id: group_dynamic
     content: "06-grouping.md: fix dynamic leader switch (no supports_dynamic_leader_switching), add reform debounce and ad-hoc leadership transfer"
-    status: pending
+    status: completed
   - id: group_config
     content: "06-grouping.md: rename CONF_MEMBERS_FILTER to CONF_ALLOWED_MEMBERS; fix can_group_with aggregation for dynamic groups"
-    status: pending
+    status: completed
   - id: group_playmedia
     content: "06-grouping.md: add the play_media group-override interaction and cross-link 04-player-controller.md"
-    status: pending
+    status: completed
   - id: volume_plugin
     content: "07-volume.md: rewrite the plugin volume callback path for AudioSource (on_volume_change, queue ownership)"
-    status: pending
+    status: completed
   - id: volume_misc
     content: "07-volume.md: add follow_protocol, device_volume redirect, fake mute reporting fix, and the group_volume exclude_self nuance"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

@@ -4,19 +4,19 @@ overview: "Refresh docs/architecture/04-player-controller.md to document the new
 todos:
   - id: branch
     content: Cut docs/architecture-controller-update from docs/architecture-models-update (Stack 1's branch)
-    status: pending
+    status: completed
   - id: edit_controller_doc
     content: Update docs/architecture/04-player-controller.md — add State Update Fan-Out, Synchronization Helpers, Per-Player Locking, deselect_source sections
-    status: pending
+    status: completed
   - id: fix_volume_order
     content: Update docs/architecture/07-volume.md — correct order-of-operations diagram and prose so plugin on_volume fires before routing branches
-    status: pending
+    status: completed
   - id: verify
     content: pre-commit + cross-check against upstream code
-    status: pending
+    status: completed
   - id: commit_pr
     content: Single commit, push, open PR -> docs/architecture-models-update
-    status: pending
+    status: completed
 isProject: false
 ---
 

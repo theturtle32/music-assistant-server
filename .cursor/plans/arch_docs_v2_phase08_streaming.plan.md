@@ -4,37 +4,37 @@ overview: "Phase 8. Refresh 10-streaming-pipeline.md: audio analysis is now a pa
 todos:
   - id: preflight
     content: "Pre-flight: verify the streams module map, endpoints, buffer thresholds, DSP plan, and overlay behavior against the working tree"
-    status: pending
+    status: completed
   - id: modules
     content: "10-streaming-pipeline.md: refresh the module map and controller initialization for audio_processing.py"
-    status: pending
+    status: completed
   - id: endpoints
     content: "10-streaming-pipeline.md: remove the /pluginsource endpoint and document the AUDIO_SOURCE path through /single/ and /flow/"
-    status: pending
+    status: completed
   - id: streamdetails
     content: "10-streaming-pipeline.md: fix get_stream_details (just-in-time loudness hydration, streams-global target, queue-scoped enablement)"
-    status: pending
+    status: completed
   - id: analysis_handoff
     content: "10-streaming-pipeline.md: rewrite the audio analysis hand-off as a passive buffer reader; fix buffer ready thresholds"
-    status: pending
+    status: completed
   - id: overlay
     content: "10-streaming-pipeline.md: add an audio overlay section and note the flow-mode forcing conditions"
-    status: pending
+    status: completed
   - id: dsp
     content: "10-streaming-pipeline.md: rewrite the DSP chain section (get_player_output_plan, AudioProcessingChain, new filters, limiter removal, linked players)"
-    status: pending
+    status: completed
   - id: fidelity
     content: "10-streaming-pipeline.md: add an audio processing metadata / bit-perfect fidelity section"
-    status: pending
+    status: completed
   - id: crossfade
     content: "10-streaming-pipeline.md: correct crossfade configuration and mixer build/mix split; slim smart fades down to a cross-link to the new 17-smart-fades.md"
-    status: pending
+    status: completed
   - id: keyfiles
     content: "10-streaming-pipeline.md: refresh the Key Files table and add a pointer to the in-tree streams README"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

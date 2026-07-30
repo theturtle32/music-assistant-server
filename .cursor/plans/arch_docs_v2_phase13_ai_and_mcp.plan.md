@@ -1,37 +1,37 @@
 ---
 name: arch_docs_v2_phase13_ai_and_mcp
-overview: "Phase 13. Create a new 18-ai-and-mcp.md documenting the AI_QUERY/TTS provider-feature pattern, the Home Assistant plugin as reference implementer, AI Radio as orchestrator, Music Quiz and Smart Playlist as consumers, and the FastMCP server as the external-agent surface. Add the missing plugin ecosystem sections and shared playback to 11-plugin-system.md."
+overview: Phase 13. Create a new 18-ai-and-mcp.md documenting the AI_QUERY/TTS provider-feature pattern, the Home Assistant plugin as reference implementer, AI Radio as orchestrator, Music Quiz and Smart Playlist as consumers, and the FastMCP server as the external-agent surface. Add the missing plugin ecosystem sections and shared playback to 11-plugin-system.md.
 todos:
   - id: preflight
     content: "Pre-flight: verify the AI_QUERY/TTS feature surface, ai_radio runtime, fastmcp_server tool namespaces, and shared playback against the working tree"
-    status: pending
+    status: completed
   - id: newdoc_pattern
-    content: "Create docs/architecture/18-ai-and-mcp.md with the AI_QUERY/TTS provider-feature pattern and the deliberate absence of a central AI abstraction"
-    status: pending
+    content: Create docs/architecture/18-ai-and-mcp.md with the AI_QUERY/TTS provider-feature pattern and the deliberate absence of a central AI abstraction
+    status: completed
   - id: newdoc_hass
     content: "18-ai-and-mcp.md: document the hass plugin as the reference AI/TTS backend"
-    status: pending
+    status: completed
   - id: newdoc_airadio
     content: "18-ai-and-mcp.md: document AI Radio as orchestrator"
-    status: pending
+    status: completed
   - id: newdoc_consumers
     content: "18-ai-and-mcp.md: document Music Quiz and Smart Playlist as AI consumers"
-    status: pending
+    status: completed
   - id: newdoc_mcp
     content: "18-ai-and-mcp.md: document the FastMCP server as the inverse surface (MA exposed to external agents)"
-    status: pending
+    status: completed
   - id: shared_playback
     content: "11-plugin-system.md: add a shared playback sessions section for helpers/shared_playback.py"
-    status: pending
+    status: completed
   - id: ecosystem
     content: "11-plugin-system.md: add the missing ecosystem plugin sections (music_quiz, sonic_similarity, smart_playlist, radio_playlist, hue_entertainment, profiler, plex_connect, hass)"
-    status: pending
+    status: completed
   - id: tts
-    content: "Verify the TTS and announcement flow and update wherever it is documented"
-    status: pending
+    content: Verify the TTS and announcement flow and update wherever it is documented
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

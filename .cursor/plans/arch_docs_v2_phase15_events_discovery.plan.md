@@ -1,37 +1,37 @@
 ---
 name: arch_docs_v2_phase15_events_discovery
-overview: "Phase 15. Refresh 01-event-system.md for the expanded EventType set, the 4-tuple subscription record, cheaper sync dispatch, and the scope-based api_command; refresh 13-discovery.md for exact mDNS name matching, dual-stack advertisement, periodic HA re-announce, and the current provider discovery matrix."
+overview: Phase 15. Refresh 01-event-system.md for the expanded EventType set, the 4-tuple subscription record, cheaper sync dispatch, and the scope-based api_command; refresh 13-discovery.md for exact mDNS name matching, dual-stack advertisement, periodic HA re-announce, and the current provider discovery matrix.
 todos:
   - id: preflight
     content: "Pre-flight: verify the EventType members, subscribe/dispatch internals, and the discovery matrix against the working tree"
-    status: pending
+    status: completed
   - id: events_types
     content: "01-event-system.md: rebuild the EventType table with the new members and mark retired ones"
-    status: pending
+    status: completed
   - id: events_internals
     content: "01-event-system.md: fix the subscription tuple and sync callback dispatch"
-    status: pending
+    status: completed
   - id: events_api
     content: "01-event-system.md: replace required_role with required_scope in the api_command section and fix the registration scan list"
-    status: pending
+    status: completed
   - id: events_tasks
     content: "01-event-system.md: document create_task changes and cross-reference TaskManager vs TasksController"
-    status: pending
+    status: completed
   - id: disc_mdns
     content: "13-discovery.md: fix async_find_mdns_service exact-match semantics"
-    status: pending
+    status: completed
   - id: disc_advertise
     content: "13-discovery.md: fix server advertisement for multi-address publishing and add periodic HA re-announce"
-    status: pending
+    status: completed
   - id: disc_matrix
     content: "13-discovery.md: rebuild the provider discovery matrix (mDNS types, UPnP targets, manual IP, other mechanisms)"
-    status: pending
+    status: completed
   - id: lifecycle_disc
     content: "15-provider-lifecycle.md: fix run_provider_discovery's signature and the post-load discovery sequencing"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

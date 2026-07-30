@@ -4,37 +4,37 @@ overview: "Phase 12. Rewrite the core of 11-plugin-system.md: PR #3938 deleted P
 todos:
   - id: preflight
     content: "Pre-flight: verify the PluginProvider surface, AudioSource flow, and each receiver plugin against the working tree"
-    status: pending
+    status: completed
   - id: core_model
     content: "11-plugin-system.md: replace the PluginSource section with the AudioSource MediaItem model"
-    status: pending
+    status: completed
   - id: base_class
     content: "11-plugin-system.md: rewrite the PluginProvider base class surface and feature matrix"
-    status: pending
+    status: completed
   - id: integration
     content: "11-plugin-system.md: rewrite registration, source resolution, active source detection, and the sequence diagram"
-    status: pending
+    status: completed
   - id: ownership
     content: "11-plugin-system.md: replace in_use_by semantics with queue-scoped selection lifecycle and stream_session_id guards"
-    status: pending
+    status: completed
   - id: delivery
     content: "11-plugin-system.md: fix audio delivery (stream types, queue-item URLs, WAV passthrough, silence keepalive)"
-    status: pending
+    status: completed
   - id: taxonomy
     content: "11-plugin-system.md: rebuild the plugin taxonomy table from the actual manifests"
-    status: pending
+    status: completed
   - id: receivers
     content: "11-plugin-system.md: rewrite Spotify Connect and correct AirPlay Receiver, VBAN, and Yandex Ynison"
-    status: pending
+    status: completed
   - id: bridges
     content: "11-plugin-system.md: update the bridge and feature plugin sections (Party shared playback, Yandex Smart Home, Plex Connect); fix misclassifications"
-    status: pending
+    status: completed
   - id: keyfiles
     content: "11-plugin-system.md: refresh Key Files and remove obsolete symbols"
-    status: pending
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

@@ -1,40 +1,40 @@
 ---
 name: arch_docs_v2_phase14_webserver_auth
-overview: "Phase 14. Correct the transport-layer drift in 12-webserver-api.md (routes, dispatch, tokens, join codes, Remote ID, WebRTC library, dynamic routes, dashboard namespace) and create a new 19-authentication.md for the scope-based authorization model, roles, impersonation, guest access, and token lifecycle that replaced role strings."
+overview: Phase 14. Correct the transport-layer drift in 12-webserver-api.md (routes, dispatch, tokens, join codes, Remote ID, WebRTC library, dynamic routes, dashboard namespace) and create a new 19-authentication.md for the scope-based authorization model, roles, impersonation, guest access, and token lifecycle that replaced role strings.
 todos:
   - id: preflight
     content: "Pre-flight: verify routes, the api_command decorator, dispatch, token constants, and the Scope model against the working tree"
-    status: pending
+    status: completed
   - id: routes
     content: "12-webserver-api.md: fix the route map and architecture diagram (dynamic imageproxy, added auth/static routes, per-file frontend registration, CORS)"
-    status: pending
+    status: completed
   - id: dispatch
     content: "12-webserver-api.md: fix the api_command decorator, APICommandHandler dataclass, dispatch flow, and the _register_api_commands scan list"
-    status: pending
+    status: completed
   - id: websocket
     content: "12-webserver-api.md: fix WebSocket heartbeat, event subscription filtering, and the special pre-dispatch commands"
-    status: pending
+    status: completed
   - id: remote
     content: "12-webserver-api.md: fix the Remote ID derivation and format, the WebRTC library, and remote access scopes"
-    status: pending
+    status: completed
   - id: newsurfaces
     content: "12-webserver-api.md: add dynamic routes, the dashboard API namespace, diagnostics command, providers/icon, and an MCP cross-link"
-    status: pending
+    status: completed
   - id: newdoc_scopes
-    content: "Create docs/architecture/19-authentication.md with the Scope model, roles, and per-command enforcement"
-    status: pending
+    content: Create docs/architecture/19-authentication.md with the Scope model, roles, and per-command enforcement
+    status: completed
   - id: newdoc_tokens
     content: "19-authentication.md: token lifecycle, join codes, guest access, and OAuth security"
-    status: pending
+    status: completed
   - id: newdoc_users
     content: "19-authentication.md: users, impersonation, provider filters, and ingress auto-provisioning"
-    status: pending
+    status: completed
   - id: crosslinks
-    content: "Add auth cross-links from the docs that reference required_role or admin-only commands"
-    status: pending
+    content: Add auth cross-links from the docs that reference required_role or admin-only commands
+    status: completed
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
-    status: pending
+    content: pre-commit, confirm the diff touches only docs, commit and push
+    status: completed
 isProject: false
 ---
 

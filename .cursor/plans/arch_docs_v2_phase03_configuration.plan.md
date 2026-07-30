@@ -27,7 +27,7 @@ todos:
     content: "02-configuration.md: add stale-while-revalidate to the CacheController section; fix the library DB table list"
     status: pending
   - id: verify
-    content: "pre-commit, confirm the diff touches only docs, commit and push"
+    content: pre-commit, confirm the diff touches only docs, commit and push
     status: pending
 isProject: false
 ---
