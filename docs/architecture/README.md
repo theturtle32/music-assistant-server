@@ -6,39 +6,44 @@ Music Assistant is a single-process async Python server that aggregates music fr
 
 ```mermaid
 graph TB
-    subgraph "Core Server"
-        MA["MusicAssistant Hub<br/>Event Bus · Command Registry · Task Tracking"]
-        Config["Config & Cache<br/>(settings.json · SQLite)"]
-        Web["Webserver & API<br/>(JSON-RPC · WebSocket · Auth)"]
+    Clients["Clients<br/>Web UI · Home Assistant · Apps"]
+
+    subgraph "Media sources"
+        MP["Music Providers<br/>Spotify · Tidal · Qobuz · Filesystem"]
+        MDP["Metadata Providers<br/>TheAudioDB · MusicBrainz · Fanart.tv"]
+        PLG["Plugins<br/>Spotify Connect · Party · Scrobblers"]
     end
 
-    subgraph "Media Layer"
+    subgraph "Core controllers"
+        Web["Webserver & API<br/>JSON-RPC · WebSocket · Auth"]
+        Meta["Metadata<br/>Art · Lyrics · Palettes"]
         Music["Music Controller<br/>Library · Search · Sync"]
-        Meta["Metadata<br/>Art · Lyrics · Bios"]
-    end
-
-    subgraph "Player Layer"
-        Players["Player Controller<br/>State · Commands · Protocol Linking"]
         Queues["Player Queues<br/>Playback · Transitions"]
         Streams["Streams Controller<br/>Audio Pipeline · DSP · Crossfade"]
+        Players["Player Controller<br/>State · Commands · Protocol Linking"]
     end
 
-    subgraph "Providers (modular)"
-        MP["Music Providers<br/>Spotify · Tidal · Qobuz · Filesystem"]
-        PP["Player Providers<br/>Chromecast · AirPlay · DLNA · Sonos"]
-        PLG["Plugins<br/>Spotify Connect · Scrobblers · Party"]
+    subgraph "Player providers"
+        PP["Chromecast · AirPlay · DLNA<br/>Sonos · Sendspin · Snapcast"]
     end
 
-    MA --- Config & Web
-    MA --- Music & Meta
-    MA --- Players & Queues & Streams
+    Clients --> Web
+    Web --> Music
+    Web --> Queues
+    Web --> Players
     MP --> Music
-    PP --> Players
-    PLG --> Players
+    MDP --> Meta
+    PLG --> Music
     Meta --> Music
+    Music --> Queues
     Queues --> Streams
+    Queues <--> Players
     Streams --> PP
+    Players --> PP
+    PLG -. "live audio" .-> Streams
 ```
+
+Config, cache and the event bus are deliberately absent: every box above depends on them, so they have no honest place in a dataflow diagram. [00-overview.md](00-overview.md#component-map) has the full controller map, and [02-configuration.md](02-configuration.md) covers persistence.
 
 ### Recommended Reading Paths
 
