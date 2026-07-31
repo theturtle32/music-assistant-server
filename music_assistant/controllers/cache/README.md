@@ -20,7 +20,7 @@ This package provides a centralized caching layer backed by SQLite. All data sto
 
 ## Design Notes
 
-- There is no in-memory cache layer. SQLite with WAL mode, mmap (30GB), a 64MB page cache, and `synchronous=normal` provides fast enough reads for all hot paths. This eliminates the inconsistency where an in-memory cache would return Python objects while the database returned deserialized dicts.
+- There is no in-memory cache layer. SQLite with WAL mode, memory-mapped I/O, a sizeable page cache and `synchronous=normal` provides fast enough reads for all hot paths. This eliminates the inconsistency where an in-memory cache would return Python objects while the database returned deserialized dicts. The mmap ceiling and page cache are not fixed values: `get_sqlite_memory_settings()` in [helpers/database.py](../../helpers/database.py) scales both to the host's total RAM, so a memory-constrained device gets a small footprint while a large host keeps a big library hot.
 - All data passes through `json_dumps` on write and `json_loads` on read. This means callers must use `.to_dict()` before storing model objects and `.from_dict()` (or the `base_class` parameter) after retrieval. Both `cache.get()` and the `use_cache` decorator accept a `base_class` parameter for automatic reconstruction.
 - Cache entries are namespaced by `(category, provider, key)`. The `category` is an integer, `provider` and `key` are strings.
 - Entries with `persistent=True` survive calls to `clear()` unless `include_persistent=True` is passed.

@@ -180,17 +180,17 @@ Manages individual WebSocket connections:
 6. **Token Generation**: MA token created and returned via redirect with `code` parameter
 7. **Client Handling**: Client extracts token from URL and stores it
 
-### Remote Client OAuth Flow
+### Remote Clients
 
-For remote clients (PWA over WebRTC), OAuth requires special handling since redirect URLs can't point to localhost:
+Remote clients (the PWA over WebRTC) use the same `/auth/authorize` → `/auth/callback` flow
+as any other client — there is no separate remote-client OAuth path. The `return_url` a
+client supplies is classified as trusted, external or blocked by
+[helpers/redirect_validation.py](../../helpers/redirect_validation.py) before the token is
+appended to it, which is what makes the redirect safe across origins.
 
-1. **Request Session**: Remote client calls `auth/authorization_url` with `for_remote_client=true`
-2. **Session Created**: Server creates a pending OAuth session and returns session_id and auth URL
-3. **User Opens Browser**: Client opens auth URL in system browser
-4. **OAuth Flow**: User completes OAuth in browser
-5. **Token Stored**: Server stores token in pending session (using special return URL format)
-6. **Polling**: Client polls `auth/oauth_status` with session_id
-7. **Token Retrieved**: Once complete, client receives token and can authenticate
+> The `auth/authorization_url?for_remote_client=true` + `auth/oauth_status` polling flow
+> that earlier revisions of this document described was removed along with the
+> `AUTH_SESSION` popup mechanism, and no longer exists.
 
 ### Ingress Authentication (Home Assistant Add-on)
 

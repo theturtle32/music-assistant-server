@@ -53,7 +53,7 @@ controllers/streams/
   smart_fades/         - Smart crossfade planning, rendering and mixing
     planner/           - Candidate/policy transition planner
     bands.py           - Band-power signals over the transition window
-    fades.py           - Fade curve generation
+    fades.py           - SmartFade ABC plus SmartCrossFade / StandardCrossFade
     filters.py         - FFmpeg filter toolset
     helpers.py         - Shared helpers
     mixer.py           - Crossfade mixing logic
@@ -116,7 +116,7 @@ Supporting modules in `helpers/`:
 
 - **Stream acquisition**: `get_media_stream`, `get_stream_details`, radio/HTTP/file stream helpers
 - **Queue streaming**: `get_queue_item_stream`, `get_queue_item_stream_with_smartfade`, `get_queue_flow_stream`
-- **Format selection**: `get_output_format`, `select_pcm_format`, `select_flow_format`
+- **Format selection**: `get_output_format`, `select_pcm_format`, `select_flow_pcm_format`
 - **DSP and output plans**: `get_player_output_plan` (returns the executable filters plus the client-facing `AudioOutputDetails`)
 - **Crossfade management**: `crossfade_allowed`, `clear_crossfade_data`
 
@@ -174,6 +174,7 @@ The same provider interface is reused by the nightly **background scan**, which 
 | `loudness_analysis` | EBU R128 integrated loudness | Feeds PCM into an FFmpeg `ebur128` process, capped at 600 seconds of audio. Result is stored so future playback can use measurement-based normalization instead of dynamic mode |
 | `smart_fades` | Beats, downbeats, musical key, RMS energy, spectral centroid, vocal activity | Beat This! neural beat tracker plus S-KEY and FireRed AED; see the [Smart Fades provider README](../../providers/smart_fades/README.md) |
 | `sonic_analysis` | librosa scalars and CLAP embeddings | Describes how a track sounds, powering similarity and mood-based features |
+| `acoustid_lookup` | MusicBrainz recording ID and ISRC | Computes a Chromaprint fingerprint and resolves it via AcoustID; produces no signal analysis of its own |
 
 Results are persisted by `AudioAnalysisController` and read back via `get_audio_analysis()`, so a track is analyzed once and reused on later playback.
 
@@ -211,7 +212,8 @@ audio stream:
 | Queue tracks | Yes (SEEKABLE) | Regular track playback with full buffering |
 | Radio streams | Yes (ROLLING) | Short rolling buffer, non-seekable |
 | Announcements | No | Short one-off audio (TTS), streamed directly |
-| Plugin sources | No | Real-time audio (microphone, aux), streamed directly |
+| `AUDIO_SOURCE` items | No | Real-time audio from a plugin provider (Spotify Connect, an AirPlay/AriaCast/VBAN receiver), streamed directly. These are ordinary queue items served from `/single/`; the old `PluginSource` model and its dedicated endpoint are gone |
+| Sound effects | No | Overlay sources, mixed in as an extra FFmpeg input |
 
 ## Configuration
 

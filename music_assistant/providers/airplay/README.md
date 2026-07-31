@@ -23,7 +23,8 @@ The AirPlay provider enables Music Assistant to stream audio to AirPlay-enabled 
 ┌─────────────────────────────────────────────────────────────────┐
 │                      AirPlay Provider                           │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  MDNS Discovery (_airplay._tcp, _raop._tcp)              │  │
+│  │  MDNS Discovery (_airplay._tcp, _raop._tcp,              │  │
+│  │                  _companion-link._tcp, _mediaremotetv._tcp)│ │
 │  └──────────────────────────────────────────────────────────┘  │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  DACP Server (_dacp._tcp) - Remote Control Callbacks     │  │
@@ -133,7 +134,8 @@ is ignored), and RAOP-only / AirPlay-2-only devices have nothing to force.
 
 ### MDNS Service Discovery
 
-The provider discovers AirPlay devices via two MDNS service types:
+The manifest subscribes to four MDNS service types. Two build the player, two feed
+independent device control:
 
 1. **`_airplay._tcp.local.`** - Primary AirPlay service (preferred)
    - Contains detailed device information
@@ -142,6 +144,12 @@ The provider discovers AirPlay devices via two MDNS service types:
 2. **`_raop._tcp.local.`** - Legacy RAOP service
    - Fallback for older devices
    - If only RAOP service is found, provider attempts to query for AirPlay service
+
+3. **`_companion-link._tcp.local.`** - Apple Companion service
+   - Power state, wake, native playback and volume on control-capable devices
+
+4. **`_mediaremotetv._tcp.local.`** - Native MRP service
+   - External playback monitoring on an Apple TV (see [Independent device control](#independent-device-control))
 
 ### Player Setup Flow
 

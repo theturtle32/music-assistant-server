@@ -47,126 +47,51 @@ This is suitable for:
 - Native apps with direct network access
 - Development and testing
 
-### 2. WebRTC Connection (Remote/NAT Traversal)
+### 2. Proxied Connection (Browsers, Remote Access)
 
-For web browsers and mobile apps that need to work across networks (including when accessing Music Assistant remotely), we use WebRTC DataChannels. The signaling happens through the authenticated MA API WebSocket connection.
+Clients that cannot open a raw socket to port 8927 — a browser, or any client reaching the
+server from outside the LAN — do not talk to the Sendspin server directly. Two mechanisms
+carry the protocol for them, and neither is implemented in this provider:
 
-#### WebRTC Connection Flow
+| Path | Carried by | Where it lives |
+|------|------------|----------------|
+| Browser on the LAN | The authenticated `/sendspin` WebSocket proxy on the main webserver (port 8095), which forwards text and binary frames both ways to port 8927 | `controllers/webserver/sendspin_proxy.py` |
+| Remote client | A WebRTC data channel labelled `"sendspin"`, bridged by the remote-access gateway to the same internal server | `controllers/webserver/remote_access/gateway.py` |
 
-```
-┌──────────────┐                    ┌─────────────────┐
-│   Client     │                    │   MA Server     │
-│  (Browser)   │                    │                 │
-└──────┬───────┘                    └────────┬────────┘
-       │                                     │
-       │  1. sendspin/ice_servers            │
-       │────────────────────────────────────▶│
-       │                                     │
-       │  ICE servers (STUN/TURN)            │
-       │◀────────────────────────────────────│
-       │                                     │
-       │  2. Create RTCPeerConnection        │
-       │     Create DataChannel              │
-       │                                     │
-       │  3. sendspin/connect {offer}        │
-       │────────────────────────────────────▶│
-       │                                     │ Create RTCPeerConnection
-       │                                     │ Connect to local Sendspin
-       │  {session_id, answer, ice}          │
-       │◀────────────────────────────────────│
-       │                                     │
-       │  4. sendspin/ice {candidate}        │
-       │────────────────────────────────────▶│
-       │                                     │
-       │  5. DataChannel opens               │
-       │◀═══════════════════════════════════▶│
-       │     Sendspin protocol messages      │
-       │                                     │
-```
+The proxy authenticates the same way the main WebSocket API does: an ingress request is
+trusted from its HA headers, and any other client must send
+`{"type": "auth", "token": "..."}` as its first message or the socket is closed with code
+4001. That auth message also carries the `client_id` that binds the socket to a specific
+Sendspin player.
 
-#### API Commands for WebRTC
-
-The Sendspin provider registers these API commands for WebRTC signaling:
-
-| Command | Parameters | Description |
-|---------|------------|-------------|
-| `sendspin/ice_servers` | None | Get ICE server configurations (STUN/TURN). Returns HA Cloud TURN servers if available. |
-| `sendspin/connect` | `offer: {sdp, type}` | Initiate WebRTC connection with SDP offer. Returns `{session_id, answer, ice_candidates}`. |
-| `sendspin/ice` | `session_id, candidate` | Exchange ICE candidates for NAT traversal. |
-| `sendspin/disconnect` | `session_id` | Clean up WebRTC session. |
-
-### ICE Server Configuration
-
-The provider automatically provides optimal ICE servers:
-
-1. **Home Assistant Cloud TURN servers** (if HA Cloud is available with active subscription)
-   - Provides reliable connections through firewalls and symmetric NAT
-   - Requires HA 2025.12.0b6 or later
-
-2. **Public STUN servers** (fallback)
-   - `stun:stun.l.google.com:19302`
-   - `stun:stun.cloudflare.com:3478`
-   - `stun:stun.home-assistant.io:3478`
+Because both paths reuse the webserver's own authentication and (for remote access) its
+WebRTC stack, this provider registers **no** signalling API commands and pulls in no WebRTC
+dependency of its own. See
+[12-webserver-api.md](../../../docs/architecture/12-webserver-api.md) for the proxy and the
+remote-access gateway.
 
 ## Implementing a Sendspin Client
 
 ### Web Browser (TypeScript/JavaScript)
 
-For web browsers, use the WebRTC approach with the MA API for signaling:
+Connect to the `/sendspin` endpoint on the main Music Assistant webserver rather than to
+port 8927, and authenticate with an MA token as the first message:
 
 ```typescript
-// 1. Get ICE servers from the server
-const iceServers = await api.sendCommand("sendspin/ice_servers");
+const ws = new WebSocket(`${maBaseUrl.replace(/^http/, "ws")}/sendspin`);
 
-// 2. Create RTCPeerConnection
-const peerConnection = new RTCPeerConnection({ iceServers });
-
-// 3. Create DataChannel
-const dataChannel = peerConnection.createDataChannel("sendspin", {
-  ordered: true,
-});
-
-// 4. Create and send offer
-const offer = await peerConnection.createOffer();
-await peerConnection.setLocalDescription(offer);
-
-const response = await api.sendCommand("sendspin/connect", {
-  offer: { sdp: offer.sdp, type: offer.type },
-});
-
-// 5. Set remote description (answer)
-await peerConnection.setRemoteDescription(
-  new RTCSessionDescription(response.answer)
-);
-
-// 6. Add ICE candidates from server
-for (const candidate of response.ice_candidates) {
-  await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-}
-
-// 7. Handle local ICE candidates
-peerConnection.onicecandidate = (event) => {
-  if (event.candidate) {
-    api.sendCommand("sendspin/ice", {
-      session_id: response.session_id,
-      candidate: {
-        candidate: event.candidate.candidate,
-        sdpMid: event.candidate.sdpMid,
-        sdpMLineIndex: event.candidate.sdpMLineIndex,
-      },
-    });
-  }
-};
-
-// 8. Use dataChannel for Sendspin protocol
-dataChannel.onopen = () => {
-  // DataChannel ready - use sendspin-js library
+ws.onopen = () => {
+  ws.send(JSON.stringify({ type: "auth", token: maToken, client_id: clientId }));
+  // socket is now a plain Sendspin protocol channel — use the sendspin-js library
 };
 ```
 
 ### Mobile Apps
 
-Mobile apps can use the same WebRTC approach for reliable connectivity across networks. The connection is established through the authenticated MA API, so no additional authentication is needed for the Sendspin connection itself.
+Native apps on the local network can connect straight to port 8927. Apps that also need to
+work away from home reach the server through remote access, where the `"sendspin"` data
+channel carries the same protocol transparently — no app-side WebRTC signalling against
+this provider is involved.
 
 ### Hardware Devices
 
@@ -212,8 +137,8 @@ Sendspin players support:
 
 ## Dependencies
 
-- `aiosendspin` - Async Sendspin protocol implementation
-- `aiolibdatachannel` - WebRTC implementation for Python (used for WebRTC bridging)
+- `aiosendspin[server]` - Async Sendspin protocol implementation, including the server
+- `av` - PyAV, used by the playback pipeline
 - `PIL/Pillow` - Image processing for artwork
 
 ## External Players (Protocol Bridges)

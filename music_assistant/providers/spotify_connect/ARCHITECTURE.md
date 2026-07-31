@@ -42,10 +42,12 @@ its local HTTP + WebSocket API. Music Assistant needs **no** Spotify Web API cre
   seek,volume,play}`) plus the `/events` WebSocket, which pushes `{"type": ..., "data": ...}`
   messages for session/playback/metadata/volume state. `204 No Content` means "no active
   session" and is treated as a no-op.
-- **AudioSource MediaItem**: a single live item browsable under the global "Live Inputs" node,
-  played through the standard `play_media` flow (like a radio station). `exclusive=True`,
-  `allow_external_trigger=True`. Transport capabilities are statically enabled — go-librespot's
-  REST API always provides them while a session is active.
+- **AudioSource MediaItem**: a single live item played through the standard `play_media` flow
+  (like a radio station). `exclusive=True`, `allow_external_trigger=True`,
+  `can_initiate=False` — because it cannot be started cold, it is deliberately **not** listed
+  in the browse tree (only `can_initiate=True` sources are), so entry comes from the Spotify
+  app. Transport capabilities are statically enabled — go-librespot's REST API always provides
+  them while a session is active.
 - **Stream metadata**: live track info (title/artist/album/artwork/elapsed) is pushed to the
   active queue item's `StreamDetails.stream_metadata` from the WebSocket `metadata`/`seek`
   events — the same channel ICY radio metadata uses.
