@@ -323,9 +323,9 @@ The response locale comes from the request headers rather than connection state,
 | `/ws` | The `auth` command (or ingress headers) once per connection; the user is then cached on the handler |
 | `POST /api` | Per request, in `_authenticate_api_command` → `get_authenticated_user` |
 | `/sendspin` | Ingress headers, or an `{"type": "auth", "token": ...}` first message; the auth message also carries the `client_id` that binds the socket to a Sendspin player |
-| Other HTTP routes | `auth_middleware` resolves a user if one is presentable and stores it on the request; each handler decides whether to require it |
+| Other HTTP routes | **Handler-local** — each route that needs a user calls `get_authenticated_user` (or equivalent) itself. There is no app-wide aiohttp middleware |
 
-`auth_middleware` skips authentication entirely for ingress requests and for a prefix allowlist: `/info`, `/login`, `/setup`, `/auth/`, `/api-docs/`, `/assets/`, `/favicon.ico`, `/manifest.json`, `/index.html`, and `/`. For everything else it resolves the user *optionally* — it never rejects — and leaves the requirement to the handler, which calls `require_authentication()` when it needs one.
+`helpers/auth_middleware.py` is still a live module: it owns `ROLE_SCOPES`, `has_scope`, the auth context vars, ingress detection, and `get_authenticated_user`. The `auth_middleware` *function* and `require_authentication` helper are **not** registered on `web.Application` (`helpers/webserver.py` builds the app with no middlewares) and have no in-tree call sites — treat them as unused surface, not the request path.
 
 ### Ingress and socket-level verification
 
@@ -484,7 +484,7 @@ The FastMCP server plugin mounts a Model Context Protocol endpoint at `/mcp/v1` 
 | [`music_assistant/controllers/webserver/api_docs.py`](../../music_assistant/controllers/webserver/api_docs.py) | OpenAPI/Swagger/commands documentation generation |
 | [`music_assistant/controllers/webserver/sendspin_proxy.py`](../../music_assistant/controllers/webserver/sendspin_proxy.py) | Sendspin WebSocket proxy |
 | [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — see [19-authentication.md](19-authentication.md) |
-| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context vars, `is_request_from_ingress`, `auth_middleware`, `has_scope` |
+| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context vars, `is_request_from_ingress`, `get_authenticated_user`, `has_scope` (the unused `auth_middleware` function also lives here) |
 | [`music_assistant/controllers/webserver/helpers/ssl.py`](../../music_assistant/controllers/webserver/helpers/ssl.py) | SSL context creation and the `verify_ssl` action |
 | [`music_assistant/controllers/webserver/remote_access/`](../../music_assistant/controllers/webserver/remote_access/) | `RemoteAccessManager`, `WebRTCGateway`, `RemoteAccessInfo` |
 | [`music_assistant/helpers/webrtc_certificate.py`](../../music_assistant/helpers/webrtc_certificate.py) | Persistent DTLS keypair and the Remote ID derivation |

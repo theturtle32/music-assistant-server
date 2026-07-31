@@ -17,9 +17,10 @@ flowchart TD
     E --> G["TheAudioDB (20)<br/>images, bio, genres, links"]
     E --> H["Wikipedia (25)<br/>artist bios"]
     E --> I["iTunes Artwork (30)<br/>album covers"]
+    E --> CAA["Cover Art Archive (40)<br/>album covers via MB RG"]
     E --> J["MusicBrainz / LRCLIB / Genius (50)<br/>links, lyrics"]
     E --> K["playlist_metadata (90)<br/>playlist artwork"]
-    F & G & H & I & J & K --> L["metadata.update() merge<br/>(bios collected separately)"]
+    F & G & H & I & CAA & J & K --> L["metadata.update() merge<br/>(bios collected separately)"]
     L --> M["Set last_refresh, persist to library"]
 ```
 
@@ -130,10 +131,11 @@ Each provider is checked for the relevant `ProviderFeature` flag (`ARTIST_METADA
 | 20 | TheAudioDB |
 | 25 | Wikipedia |
 | 30 | iTunes Artwork |
+| 40 | Cover Art Archive |
 | 50 | *default* — MusicBrainz, LRCLIB, Genius Lyrics, `lastfm_recommendations` |
 | 90 | `playlist_metadata` |
 
-So Fanart.tv and TheAudioDB both run **before** iTunes Artwork, and `playlist_metadata` runs last so it only generates playlist artwork nothing else supplied.
+So Fanart.tv and TheAudioDB both run **before** iTunes Artwork; Cover Art Archive runs after iTunes (still before the default tier); and `playlist_metadata` runs last so it only generates playlist artwork nothing else supplied.
 
 **Local-genre masking**: When `CONF_PREFER_LOCAL_GENRES` is enabled and the item already has a local genre source, each online provider's response is shallow-cloned with `dataclasses.replace(metadata, genres=None)` before merging. Other fields merge normally — only the `genres` set is shielded (#3815). What counts as "local" differs by type:
 
@@ -192,6 +194,7 @@ The recommendation methods make `MetadataProvider` a first-class source for the 
 | **TheAudioDB** | `theaudiodb` | 20 | `ARTIST_METADATA`, `ALBUM_METADATA`, `TRACK_METADATA` | MBID (artist), RG-MBID or name (album) | 90 days | 1 req/s |
 | **Wikipedia** | `wikipedia` | 25 | `ARTIST_METADATA` | MBID → MusicBrainz URL relations → Wikidata sitelinks | 90 days | 1 req/s |
 | **iTunes Artwork** | `itunes_artwork` | 30 | `ALBUM_METADATA` | UPC/EAN barcode (via `ExternalID.BARCODE`; `MusicBrainzReleaseGroup.barcode` is captured for RG lookups) | 30 days | *(uncapped)* |
+| **Cover Art Archive** | `coverartarchive` | 40 | `ALBUM_METADATA` | MusicBrainz release-group MBID (`ExternalID.MB_RELEASEGROUP`) | 30 days | *(HTTP; 503 → `ResourceTemporarilyUnavailable`)* |
 | **MusicBrainz** | `musicbrainz` | 50 | `ARTIST_METADATA`, `RECOMMENDATIONS` | MBID (metadata); artist name + tracks/albums (ID resolution) | 30 days | 10 req/10s |
 | **Genius Lyrics** | `genius_lyrics` | 50 | `TRACK_METADATA`, `LYRICS` | Artist name + track name | 7 days | *(library-managed)* |
 | **LRCLIB** | `lrclib` | 50 | `TRACK_METADATA`, `LYRICS` | Artist + track + album + duration | 14 days | 1/30s (or 1/s custom API) |
@@ -200,19 +203,19 @@ The recommendation methods make `MetadataProvider` a first-class source for the 
 
 ### What Each Provider Contributes
 
-| Data Type | Fanart.tv | TheAudioDB | Wikipedia | iTunes | MusicBrainz | Genius | LRCLIB | `playlist_metadata` |
-|---|---|---|---|---|---|---|---|---|
-| Artist images (thumb, logo, banner, fanart, cutout, clearart, landscape) | Yes (thumb, logo, banner, fanart) | Yes (up to 10 variants per type) | — | — | — | — | — | — |
-| Album images (thumb, disc art) | Yes | Yes (including HQ, 3D variants) | — | Yes (thumb only, 1500×1500) | — | — | — | — |
-| Track images | — | Yes (thumb) | — | — | — | — | — | — |
-| Playlist images | — | — | — | — | — | — | — | Yes (thumb + fanart, generated) |
-| Biography/description | — | Yes (localized) | Yes (localized) | — | — | — | — | — |
-| External links (website, social) | — | Yes | — | — | Yes (from URL relations) | — | — | — |
-| Genre/style/mood | — | Yes | — | — | — | — | — | Optional (from tracks) |
-| Plain text lyrics | — | Yes | — | — | — | Yes | Yes (fallback) | — |
-| Synced lyrics (LRC) | — | — | — | — | — | — | Yes (preferred) | — |
-| Album review | — | Yes | — | — | — | — | — | — |
-| MBID backfill | — | Yes (artist + album RG) | — | — | *(the resolver itself)* | — | — | — |
+| Data Type | Fanart.tv | TheAudioDB | Wikipedia | iTunes | CAA | MusicBrainz | Genius | LRCLIB | `playlist_metadata` |
+|---|---|---|---|---|---|---|---|---|---|
+| Artist images (thumb, logo, banner, fanart, cutout, clearart, landscape) | Yes (thumb, logo, banner, fanart) | Yes (up to 10 variants per type) | — | — | — | — | — | — | — |
+| Album images (thumb, disc art) | Yes | Yes (including HQ, 3D variants) | — | Yes (thumb only, 1500×1500) | Yes (thumb) | — | — | — | — |
+| Track images | — | Yes (thumb) | — | — | — | — | — | — | — |
+| Playlist images | — | — | — | — | — | — | — | — | Yes (thumb + fanart, generated) |
+| Biography/description | — | Yes (localized) | Yes (localized) | — | — | — | — | — | — |
+| External links (website, social) | — | Yes | — | — | — | Yes (from URL relations) | — | — | — |
+| Genre/style/mood | — | Yes | — | — | — | — | — | — | Optional (from tracks) |
+| Plain text lyrics | — | Yes | — | — | — | — | Yes | Yes (fallback) | — |
+| Synced lyrics (LRC) | — | — | — | — | — | — | — | Yes (preferred) | — |
+| Album review | — | Yes | — | — | — | — | — | — | — |
+| MBID backfill | — | Yes (artist + album RG) | — | — | — | *(the resolver itself)* | — | — | — |
 
 ### MusicBrainz — Identity Resolution and Links
 
@@ -229,6 +232,10 @@ The most comprehensive text-and-image provider. Uses MBID for artist lookup, Mus
 ### Fanart.tv
 
 Purely image-focused — no text metadata. Requires MBIDs for all lookups. Optional VIP `client_key` unlocks a faster throttle (1 req/s vs 1 req/30s). At priority 10 it is the first provider consulted, so its artwork wins wherever it has coverage.
+
+### Cover Art Archive
+
+Builtin stable metadata provider (`coverartarchive`) at priority **40**. Declares only `ALBUM_METADATA` and looks up front-cover art by MusicBrainz **release-group** MBID via `https://coverartarchive.org`. It sits after iTunes Artwork in the enrichment and radio-artwork walks, so it fills album thumbs when higher-priority image providers miss. Responses are cached for 30 days; HTTP 503 becomes `ResourceTemporarilyUnavailable`.
 
 ### Wikipedia
 
@@ -268,7 +275,7 @@ The `get_track_lyrics()` method (API: `metadata/get_track_lyrics`) resolves lyri
 
 **LRC normalization.** Synced lyrics from providers vary in shape, so `normalize_lrc_lyrics()` (`helpers/lyrics.py`, #4823) reduces them to minimal, chronologically sorted LRC that clients can parse without a full LRC implementation: ID/metadata tag lines (`[ar:…]`, `[ti:…]`, `[#comment]`) are stripped, enhanced per-word timing tags (`<00:22.00>`) are removed, and a line carrying several timestamps — a repeated chorus — is expanded into one line per timestamp. Untimed lines inherit the previous timestamp so a stable sort keeps them in place.
 
-Normalization is applied in two places: stored lyrics were normalized once by a schema migration (see [08-media-library.md](08-media-library.md#migrations)), and on-demand `get_track_lyrics` responses are normalized on the way out, since they are never persisted.
+Normalization is applied in two places: stored lyrics were normalized once by the schema ≤53 migration in `controllers/music/migrations.py` (noted under [08-media-library.md](08-media-library.md#migrations)), and on-demand `get_track_lyrics` responses are normalized on the way out, since they are never persisted.
 
 ---
 
@@ -415,7 +422,7 @@ Station metadata is free-form text, so names are cleaned up before any lookup. `
 3. **Library-first**: `_get_library_track_metadata`, `_get_library_artist_metadata` and `_get_library_item_thumb` check the user's existing library before reaching out — if the user already owns the track, their own artwork wins.
 4. **MusicBrainz with variants**: `_search_musicbrainz_with_variants` tries the announced order, then the swapped order (some stations send `"Track - Artist"`), then punctuation variants. A swap is reported back so subsequent lookups and the displayed metadata use the corrected order.
 5. **Singles before albums**: matched release groups are split by `primary_type`, and `Single` release groups are tried before `Album` ones — a single's cover is the artwork for *that* track, whereas an album cover is merely the artwork of a release containing it. When the station announced an album, `_prioritize_release_groups` reorders **within each type** so a release group whose title matches the announcement sorts first, using a loose substring match either way; singles still outrank albums (#4364).
-6. **Provider artwork per release group**: `_get_release_group_artwork` builds a throwaway `Album` carrying the release group MBID (plus its barcode when known) and walks `self.providers` in priority order. That means **Fanart.tv (10) and TheAudioDB (20) are consulted before iTunes Artwork (30)**; iTunes is the one that needs a barcode.
+6. **Provider artwork per release group**: `_get_release_group_artwork` builds a throwaway `Album` carrying the release group MBID (plus its barcode when known) and walks `self.providers` in priority order. That means **Fanart.tv (10) and TheAudioDB (20) run before iTunes Artwork (30), then Cover Art Archive (40)**; iTunes is the one that needs a barcode, while CAA needs the release-group MBID.
 7. **Artist artwork**: with no release-group art, the library is checked for the artist, then `ARTIST_METADATA` providers are asked for artist artwork using a throwaway `Artist` carrying the MBID.
 8. **Station logo fallback**: `get_radio_stream_station_image(streamdetails)` returns the station's own logo when track-level lookup yields nothing.
 
@@ -513,6 +520,7 @@ Findings are surfaced twice: as a task failure message telling the user which it
 | [`providers/theaudiodb/`](../../music_assistant/providers/theaudiodb/) | Artist/album/track images, bios, genres, links (priority 20) |
 | [`providers/wikipedia/`](../../music_assistant/providers/wikipedia/) | Localized artist biographies via MusicBrainz relations and Wikidata (priority 25) |
 | [`providers/itunes_artwork/`](../../music_assistant/providers/itunes_artwork/) | High-resolution album artwork via UPC barcode lookup (priority 30) |
+| [`providers/coverartarchive/`](../../music_assistant/providers/coverartarchive/) | Album artwork from Cover Art Archive via MusicBrainz release group (priority 40) |
 | [`providers/musicbrainz/`](../../music_assistant/providers/musicbrainz/) | MBID resolution, release matching, external links, artist-date recommendation rows |
 | [`providers/genius_lyrics/`](../../music_assistant/providers/genius_lyrics/) | Plain text lyrics via the Genius API |
 | [`providers/lrclib/`](../../music_assistant/providers/lrclib/) | Synced (LRC) and plain lyrics |

@@ -59,11 +59,11 @@ Every in-tree receiver uses the literal `item_id` `"main"` for its single source
 | `can_play_pause` | `False` | Whether the UI shows play/pause and the controller proxies PLAY/PAUSE to `on_source_control` |
 | `can_seek` | `False` | Same, for SEEK |
 | `can_next_previous` | `False` | Same, for NEXT/PREVIOUS |
-| `exclusive` | `True` | Only one concurrent consumer. MA fans the single stream out through the sync-group machinery when several players target it. `False` means the plugin is responsible for serving independent per-consumer streams |
-| `allow_external_trigger` | `False` | The plugin may start playback itself (the Spotify app picking MA as its device) |
+| `exclusive` | `True` | **Convention / documentation for plugins**, not a core gate — no controller reads `AudioSource.exclusive`. In-tree receivers set it `True` and implement single-consumer ownership in `on_source_selected` / stream claim logic; `False` would mean the plugin must serve independent per-consumer streams itself |
+| `allow_external_trigger` | `False` | **Convention only** — signals that an external app may start playback (e.g. the Spotify app picking MA as its device). Core does not branch on this field |
 | `can_initiate` | `False` | MA may start this source on demand from the UI. `False` means the source is reachable only via an external trigger, and the browse listings filter it out |
 
-The old `PlayerSource.passive` flag split into the last two. `passive = False` meant "show it in the selectable source list"; the replacement is finer-grained, because "the user can start this" (`can_initiate`) and "the external app can start this" (`allow_external_trigger`) are genuinely independent, and most receivers are `can_initiate=False` / `allow_external_trigger=True`.
+The old `PlayerSource.passive` flag split into the last two. `passive = False` meant "show it in the selectable source list"; the replacement is finer-grained, because "the user can start this" (`can_initiate`) and "the external app can start this" (`allow_external_trigger`) are genuinely independent, and most receivers are `can_initiate=False` / `allow_external_trigger=True`. Only `can_initiate` is enforced by core (browse filter); `allow_external_trigger` and `exclusive` are provider contracts.
 
 `can_initiate=False` is not a soft hint. The browse tree filters on it, and the owning plugin's `get_stream_details` is expected to raise `AudioError` when it cannot actually acquire the upstream producer — which is exactly what Spotify Connect, AirPlay Receiver, and AriaCast all do when no external session is connected.
 
@@ -312,7 +312,7 @@ The dedicated `/pluginsource/{source_id}/{player_id}.{fmt}` endpoint is gone. An
 http://<host>:8097/single/{session_id}/{queue_id}/{queue_item_id}/{player_id}.{fmt}
 ```
 
-`resolve_stream_url` makes two `AUDIO_SOURCE`-specific decisions. The output codec is forced to **WAV** regardless of the player's configured `output_codec`, because a live source is already PCM and a WAV container makes the encode step a pure passthrough. And flow mode is always suppressed — a single infinite stream has no track boundaries to flow across. `get_stream()` repeats both decisions for direct-PCM consumers.
+`resolve_stream_url` makes two `AUDIO_SOURCE`-specific decisions. The output codec is forced to **WAV** regardless of the player's configured `output_codec`, because a live source is already PCM and a WAV container makes the encode step a pure passthrough. And flow mode is always suppressed — a single infinite stream has no track boundaries to flow across. `get_stream()` (direct-PCM consumers) also suppresses flow for `RADIO` / `AUDIO_SOURCE`, but the WAV force is HTTP-path only — PCM consumers already request a PCM format.
 
 The WAV choice pays off downstream: `serve_queue_item_stream` skips the encode FFmpeg process entirely when the item is an `AUDIO_SOURCE`, the output is WAV, no filter params apply, and the sample rate / bit depth / channel count all match the source PCM. It then streams a WAV header followed by raw bytes via `_wav_passthrough_stream`, saving a process and its buffer latency on every realtime stream. See [10-streaming-pipeline.md](10-streaming-pipeline.md#stream-url-resolution).
 
@@ -478,7 +478,7 @@ Guest tokens, join codes, and the guest-access flow itself belong to [19-authent
 
 ### Music Quiz
 
-`music_quiz` (#4572, stage `experimental`) is a multiplayer quiz game and, at roughly 7,400 lines, the largest plugin in the tree. It declares no `ProviderFeature`s but is the heaviest consumer of other subsystems: `SharedPlaybackSession` for playback (mode chosen **per game**, unlike Party), guest access for joining, `ProviderFeature.AI_QUERY` for two of its three quiz types, and twenty `music_quiz/*` API commands.
+`music_quiz` (#4572, stage `experimental`) is a multiplayer quiz game at roughly 7,400 lines — among the largest plugins, though `fastmcp_server` is larger by line count (~10.3k). It declares no `ProviderFeature`s but is the heaviest consumer of other subsystems: `SharedPlaybackSession` for playback (mode chosen **per game**, unlike Party), guest access for joining, `ProviderFeature.AI_QUERY` for two of its three quiz types, and twenty `music_quiz/*` API commands.
 
 Three quiz types register as strategy classes in `QUIZ_TYPES`: `guess_the_song` (multiple choice, optional AI distractors), `music_timeline` (a shared chronological timeline with optional artist and title bonuses, no AI), and `trivia` (AI-worded questions grounded in library metadata, AI required). `get_available_quiz_types` filters on each class's `is_available(mass)`, so trivia disappears from the options rather than failing when no AI plugin is loaded.
 

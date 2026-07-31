@@ -34,7 +34,7 @@ class ProviderManifest(DataClassORJSONMixin):
     stage: ProviderStage = ProviderStage.STABLE
     requirements: list[str] = []       # pip packages
     multi_instance: bool = False       # allow multiple configs
-    builtin: bool = False              # loaded automatically, failure = fatal
+    builtin: bool = False              # loaded automatically at startup (awaited before regular providers)
     allow_disable: bool = True
     depends_on: str | None = None      # domain of required provider
     mdns_discovery: list[str] | None = None
@@ -323,9 +323,9 @@ Because the options entries need a live instance, the `config/providers/get_entr
 | Aspect | Builtin | Regular |
 |---|---|---|
 | `manifest.builtin` | `True` | `False` |
-| Loading | `_load_builtin_providers()` — via `asyncio.TaskGroup`, fully awaited | `_load_providers()` — via `TaskManager`, bounded concurrency |
-| Failure impact | Fatal — server startup aborts | Non-fatal — error logged, auto-retry scheduled |
-| Auto-retry | Yes (via `allow_retry=True`) | Yes — after 120 seconds for `MusicAssistantError` subclasses |
+| Loading | `_load_builtin_providers()` — via `asyncio.TaskGroup`, fully awaited before regular providers | `_load_providers()` — via `TaskManager`, bounded concurrency |
+| Failure impact | Non-fatal — `load_provider` swallows the exception so the TaskGroup completes; error logged on the config | Non-fatal — error logged, auto-retry scheduled |
+| Auto-retry | Yes (via `allow_retry=True`) — after 120 seconds for `MusicAssistantError` subclasses | Yes — after 120 seconds for `MusicAssistantError` subclasses |
 | Safe mode | Loaded | Skipped |
 | Examples | `sync_group`, `universal_player`, `sendspin`, `local_audio`, `builtin`, `theaudiodb`, `musicbrainz`, `loudness_analysis` | `spotify`, `chromecast`, `airplay`, `filesystem_local`, all user-configured providers |
 
@@ -370,13 +370,13 @@ Once a domain has been processed it is recorded in `CONF_DEFAULT_PROVIDERS_SETUP
 
 The `depends_on` field in `ProviderManifest` creates a soft dependency chain:
 
-- During `_load_provider`, if `depends_on` is set and the dependency provider is not loaded, the load **silently returns** (no error).
-- When a provider successfully loads, `load_provider_config` iterates all enabled provider configs and re-triggers loading for any that `depends_on` the just-loaded provider's domain.
+- During `_load_provider`, if `depends_on` is set and `get_provider(depends_on)` finds no **available** instance (the default `return_unavailable=False`), the load **silently returns** with no error and **no 120s retry timer**. That covers both "dependency not loaded yet" and "dependency loaded but currently unavailable".
+- When a provider successfully loads via `load_provider_config`, that path iterates all enabled provider configs and re-triggers `_load_provider` for any that `depends_on` the just-loaded provider's domain — this is the actual dependent (re)load path.
 - When a provider unloads, `unload_provider` recursively unloads all providers that depend on it.
 
-Additionally, after a successful `load_provider`, the server iterates all currently loaded providers. Any that are loaded but *unavailable* and whose `depends_on` matches the just-loaded provider's domain are unloaded — this triggers them to retry loading now that their dependency is available.
+Separately, after a successful `load_provider` (the instance-id path), the server iterates currently loaded providers and **unloads** any that are loaded but *unavailable* and whose `depends_on` matches the just-loaded domain. That unload alone does **not** schedule a reload; recovery still depends on a later successful load of the dependency (or some other call into `load_provider_config` / `load_provider`) walking the dependent configs again.
 
-This creates an eventually-consistent loading model — providers load (and retry) until their dependencies are satisfied, without requiring explicit ordering.
+This is eventually consistent when the dependency recovers through a successful load, but a dependent that hit the silent `depends_on` gate has no timer of its own — it waits for that walk.
 
 ## Unloading
 

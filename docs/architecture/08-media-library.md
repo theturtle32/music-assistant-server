@@ -422,6 +422,8 @@ Each media item table gets indexes on `favorite`, `name`, `search_name`, `sort_n
 
 `migrate_database()` refuses anything older than schema 15 (`MusicAssistantError`), and `_setup_database()` copies `library.db` to `library.db.backup` before migrating. If a migration raises, the database file is deleted, recreated empty, the cache cleared and a full rescan triggered — the user always ends up with a working library, with the backup left in place. On a fresh install the default genres are seeded. Startup finishes with a conditional `VACUUM`, skipped unless at least `VACUUM_MIN_RECLAIM_RATIO` (20%) of the file is reclaimable. The `reset_db` advanced core config action does the same reset on demand.
 
+Notable content migration: schema ≤53 runs a one-shot normalization of stored synced lyrics (strip LRC ID tags, expand multi-timestamp lines) via `normalize_lrc_lyrics()` — see [14-metadata.md](14-metadata.md) for the on-demand path that continues to apply the same helper.
+
 The `provider_mappings` table is the central join that connects canonical library items to their source providers. Each entity query aggregates mappings as a JSON array via subselect, so every returned item carries its full `provider_mappings` set; `external_id_lookup` rows are re-aggregated the same way into `external_ids`.
 
 ## Sub-Controller Specializations

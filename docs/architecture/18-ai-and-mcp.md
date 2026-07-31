@@ -58,7 +58,7 @@ Here is how the four in-tree consumers differ, which is the clearest illustratio
 | **AI Radio** TTS | `priority=(PLUGIN,)`, take `[0]` | none | none | Raises; the run fails |
 | **Music Quiz** distractors | all AI plugins sorted by `instance_id`, take `[0]` | 30 s | none | Returns `None`; the round silently falls back to non-AI distractors |
 | **Music Quiz** trivia | all AI plugins sorted by `instance_id`, iterate | 30 s per attempt | 2 attempts per provider, then next provider | Raises a localized `InvalidDataError`; trivia is unavailable as a quiz type |
-| **Smart Playlists** description | all AI plugins in registry order, iterate | none | next provider on exception or empty reply | Returns `None`; the playlist just has no description |
+| **Smart Playlists** description | `get_providers_supporting_feature(AI_QUERY)` (type tiers + priority), then `isinstance(PluginProvider)`, iterate | none | next provider on exception or empty reply | Returns `None`; the playlist just has no description |
 
 Sorting by `instance_id` is not cosmetic: it makes provider selection deterministic across restarts when several AI plugins are configured, which matters for a game that must behave the same way for every player.
 
@@ -191,7 +191,7 @@ Despite the name, AI Radio's `dynamic` mode has **nothing to do with MA's dynami
 
 ## Music Quiz
 
-`providers/music_quiz/` (#4572, stage `experimental`) is a multiplayer quiz engine — the largest consumer plugin in the tree at roughly 7,400 lines. It declares no `ProviderFeature`s. Guests join by QR code through the standard guest-access flow and play on their own devices.
+`providers/music_quiz/` (#4572, stage `experimental`) is a multiplayer quiz engine — the heaviest AI *consumer* plugin at roughly 7,400 lines (not the largest plugin overall; see FastMCP below). It declares no `ProviderFeature`s. Guests join by QR code through the standard guest-access flow and play on their own devices.
 
 Three quiz types are registered in `QUIZ_TYPES`, each a `QuizType` strategy class:
 
@@ -223,7 +223,7 @@ See [11-plugin-system.md](11-plugin-system.md#smart-playlists) for its non-AI su
 
 ## The FastMCP server — MA as the tool provider
 
-`providers/fastmcp_server/` (#3858, stage `experimental`) inverts the direction: instead of MA calling a model, it publishes itself as a **Model Context Protocol** server so external LLM clients can drive it. It is the largest plugin in the tree by module count, at roughly 7,500 lines across tool, resource, auth, and onboarding layers.
+`providers/fastmcp_server/` (#3858, stage `experimental`) inverts the direction: instead of MA calling a model, it publishes itself as a **Model Context Protocol** server so external LLM clients can drive it. It is the largest plugin in the tree by both module count and line count — roughly 10,300 lines across tool, resource, auth, and onboarding layers.
 
 The design constraint that shapes everything is stated in the package docstring: **no second server.** The runtime mounts into MA's existing aiohttp webserver under a configurable path — no extra uvicorn, no extra port, no changes to MA core.
 

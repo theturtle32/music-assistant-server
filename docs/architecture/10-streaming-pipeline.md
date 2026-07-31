@@ -195,6 +195,7 @@ This method acquires raw PCM audio from the source:
 |-------------|----------|
 | `CUSTOM` | Provider's `get_audio_stream()` async generator |
 | `ICY` | `get_icy_radio_stream()` — raw stream with ICY metadata parsing |
+| `SHOUTCAST` | `get_shoutcast_stream()` — Shoutcast-style radio with its own metadata path |
 | `IN_BAND` (OGG radio) | `get_chained_ogg_stream()` — stitched OGG pages via `ogg_handler.py` |
 | `HLS` | `get_hls_substream()` — HLS segment fetching; radio adds `-stream_loop -1 -re` |
 | `HTTP` / `FILE` | Direct path to FFmpeg |
@@ -246,6 +247,13 @@ Flow mode produces a continuous PCM stream across all queue tracks. It is used b
 - On EOF, calls `player_queues.queue_buffer_completed(queue_id)` so the queue can wait for the player to go idle and resume if items were added meanwhile. `player_queues.flow_stream_finished(queue_id)` exposes the same fact to player providers whose devices never report idle.
 - With crossfade enabled: buffers the tail of each track, mixes the overlap with `SmartFadesMixer`, yields the blended audio.
 - Smart crossfade is only offered when `smart_fades_available` — which requires a non-MINIMAL buffer preset *and* the `smart_fades` analysis provider to be loaded. Otherwise the effective mode degrades to standard crossfade.
+
+**Mid-flow restart.** Before each next item, `_flow_stream_needs_restart()` can exit the flow so the queue controller opens a new stream:
+
+- Upcoming `RADIO` or `AUDIO_SOURCE` — live media cannot stay inside a multi-track flow; the controller falls back to a single-item stream.
+- Sample-rate mismatch under `bit_perfect` (any effective next rate ≠ current flow rate) or `smart` (next rate **higher** than the current flow rate, after snapping up to a supported player rate). Fixed-rate modes (`48000` / `96000` / `highest`) resample in place and do not restart for rate.
+
+That seam is what lets mixed queues (tracks + radio/plugins) and bit-perfect rate changes coexist with gapless/crossfade continuity on the stretches that *can* flow. See [`select_flow_pcm_format`](#select_flow_pcm_format) for how the initial flow rate is chosen.
 
 ## Audio Overlay
 
@@ -427,7 +435,7 @@ The smart path requires **BPM and beats on both tracks**; without them `build` f
 
 The buffered tail is `SMART_CROSSFADE_DURATION` (45 s) for smart or the configured duration for standard, capped at half the track duration, and abandoned entirely below 5 seconds where it would not be musically meaningful.
 
-For flow streams targeting Chromecast-style clients, FFmpeg uses `-readrate 1` and `-readrate_initial_burst 6` to throttle output to real-time speed, preventing the player from buffering too far ahead.
+For flow streams targeting Chromecast-style clients, FFmpeg uses `-readrate 1.1` and `-readrate_initial_burst 5` to throttle output near real-time speed, preventing the player from buffering too far ahead.
 
 ### Smart fades: analysis vs execution
 
@@ -459,27 +467,27 @@ The filter chain, in order:
 3. **Output gain** — `volume={output_gain}dB`, when non-zero.
 4. **Channel selection** — `pan=mono|c0=FL` or `c0=FR` from `CONF_OUTPUT_CHANNELS`.
 
-The unconditional output `alimiter` stage that used to sit at the end is **gone** (#4901). A limiter is now something the user opts into as a DSP filter (`SafetyLimiterFilter`), not a fixed cost on every stream; #4901 shipped a config migration for players that had the old setting.
+The unconditional output `alimiter` stage that used to sit at the end is **gone** (#4901). A limiter is now something the user can opt into as a DSP filter model (`SafetyLimiterFilter`), not a fixed cost on every stream; #4901 shipped a config migration for players that had the old setting. **Rendering is a separate matter** — see the catalog below.
 
 Only filters that actually emit parameters are recorded as `effective_filters`. A neutral filter — 0 dB gain, centred balance — produces no params and is deliberately excluded, so it is not reported as an active stage and does not defeat bit-perfect detection.
 
 ### Filter catalog
 
-`DSPFilterType` (in `music_assistant_models.dsp`) covers:
+`DSPFilterType` (in `music_assistant_models.dsp`) lists every filter the UI can configure. **`filter_to_ffmpeg_params()` only renders a subset** — models without a renderer silently contribute nothing while remaining configurable:
 
-| Filter | Notes |
-|---|---|
-| `PARAMETRIC_EQ` | Multi-band biquad EQ with per-band type/frequency/gain/Q, optional per-channel preamp (applied via `pan` rather than `volume`, which is stream-wide) |
-| `TONE_CONTROL` | Simple bass/mid/treble |
-| `GAIN`, `BALANCE` | Straight gain and L/R balance (#4857) |
-| `HIGH_LOW_PASS` | High/low-pass with selectable mode and slope (#4944) |
-| `STEREO_WIDTH`, `CROSSFEED` | Stereo image adjustments |
-| `TRANSPOSE` | Pitch shift via FFmpeg `rubberband` with formant preservation (#5005) |
-| `CONVOLUTION` | Impulse-response convolution |
-| `SAFETY_LIMITER` | Opt-in limiter (the replacement for the removed fixed stage) |
-| `COMPRESSOR` | Dynamic range compression |
+| Filter | Rendered today? | Notes |
+|---|---|---|
+| `PARAMETRIC_EQ` | Yes | Multi-band biquad EQ with per-band type/frequency/gain/Q, optional per-channel preamp (applied via `pan` rather than `volume`, which is stream-wide) |
+| `TONE_CONTROL` | Yes | Simple bass/mid/treble |
+| `GAIN`, `BALANCE` | Yes | Straight gain and L/R balance (#4857); balance is stereo-only |
+| `HIGH_LOW_PASS` | Yes | High/low-pass with selectable mode and slope (#4944) |
+| `TRANSPOSE` | Yes | Pitch shift via FFmpeg `rubberband` with formant preservation (#5005) |
+| `STEREO_WIDTH`, `CROSSFEED` | No | Stereo image adjustments — model only |
+| `CONVOLUTION` | No | Impulse-response convolution — model only |
+| `SAFETY_LIMITER` | No | Opt-in limiter model (replacement for the removed fixed stage) — not yet rendered |
+| `COMPRESSOR` | No | Dynamic range compression — model only |
 
-Most filters render to a plain FFmpeg filter string. Convolution cannot: `afir` needs a *second* audio input. `ComplexFilter` (`helpers/dsp.py`) models that — a `body` consuming the main input plus each source in order, and a list of `sources` sub-chains that each produce one extra input (#4872). `helpers/ffmpeg.py` accepts `str | ComplexFilter` throughout and `_build_filtergraph_args()` only switches to a full `-filter_complex` graph when a `ComplexFilter` is actually present, so simple chains keep using `-af`.
+Rendered filters become plain FFmpeg `-af` strings. `ComplexFilter` (`helpers/dsp.py`) and `helpers/ffmpeg.py`'s `str | ComplexFilter` path exist for multi-input graphs (e.g. future `afir` convolution): `_build_filtergraph_args()` switches to `-filter_complex` only when a `ComplexFilter` is present. No production call currently constructs a `ComplexFilter` instance.
 
 ### Grouping and shared outputs
 

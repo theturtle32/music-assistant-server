@@ -168,9 +168,9 @@ Two per-user lists narrow what a user sees. They are **filters, not scopes** —
 | Filter | Where it applies |
 |---|---|
 | `player_filter` | API results, **and** the WebSocket event stream: player and queue events whose `object_id` is outside the filter are dropped per connection. Also checked by `handle_player_command` — see [04-player-controller.md](04-player-controller.md) |
-| `provider_filter` | API results only — `mass.get_providers()`, `music/providers`, and the browse root via `_apply_user_provider_filter`. Also used as a *preference* when resolving which provider to stream a track from |
+| `provider_filter` | API results only — `mass.get_providers()` (`@api_command("providers")`), and the browse/library paths via `_apply_user_provider_filter` / `_ensure_provider_filter`. Also used as a *preference* when resolving which provider to stream a track from |
 
-**`provider_filter` is not applied at the event layer.** Only `player_filter` is. A restricted user therefore still receives, say, provider-config events for providers they cannot browse; the filtering is a UI-scoping mechanism, not an isolation boundary. Both filters are bypassed entirely for a caller holding `Scope.ALL`. See [08-media-library.md](08-media-library.md#provider-selection-and-user-filters).
+**`provider_filter` is not applied at the event layer.** Only `player_filter` is. A restricted user therefore still receives, say, provider-config events for providers they cannot browse; the filtering is a UI-scoping mechanism, not an isolation boundary. `mass.get_providers` skips `provider_filter` for a caller holding `Scope.ALL`, but browse/library helpers (`_ensure_provider_filter`, `_apply_user_provider_filter`) and WebSocket `player_filter` gating honor a non-empty filter even for an admin — `Scope.ALL` is not a universal bypass. See [08-media-library.md](08-media-library.md#provider-selection-and-user-filters).
 
 ---
 
@@ -351,7 +351,7 @@ Keeping this separate from `library.db` means a library restore or wipe does not
 |---|---|
 | `music_assistant_models.auth` | `Scope`, `UserRole`, `User`, `AuthToken`, `UserAuthProvider`, `AuthProviderType` |
 | [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — users, tokens, join codes, the `auth/*` command surface, token refresh and rotation |
-| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | `ROLE_SCOPES`, `has_scope`, impersonation resolution, `ImpersonatedUser`, the context vars, ingress detection, `auth_middleware` |
+| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | `ROLE_SCOPES`, `has_scope`, impersonation resolution, `ImpersonatedUser`, the context vars, ingress detection, `get_authenticated_user` (plus unused `auth_middleware` / `require_authentication` helpers) |
 | [`music_assistant/controllers/webserver/helpers/auth_providers.py`](../../music_assistant/controllers/webserver/helpers/auth_providers.py) | `BuiltinLoginProvider`, `HomeAssistantOAuthProvider`, `LoginRateLimiter`, `get_ha_user_role`, `get_ha_user_details` |
 | [`music_assistant/helpers/jwt_auth.py`](../../music_assistant/helpers/jwt_auth.py) | `JWTHelper` — HS256 encode/decode, claim layout, token-id extraction |
 | [`music_assistant/helpers/guest_access.py`](../../music_assistant/helpers/guest_access.py) | Shared guest user, join code, join URL, and revocation helpers |

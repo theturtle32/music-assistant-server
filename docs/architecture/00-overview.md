@@ -6,13 +6,13 @@ Music Assistant is an async Python server that acts as a centralized music libra
 
 | Repository | Purpose |
 |---|---|
-| **`music-assistant/server`** (this repo) | The server: controllers, providers, streaming engine, webserver |
-| **`music-assistant/models`** | Shared data models (`mashumaro` + `orjson` serialization). Defines `API_SCHEMA_VERSION` / `MIN_SCHEMA_VERSION` for client-server compatibility |
+| **`music-assistant/server`** (this repo) | The server: controllers, providers, streaming engine, webserver. Owns `API_SCHEMA_VERSION` / `MIN_SCHEMA_VERSION` in `music_assistant/constants.py` |
+| **`music-assistant/models`** | Shared data models (`mashumaro` + `orjson` serialization) — the wire-format contract between server and client |
 | **`music-assistant/client`** | Async Python client that mirrors the server's controller API surface |
 | **`music-assistant/frontend`** | Web UI (served by the server's webserver controller) |
 | Protocol libraries | `aioslimproto`, `aiosonos`, `cliairplay`, `PyChromecast`, etc. — each wrapped by a player provider |
 
-The `models` package is the shared contract between server and client. It uses `mashumaro` dataclasses with `orjson` for fast (de)serialization. The `API_SCHEMA_VERSION` integer is bumped for additive API changes; `MIN_SCHEMA_VERSION` is bumped only for breaking changes, which forces all clients to update.
+The `models` package is the shared serialization contract between server and client. Schema negotiation is separate: the server reports `API_SCHEMA_VERSION` / `MIN_SCHEMA_VERSION` from its own `constants.py` via `get_server_info()`. The current schema integer is bumped for additive API changes; `MIN_SCHEMA_VERSION` is bumped only for breaking changes, which forces all clients to update.
 
 ## The Central Hub: `MusicAssistant`
 
@@ -106,7 +106,7 @@ flowchart TD
     K --> L["10. _register_api_commands() — scan @api_command decorators"]
     L --> M["11. WebserverController.setup() — sequential, after commands are registered"]
     M --> N["12. DiscoveryController.setup()"]
-    N --> O["13. _load_builtin_providers() — awaited, failure = fatal"]
+    N --> O["13. _load_builtin_providers() — awaited TaskGroup; load_provider swallows failures"]
     O --> P{"safe_mode?"}
     P -- No --> Q["14. _load_providers() — bounded concurrency, failure = non-fatal"]
     P -- Yes --> R["Skip regular providers"]
@@ -124,8 +124,8 @@ flowchart TD
 - **Step 8**: Nine controllers (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`, `diagnostics`, `dashboard`) are set up in parallel inside an `asyncio.TaskGroup`. Each is handed its `CoreConfig`, which is also stored on the controller as `self.config` so internal code can read values without rebuilding the entries.
 - **Step 9**: `post_setup()` runs for only the original seven (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`) — not for `translations`, `diagnostics` or `dashboard`.
 - **Steps 10–11**: API command registration happens **before** the webserver is set up, so every `@api_command` handler exists by the time the first request can arrive.
-- **Step 13**: Builtin providers (like `sync_group`, `universal_player`, `sendspin`, `theaudiodb`) are loaded via `TaskGroup` and fully awaited — if any fails, startup aborts.
-- **Step 14**: Regular providers load concurrently under `TaskManager(self, PROVIDER_LOAD_CONCURRENCY)` (8 at a time). Failures are non-fatal and trigger auto-retry after 120 seconds for `MusicAssistantError` subclasses.
+- **Step 13**: Builtin providers (like `sync_group`, `universal_player`, `sendspin`, `theaudiodb`) are loaded via `TaskGroup` and fully awaited so they finish before regular providers start — but each task calls `load_provider(..., allow_retry=True)`, which **catches** load failures, records `last_error`, and schedules a 120s retry for `MusicAssistantError` subclasses. A failed builtin therefore does **not** abort startup.
+- **Step 14**: Regular providers load concurrently under `TaskManager(self, PROVIDER_LOAD_CONCURRENCY)` (8 at a time). Failures are likewise non-fatal and trigger the same auto-retry path.
 
 ## Shutdown Lifecycle
 

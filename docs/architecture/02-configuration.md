@@ -49,7 +49,7 @@ Each mixin owns one config scope and declares `if TYPE_CHECKING:` stubs for the 
 
 Settings are stored in `{storage_path}/settings.json`. The controller loads the file on `setup()` and writes it back with a **debounced save** — `save()` schedules a write after `DEFAULT_SAVE_DELAY` (5 seconds) using `call_later`. Calling `save(immediate=True)` bypasses the debounce for critical writes (a rotated auth token, a completed setup flow). On shutdown, `close()` flushes a pending save, and returns immediately when nothing is pending.
 
-Writes go through `_save_to_disk` and are **atomic and backed up** (PR #4534, which fixed complete config loss after a power failure or unclean shutdown):
+Writes go through `_save_to_disk` and are **atomic and backed up** (durable `fsync` of the temp file before rename — #5716; earlier atomic-write work also tracked under #4534):
 
 1. Serialize to `settings.json.tmp`, `flush()`, then `os.fsync()` the file descriptor — so a crash can never leave a zero-length primary file behind.
 2. Rotate the current `settings.json` to `settings.json.backup`, but **only if it still parses as JSON**. A corrupt crash leftover can therefore never clobber a good backup.

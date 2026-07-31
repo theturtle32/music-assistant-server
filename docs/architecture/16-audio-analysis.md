@@ -37,7 +37,7 @@ Live playback and the background scan converge on the same `_distribute_chunk` f
 
 Defined in [`music_assistant/controllers/streams/audio_analysis.py`](../../music_assistant/controllers/streams/audio_analysis.py).
 
-**Ownership.** A sub-controller of `StreamsController`, exposed as `mass.streams.audio_analysis`. Lifecycle is driven by `StreamsController`: `setup()` configures CPU caps and registers the nightly scan; `close()` cancels in-flight workers.
+**Ownership.** A sub-controller of `StreamsController`, exposed as `mass.streams.audio_analysis`. Lifecycle is driven by `StreamsController`: `setup()` registers the nightly scan; `close()` cancels in-flight workers. CPU caps are applied later by `ensure_inference_runtime_configured()` when a torch-backed provider actually needs them (see below).
 
 **Provider discovery.** The `providers` property returns `mass.get_providers(ProviderType.AUDIO_ANALYSIS)` filtered to available `AudioAnalysisProvider` instances.
 

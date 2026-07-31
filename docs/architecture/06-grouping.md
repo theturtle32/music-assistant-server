@@ -86,7 +86,7 @@ This means a sync group's capabilities change dynamically depending on which mem
 
 ### State Delegation
 
-The sync group delegates most of its observable state to the sync leader. Crucially, it reads the leader's *raw* attributes (`leader.playback_state`, `leader.elapsed_time`, etc.) — **not** `leader.state.*`. This avoids a circular dependency: synced clients (`__final_synced_to`) mirror their leader's `state.playback_state`, so if the group derived from `state.*` and the leader derived from the group, both would deadlock at the previous value. Members of an active group always report their own raw playback state; only manually-synced clients (`synced_to`) mirror the leader.
+The sync group delegates most of its observable state to the sync leader, but **not all fields use the same read path**. Playback and elapsed time come from `sync_leader.state.*`; `current_media`, `active_source`, and `source_list` use the leader's **raw** attributes. The split exists to avoid a circular dependency on the media/source chain: synced clients (`__final_synced_to`) and active-group members can mirror `state.current_media` / `state.active_source` back into the group if the group itself read `.state` for those fields. Members of an active group always report their own raw playback state; only manually-synced clients (`synced_to`) mirror the leader.
 
 | Property | Source |
 |---|---|

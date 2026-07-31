@@ -229,17 +229,19 @@ flowchart TD
 | Property | Returns | Resolution priority (highest → lowest) |
 |---|---|---|
 | `__final_playback_state` | `tuple[PlaybackState, elapsed, timestamp]` | Active protocol player → sync leader → native `_attr_*`, then an **upstream-clock override** — see below |
-| `__final_power_state` | `bool \| None` | `power_control` config: FAKE → NATIVE → NONE → delegate player → delegate PlayerControl. See [`power_control` Degradation](#power_control-degradation) for the `NATIVE` → `NONE` fallback |
-| `__final_volume_level` | `int \| None` | `volume_control` config: FAKE (logical, unscaled) → NATIVE → NONE → delegate player → delegate PlayerControl → **fallback: native**. Every non-FAKE branch runs the value through `scale_volume_from_device()` to convert the device range back to logical 0–100 |
+| `__final_power_state` | `bool \| None` | `power_control` config: FAKE → NATIVE → NONE → external `PlayerControl`. After #3659 `power_control` never auto-selects a protocol player. See [`power_control` Degradation](#power_control-degradation) for the `NATIVE` → `NONE` fallback |
+| `__final_volume_level` | `int \| None` | `volume_control` config: FAKE (logical, unscaled) → NATIVE → NONE (`None`, no scaling) → delegate player → delegate PlayerControl → **fallback: native**. Every branch that returns a numeric level (not FAKE, not NONE) runs the value through `scale_volume_from_device()` to convert the device range back to logical 0–100 |
 | `__final_volume_muted_state` | `bool \| None` | `mute_control` config: FAKE → NATIVE → NONE → delegate player → delegate PlayerControl → **fallback: native** |
 | `__final_active_group` | `str \| None` | PROTOCOL type → None. Else: scan GROUP players that *capture* this player — see [Active Group Resolution](#active-group-resolution) |
-| `__final_current_media` | `PlayerMedia \| None` | Active group/sync leader → protocol parent → active queue (stream metadata → media item → bare queue item) → native `_attr_current_media`. An active queue with no current item resolves to `None` rather than falling through |
+| `__final_current_media` | `PlayerMedia \| None` | Parent preference **`active_group or synced_to`** → protocol parent → active queue (stream metadata → media item → bare queue item) → native `_attr_current_media`. An active queue with no current item resolves to `None` rather than falling through |
 | `__final_source_list` | `list[PlayerSource]` | PROTOCOL → native only. Else: native sources plus a synthesized "Music Assistant Queue" source (id = `player_id`) when the player does not already list one |
 | `__final_group_members` | `list[str]` | If synced → empty. Else: native members (protocol IDs translated to visible parents), merged with active protocol's members. Non-GROUP with only self → empty |
 | `__final_synced_to` | `str \| None` | Native `synced_to` (mapped through protocol parent) → linked protocol's `synced_to` (resolved to visible parent) |
 | `__final_supported_features` | `set[PlayerFeature]` | Native features + `ACTIVE_PROTOCOL_FEATURES` from active protocol + `PROTOCOL_FEATURES` from all linked protocols ± power/volume/mute adjusted by control config; `PlayerFeature.SELECT_SOURCE` is auto-added when the final source list has at least two non-passive entries (#3789) |
 | `__final_can_group_with` | `set[str]` | If synced → empty. Else: expanded native set (translated to visible) + linked protocol group sets (if no external source active) |
-| `__final_active_source` | `str \| None` | Sync leader/active group → protocol parent → `__active_mass_source` (unless the player reports a source in `EXTERNAL_SOURCES`) → native `active_source` (only when it differs from `player_id`, playback is not IDLE, and no non-native output protocol is active) → fallback to `__active_mass_source` or `player_id` |
+| `__final_active_source` | `str \| None` | Parent preference **`synced_to or active_group`** (inverted vs current media) → protocol parent → `__active_mass_source` (unless the player reports a source in `EXTERNAL_SOURCES`) → native `active_source` (only when it differs from `player_id`, playback is not IDLE, and no non-native output protocol is active) → fallback to `__active_mass_source` or `player_id` |
+
+The inverted parent order between `__final_current_media` (`active_group` first) and `__final_active_source` (`synced_to` first) is intentional. When a player is both synced and captured by a group, media must follow the group session, while source identity prefers the sync relationship — matching how sync-group state delegation avoids circular `.state` reads (see [06-grouping.md](06-grouping.md#state-delegation)).
 
 ### The Upstream-Clock Override
 
@@ -411,7 +413,7 @@ The **control priority** ordering (lower = preferred) is designed for commands t
 
 This is distinct from the **`PROTOCOL_PRIORITY`** used for output selection (airplay=10 > squeezelite=20 > chromecast=30 > sendspin=40 > dlna=50), which governs *playback* preference. The control priority here governs *command routing* for non-active protocols.
 
-The `power_control`, `volume_control`, and `mute_control` cached properties use this method to resolve which entity handles power/volume/mute commands. Power uses `require_active=True`; volume and mute use `require_active=False` (so they can reach idle protocol players like Chromecast).
+Only `volume_control` and `mute_control` use `_get_protocol_player_for_feature` during auto-select, both with `require_active=False` (so they can reach idle protocol players like Chromecast). `power_control` never calls it — after #3659 power resolves only to `NATIVE` / `FAKE` / `NONE` or an external `PlayerControl` ID (see [`power_control` Degradation](#power_control-degradation)).
 
 ## Protocol Linking State
 

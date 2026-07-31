@@ -151,21 +151,21 @@ sequenceDiagram
     ZC->>DC: _on_mdns_service_state_change(type, name, state)
 
     par Dispatch to matching providers
+        DC->>DC: AsyncServiceInfo.async_request() for Provider A (3s timeout)
         DC->>Lock: acquire lock for Provider A
         Lock-->>DC: acquired
-        DC->>DC: AsyncServiceInfo.async_request() (3s timeout)
         DC->>P1: on_mdns_service_state_change(name, state, info)
     and
+        DC->>DC: AsyncServiceInfo.async_request() for Provider B (3s timeout)
         DC->>Lock: acquire lock for Provider B
         Lock-->>DC: acquired
-        DC->>DC: AsyncServiceInfo.async_request() (3s timeout)
         DC->>P2: on_mdns_service_state_change(name, state, info)
     end
 ```
 
-For `Removed` events, `info` is passed as `None`. For `Added`/`Updated`, the controller creates an `AsyncServiceInfo` and resolves it with a 3-second timeout before passing to the provider.
+For `Removed` events, `info` is passed as `None`. For `Added`/`Updated`, the live path creates an `AsyncServiceInfo` and resolves it with a 3-second timeout **before** taking the provider lock, then holds the lock only around the provider callback. Concurrent resolves for the same provider can therefore overlap; only the callback is serialized. (Replay holds the lock across resolve + callback — see below.)
 
-Per-provider locks (`_mdns_locks`) serialize callbacks to a single provider instance, preventing concurrent handling of multiple service events from racing.
+Per-provider locks (`_mdns_locks`) serialize callbacks to a single provider instance, preventing concurrent *handling* of multiple service events from racing.
 
 ### Replay Mechanism
 
@@ -345,7 +345,7 @@ Beyond manual IPs, each of these providers discovers in a way the manifest canno
 | `sendspin` | Devices arrive over Sendspin's own server protocol plus a pairing flow, with manual IPs as a fallback. It declares **no** `mdns_discovery` and implements no `discover_players()` |
 | `local_audio` | Enumerates the host's audio **output devices** in an executor (via the configured ALSA/PulseAudio backend on Linux, ignored on macOS) and registers each as a player through the Sendspin bridge |
 | `msx_bridge` | `discover_players()` is deliberately **empty** — Media Station X players register on demand via `get_or_register_player()` when a TV first connects |
-| `sync_group`, `universal_group`, `universal_player` | No network discovery. `discover_players()` reads stored player configs and re-registers the virtual players by id prefix (`SGP_`, `UGP_`, and the universal-player prefix). `universal_player` also includes unavailable and disabled configs, since those players are created by the `PlayerController` rather than discovered |
+| `sync_group`, `universal_group`, `universal_player` | No network discovery. `discover_players()` reads stored player configs and re-registers the virtual players by id prefix (`syncgroup_`, `ugp_`, and `up` — constant names `SGP_PREFIX` / `UGP_PREFIX` / `UNIVERSAL_PLAYER_PREFIX`). `universal_player` also includes unavailable and disabled configs, since those players are created by the `PlayerController` rather than discovered |
 
 Two providers that look like they belong here but don't: `ariacast_receiver` is a **plugin** with no network discovery of its own (it runs a protocol server that senders connect *to*), and `teddycloud` is a **music** provider. Neither registers players.
 
