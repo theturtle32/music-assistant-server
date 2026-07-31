@@ -12,7 +12,7 @@ This document owns the model. [12-webserver-api.md](12-webserver-api.md) owns th
 
 ### `Scope`
 
-`Scope` is a `StrEnum` in `music_assistant_models.auth`. Twenty scopes plus two special members:
+`Scope` is a `StrEnum` in `music_assistant_models.auth`. Nineteen real scopes plus two special members — 21 in total:
 
 | Scope | Value |
 |---|---|
@@ -342,8 +342,6 @@ Keeping this separate from `library.db` means a library restore or wipe does not
 | Ingress header trust | Socket-level verification of the ingress bind address and port before any header is read |
 | HA system user | Rejected on the regular webserver; usable only over ingress |
 | Redirect abuse | Three-way `trusted`/`external`/`blocked` classification before a token is appended to any `return_url` |
-
-One consistency note: the in-tree [`controllers/webserver/README.md`](../../music_assistant/controllers/webserver/README.md) still documents the removed `auth/oauth_status` remote-client polling flow, and its STUN server list has drifted from the code. Prefer this document and the source for both.
 
 ---
 

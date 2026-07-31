@@ -358,15 +358,18 @@ The controller interacts with the `ConfigController` for player settings at seve
 - **Startup repair**: `_repair_protocol_parent_links` clears `protocol_parent_id` values pointing at configs that no longer exist, and heals a stale `player_type` left behind by an aborted registration (a valid parent link proves the player is a protocol child).
 - **Weekly maintenance**: `_fix_group_member_configs` rewrites sync-group `CONF_GROUP_MEMBERS` entries that reference a protocol player ID instead of its visible parent, using the cached protocol-parent mapping.
 
-Player config values are organized into five categories (see [02-configuration.md](02-configuration.md)):
+Player config values are grouped into UI categories, which [02-configuration.md](02-configuration.md#playerconfig) owns the full inventory of:
 
 | Category | Contents |
 |---|---|
-| `"generic"` | Icon, visibility, enabled state |
-| `"playback"` | Volume normalization, crossfade |
-| `"protocol_generic"` | Codec, sample rates, flow mode, HTTP profile |
-| `"announcements"` | TTS pre-announce, volume strategy, chime URL |
-| `"player_controls"` | Power/volume/mute control sources |
+| `"generic"` | Icon, visibility, expose-to-HA, play-media preference |
+| `"announcements"` | TTS pre-announce, chime URL, announce volume strategy and limits |
+| `"player_controls"` | Power/volume/mute control sources, min/max volume, auto-play |
+| `"protocol_generic"` | Codec, sample rates, flow mode, output channels, HTTP profile, ICY metadata |
+| `"protocol_general"` | The preferred-output-protocol selector |
+| `"protocol_{domain}"` | One per linked output protocol |
+
+There is no player-level `"playback"` category any more: volume normalization and crossfade are now per-queue settings with global defaults, and the normalization *target* is a global `streams` setting. See [09-player-queues.md](09-player-queues.md#per-queue-configuration).
 
 ## Event Signaling
 
