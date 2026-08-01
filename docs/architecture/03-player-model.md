@@ -149,7 +149,7 @@ When a jump is detected, `update_state()` calls `mass.players.on_player_position
 
 ### `MEDIA_IDENTITY_KEYS`
 
-Changes to any of these fingerprint keys fire the debounced `_on_player_media_updated()` callback (1 second, deduplicated per player via `task_id`), which providers override to push now-playing information to a device display:
+Changes to any of these fingerprint keys fire the debounced `_on_player_media_updated()` callback (1 second, deduplicated per player via `task_id`), which providers override to push now-playing information to a device display. The set is defined in `models/player.py` alongside `Player`, not in the shared `constants.py`:
 
 ```python
 MEDIA_IDENTITY_KEYS = frozenset({

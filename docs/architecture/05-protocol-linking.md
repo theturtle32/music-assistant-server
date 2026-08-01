@@ -52,6 +52,8 @@ If no strong identifier matched, falls back to IP address with conservative rule
 
 Players from the **same protocol domain** (same `provider.domain`) are never matched as belonging to the same device — even with identical identifiers. This is enforced at the call sites, not inside `_identifiers_match`. It handles the case of multiple software instances (e.g. two Squeezelite clients, two Sendspin web players) running on the same host.
 
+The method's signature still carries a third `protocol_domain: str = ""` parameter, which several call sites pass but the body never reads — a leftover from when the exclusion was intended to live inside the method. It has no effect on matching.
+
 ### `player_id` as fallback device key
 
 Players without any identifiers (like some Sendspin clients) use `player_id` as the device key when creating Universal Players via `_get_device_key_from_players()` in the Universal Player provider. This is not identifier matching per se — it ensures these players still get a consistent Universal Player wrapper.

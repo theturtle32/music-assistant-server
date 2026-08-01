@@ -54,7 +54,7 @@ Here is how the four in-tree consumers differ, which is the clearest illustratio
 
 | Consumer | Discovery | Timeout | Retry / fallback | On total failure |
 |---|---|---|---|---|
-| **AI Radio** text | `priority=(PLUGIN,)`, take `[0]` | none | none | Raises `MusicAssistantError` naming the plugin; the whole station run fails |
+| **AI Radio** text | `priority=(PLUGIN,)`, take `[0]` | none | none | Raises `MusicAssistantError` naming the plugin; the whole station run fails. A `NotConnected` error is rewritten into an actionable "reconnect the provider" message rather than surfacing the raw exception |
 | **AI Radio** TTS | `priority=(PLUGIN,)`, take `[0]` | none | none | Raises; the run fails |
 | **Music Quiz** distractors | all AI plugins sorted by `instance_id`, take `[0]` | 30 s | none | Returns `None`; the round silently falls back to non-AI distractors |
 | **Music Quiz** trivia | all AI plugins sorted by `instance_id`, iterate | 30 s per attempt | 2 attempts per provider, then next provider | Raises a localized `InvalidDataError`; trivia is unavailable as a quiz type |

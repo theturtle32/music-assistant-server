@@ -156,7 +156,7 @@ The `"Live Inputs"` node named in `PluginProvider`'s docstrings and in `_demo_pl
 
 ### URI resolution
 
-`MusicController.get_item` special-cases `MediaType.AUDIO_SOURCE`: rather than looking in the library (an `AudioSource` is never library-backed and never favoritable), it fetches the owning provider's `get_audio_sources()` and returns the live item whose `item_id` matches, raising `MediaNotFoundError` otherwise. `get_item_by_uri` skips the library-existence check for `AUDIO_SOURCE` and `SOUND_EFFECT` for the same reason. Returning the live `MediaItem` is what lets `play_media` build a queue item through the completely standard path.
+`MusicController.get_item` special-cases `MediaType.AUDIO_SOURCE`: rather than looking in the library (an `AudioSource` is never library-backed and never favoritable), it fetches the owning provider's `get_audio_sources()` and returns the live item whose `item_id` matches, raising `MediaNotFoundError` otherwise. `get_item_by_uri` adds no check of its own — it parses the URI and delegates straight to `get_item`, which carries a parallel branch for `SOUND_EFFECT` that resolves live through `prov.get_sound_effect(item_id)` on a `MusicProvider` declaring `SOUND_EFFECTS`. Returning the live `MediaItem` is what lets `play_media` build a queue item through the completely standard path.
 
 ### Active source detection
 
