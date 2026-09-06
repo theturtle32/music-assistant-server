@@ -71,7 +71,7 @@ Even a clean EOF is discarded when fewer than `ANALYSIS_MIN_COMPLETENESS_RATIO =
 | `get_audio_analysis(item_id, provider_instance_id_or_domain, media_type, priority)` | Returns the merged `AudioAnalysisData` across providers. **`priority` is the important addition:** with `None`, all available providers' rows merge latest-write-wins; with a tuple of AA domains, *only* those domains are considered and the first-listed wins each per-field conflict. That is how the loudness path insists on the authoritative EBU R128 value rather than another provider's loudness proxy, and how beat consumers insist on `smart_fades`. Rows from providers that are not currently available are always skipped. |
 | `get_audio_analysis_version(...)` | The freshness gate consulted by `start_analysis`. |
 | `get_audio_analysis_count(aa_domain)` | Row count for a provider, used by coverage reporting. |
-| `set_track_loudness(item_id, provider, loudness, loudness_album, media_type)` | Side door for external loudness sources (file tags, ReplayGain). Persists under the builtin `loudness_analysis` domain so the runtime ebur128 provider will not re-analyze the track (#3727). Rejects non-finite values and anything at or below `LOUDNESS_MEASUREMENT_MIN_LUFS`. |
+| `set_track_loudness(item_id, provider, loudness, loudness_album, media_type)` | Side door for external loudness sources (file tags, ReplayGain, a streaming provider's own figure). Persists under the **virtual `provider_loudness` domain** (#6188), which at playback takes **precedence over** the builtin measurement — see below. Rejects non-finite values and anything at or below `LOUDNESS_MEASUREMENT_MIN_LUFS`. |
 | `record_analysis_failure(...)` / `clear_analysis_failure(...)` | Write and delete `DB_TABLE_AUDIO_ANALYSIS_FAILURES` rows (#4167). Both no-op when the provider does not resolve to a loaded music provider. |
 | `get_extra_data_for_album_tracks(...)` | Bulk read of `extra_data` across an album's tracks — used by AcoustID's album-level voting. |
 
@@ -137,7 +137,7 @@ result = await self._run_offloaded(self._compute_block, pcm)
 result, seconds = await self._run_offloaded_timed(self._compute_block, pcm)
 ```
 
-`_run_offloaded` acquires a semaphore permit, additionally takes the solo lock when `playback_active()`, and runs the callable on the controller's niced pool (falling back to `asyncio.to_thread` when no pool is configured). Two subtleties in its implementation are worth knowing because they are easy to get wrong in a reimplementation: the result is `await`ed under `asyncio.shield`, and the permit and lock are released from a done-callback on the future rather than in a `finally`. A cancelled awaiter cannot stop a running thread, so the slot must keep counting against the caps until the thread actually finishes. It also logs when an offload waited more than 0.5 s for a permit, which is the signal that analysis is queueing behind the caps rather than computing.
+`_run_offloaded` acquires a semaphore permit, additionally takes the solo lock when `playback_active()`, and runs the callable on the controller's niced pool (falling back to `asyncio.to_thread` when no pool is configured). Two subtleties in its implementation are worth knowing because they are easy to get wrong in a reimplementation: the result is awaited through `join_task` (`helpers/util.py`), and the permit and lock are released from a done-callback on the future rather than in a `finally`. A cancelled awaiter cannot stop a running thread, so the slot must keep counting against the caps until the thread actually finishes — and `join_task` is what makes cancelling the *waiter* leave the work running, so shared analysis still reaches every other waiter. It replaces a bare `asyncio.shield`, which held the task as the waiting coroutine's `fut_waiter`. It also logs when an offload waited more than 0.5 s for a permit, which is the signal that analysis is queueing behind the caps rather than computing.
 
 `_run_offloaded_timed` returns the callable's own execution seconds, never the time spent queued.
 
@@ -290,6 +290,14 @@ Located at [`music_assistant/providers/loudness_analysis/`](../../music_assistan
 - **Robustness**: ebur128 reports ~-70 LUFS on near-silence or cancelled streams. Values below `LOUDNESS_MEASUREMENT_MIN_LUFS` are discarded so the runtime normalizer does not see junk values from short-circuited streams (#3703).
 - **`post_analysis`**: writes ReplayGain tags onto local files when `streamdetails.path` is a writable filesystem path.
 
+### Provider loudness outranks the builtin measurement
+
+Loudness is the one analysis field with **two** possible sources, so it has an explicit precedence rule (#6188). `LOUDNESS_PROVIDER_PRIORITY = (PROVIDER_LOUDNESS_DOMAIN, LOUDNESS_ANALYSIS_DOMAIN)` puts the virtual `provider_loudness` domain — everything written through `set_track_loudness` — **ahead of** the server's own ebur128 result at read time.
+
+The reasoning is that a figure supplied by the provider describes the audio it is actually about to hand over, including any normalization it applied on its side, whereas MA's measurement may have been taken from a different encode of the same track. Note what this does *not* change: builtin ebur128 still runs and still stores its result, so the measurement remains available and comparable. It simply loses the tie. The `provider_loudness` domain is also always included in a merge, regardless of the requested priority, so a caller cannot accidentally read a track's loudness while excluding the authoritative source.
+
+[10-streaming-pipeline.md](10-streaming-pipeline.md#volume-normalization) covers the hydration step that performs the walk.
+
 ## Optional: Smart Fades
 
 Located at [`music_assistant/providers/smart_fades/`](../../music_assistant/providers/smart_fades/). `SmartFadesProvider(AudioAnalysisProvider)`, `analysis_version = 3`, `has_unloadable_models = True`, capped at 1800 s. Not builtin; requires `beat-this==1.1.0`, `nnAudio==0.3.4` and `kaldi-native-fbank==1.22.3` (#3636) — check the manifest for current pins.
@@ -351,7 +359,8 @@ One detail in the coverage query worth noting, since it is an easy SQL trap: pre
 | `StreamsAudio.get_queue_item_stream` | `loudness_integrated`, `loudness_album` | Just-in-time loudness hydration for measurement-based normalization — see [10-streaming-pipeline.md](10-streaming-pipeline.md#volume-normalization) |
 | `providers/sendspin/player.py` | `beats`, `downbeats` | Builds the Sendspin visualizer **beat schedule**: converts beat positions into `BeatTiming` entries anchored to the track's offset within the flow stream's audio timeline, re-pushing only on track change or seek. When analysis has not finished yet (the offline network takes ~5–10 s) it clears the schedule and starts a poller rather than caching a miss |
 | `providers/hue_entertainment/analyzer.py` | *the pushed schedule*, not the analysis | Renders palette colour cycling and brightness pulses between beats, consuming the `BeatTiming` schedule off the Sendspin visualizer protocol. See the [Hue Entertainment README](../../music_assistant/providers/hue_entertainment/README.md) |
-| `providers/sonic_similarity/` | `extra_data["clap_embedding"]` | Builds a `usearch` vector index over the embeddings (SQLite stays the source of truth) for similar-tracks and a discover row |
+| `providers/sonic_similarity/` | `extra_data["clap_embedding"]` | Builds a `usearch` vector index over the embeddings (SQLite stays the source of truth) for similar-tracks and a discover row. `index_io.py` writes the index via `index.save()` bytes, keeping usearch's GIL-holding file path off the event loop (#5351) |
+| `controllers/player_queues/smart_fade_ordering.py` | `bpm`, `key`, `mode`, `rms_energy` | Reorders already-selected tracks so consecutive pairs transition well, reading with `priority=(SMART_FADES_ANALYSIS_DOMAIN,)`. Strictly a **reader**: missing analysis is neutral and nothing is analyzed to place a track — see [09-player-queues.md](09-player-queues.md#smart-fades-aware-ordering) |
 
 The Sendspin/Hue split is worth stating explicitly because it is easy to assume the light provider does its own analysis: **Sendspin derives** the beat schedule from persisted rows and pushes it over the protocol; **Hue consumes** that schedule. Neither runs beat detection inline.
 

@@ -29,6 +29,7 @@ class PlayerQueuesController(QueueLoaderMixin, PlaybackTrackerMixin, StreamFeede
 | Service | `MediaResolver` (`media_resolver.py`) | Expand artists/albums/genres/playlists/podcasts/audiobooks/folders into concrete tracks, and resolve resume points |
 | Service | `Autoplay` (`autoplay.py`) | Resolve the per-queue autoplay mode and produce the library/playlist batches |
 | Service | `SmartShuffle` (`smart_shuffle.py`) | Recency-aware, well-spaced ordering of upcoming items |
+| Module | `smart_fade_ordering.py` | Stored-analysis-only transition ordering, shared by both queue modes |
 | Service | `ManagedPool` (`managed_pool.py`) | The bounded dynamic-source pool, topped up and recency-gated |
 
 The mixins extend `_PlayerQueuesBase` (`base.py`), which declares the shared surface — `_queue_data`, the four helper services, and the signatures of the controller operations the mixins call — so each mixin type-checks independently while the real implementations stay on `PlayerQueuesController`. The services are composition objects constructed with the controller and reach back through it (`self.queues.…`).
@@ -101,8 +102,8 @@ Verified field by field against `music-assistant-models` **1.1.207** (the versio
 | `items` | `int` | Item **count** — the items themselves live on `PlayerQueueData` |
 | `shuffle_enabled` | `bool` | Shuffle mode. Forced `True` and locked in dynamic mode |
 | `repeat_mode` | `RepeatMode` | `OFF`, `ONE`, `ALL`. Locked in dynamic mode |
-| `crossfade_enabled` | `bool` | Per-queue crossfade toggle (#4373) |
-| `autoplay_enabled` | `bool` | Keep playing past the end of the queue (#4404) |
+| `crossfade_enabled` | `bool` | Effective crossfade state — the global default unless the queue holds an override (#4373) |
+| `autoplay_enabled` | `bool` | Effective autoplay state: keep playing past the end of the queue (#4404) |
 | `overlay_enabled` | `bool` | Whether a looping sound effect is mixed into playback (#4674) |
 | `overlay_source` | `ItemMapping \| None` | The selected sound effect; retained while the overlay is disabled so it can be re-enabled with the same sound |
 | `overlay_volume` | `int` | Overlay loudness relative to the music, in percent (0–200; 100 = equally loud) |
@@ -231,6 +232,7 @@ Delayed and background work is dispatched through the hub's named timers and tas
 async def play_media(
     queue_id, media, option=None, radio_mode=False,
     start_item=None, sort_by=None, start_from_beginning=False,
+    shuffle=None,
 ) -> None
 ```
 
@@ -243,26 +245,39 @@ async def play_media(
 | `start_item` | Item to start a playlist/album/genre from, or the chapter/episode to start an audiobook/podcast at |
 | `sort_by` | Pins the queue order to whatever sort the user is viewing in the UI *before* `start_item` is applied (#3663), so "play from here" on an album sorted by year matches the user's view |
 | `start_from_beginning` | Start a podcast episode at 0, ignoring any saved resume position. The stored progress itself is left untouched (#4934) |
+| `shuffle` | Play this media shuffled, or explicitly in order (#5740, #5867). Applies only to the options that start playing immediately (`PLAY`/`REPLACE`), and never to a dynamic source, which is an always-on smart mix already. `None` follows the queue's own shuffle setting — which [ordered media](#enqueue-options) switches off. The **first item** of a batch decides for the whole batch |
 
 `_handle_play_media` also records the requesting user onto `PlayerQueueData.userid` (cleared for anonymous playback), which is what later scopes background refills, recency lookups and resume positions to the right user.
+
+**A request naming only an `AUDIO_SOURCE` is not an enqueue.** It is routed to `players.select_source` instead, because a live source now attaches to the *player* rather than occupying a queue item — see [04-player-controller.md](04-player-controller.md#live-audiosource-sessions).
 
 ### Enqueue Options
 
 | Option | Behaviour |
 |---|---|
-| `REPLACE` | Clear queue items without stopping the player (`skip_stop=True`, #3753), load the new items, start from index 0. The player keeps outputting audio through the brief gap; the new track takes over via the normal `play_index` flow |
+| `REPLACE` | **Swap** the queue's contents in a single step and start from index 0 — see below. The player keeps outputting audio through the brief gap; the new track takes over via the normal `play_index` flow |
 | `PLAY` | Insert after the current/buffered index and start playing there. On an idle or empty queue there is nothing to insert after, so it inserts at and starts from index 0 (#4514) |
 | `NEXT` | Insert after the current/buffered index without starting playback |
 | `REPLACE_NEXT` | Replace everything after the current/buffered index |
 | `ADD` | Append to the end. Under shuffle, mix into the not-yet-played tail instead — while playing, starting one slot *past* the buffered index, because the item right after it has already been enqueued to the player and prepared for crossfade (#4237) |
 
-`_enqueue_with_option` computes `insert_at_index` from `index_in_buffer` when the queue is playing or paused (falling back to `current_index`), never from `current_index` alone, so an already-buffered upcoming track is not swapped out from under the player.
+`_enqueue_with_option` computes the insert boundary as `committed_index(queue)` — `max(current_index, index_in_buffer)`, repeat-wrap aware — when the queue is playing or paused, falling back to `current_index` otherwise. Using the committed index rather than `current_index` alone is what keeps an already-buffered upcoming track from being swapped out from under the player. The same boundary governs `set_shuffle` and the move/delete guards.
 
 `NEXT`, `ADD` and `REPLACE_NEXT` stage items without starting playback. On a queue that has no current index yet, `_ensure_current_index()` points `current_index` at item 0 so the queue has something to display (#4519).
 
-**Pinning a user-picked start item.** When shuffle is on, a `start_item` must still be the track that actually plays; letting the shuffle move it to a random slot is exactly wrong (#5092). `_load_pinned_first()` therefore loads the first item at the target index unshuffled, then shuffles the rest of the batch behind it. Relatedly, `MediaResolver` is called with `keep_preceding_items=queue.shuffle_enabled`: under shuffle, "start here and play forward" has no meaning, so the tracks before the chosen one are rotated to the back rather than discarded.
+**`REPLACE` never empties the queue.** It is explicitly exempt from the mechanical `_clear`, because clearing and then loading would publish an empty queue to every subscriber in between. Instead it swaps the contents in one `load(keep_remaining=False, keep_played=False)`, having first:
 
-**Default enqueue option.** When `option is None`, the key is `default_enqueue_option_{media_type}` — except that `RADIO` and `AUDIO_SOURCE` share a single `default_enqueue_option_live_sources` key, since both are live infinite streams for which `REPLACE` is almost always right. If the resolved option is `REPLACE`, the queue is cleared at that point. `QueueOption` also has an `UNKNOWN` member that its `_missing_` hook returns for unrecognized values.
+1. released the audio the outgoing items hold via `_cleanup_queue_audio_data`, since the track about to start needs their source slot,
+2. dropped `index_in_buffer` (the player is still on the old index, and the swap would otherwise hand it a "next" item taken from the new list at that position — `play_index` sets the real one), and
+3. reset `queue.ended`, so `play_index` knows playback is starting over rather than honouring a stored resume position.
+
+An *ended* queue continued with `ADD` is the one case that still clears mechanically. Dynamic queues rebuild their pool from **index 0** on REPLACE, not from behind the playing track.
+
+**Pinning a user-picked start item.** When shuffle is on, a `start_item` must still be the track that actually plays; letting the shuffle move it to a random slot is exactly wrong (#5092). `_load_pinned_first()` handles this with a **single** `load(..., shuffle=True, pin_first=True)` — one call, specifically so the queue is never published holding just the pinned item before the rest arrives. Relatedly, `MediaResolver` is called with `keep_preceding_items=queue.shuffle_enabled`: under shuffle, "start here and play forward" has no meaning, so the tracks before the chosen one are rotated to the back rather than discarded.
+
+**Default enqueue option.** When `option is None`, the key is `default_enqueue_option_{media_type}` — except that `RADIO` and `AUDIO_SOURCE` share a single `default_enqueue_option_live_sources` key, since both are live infinite streams for which `REPLACE` is almost always right. `QueueOption` also has an `UNKNOWN` member that its `_missing_` hook returns for unrecognized values.
+
+**Ordered media disables shuffle.** `ORDERED_MEDIA_TYPES` (album, podcast, audiobook, radio) turns shuffle off for a `PLAY` or `REPLACE` of that type — an album or an audiobook has an intended order, and honouring a leftover shuffle flag would scramble it.
 
 ### Media Resolution
 
@@ -317,7 +332,7 @@ Gone with it: `_fill_radio_tracks`, the `radio_mode_base_tracks()` abstract prov
 - Only container types are exposed — `ARTIST`, `ALBUM`, `PLAYLIST`, `PODCAST`, `AUDIOBOOK` (`_WIRE_SOURCE_MEDIA_TYPES`). Individual items (single tracks, radio streams, podcast episodes, live audio sources) carry no grouping and only clutter the "playing from" display (#4542).
 - Duplicates are collapsed by URI, so a source added twice shows once (#4524) — while `source_items` keeps every occurrence, because multiplicity is what weights a source up in the pool.
 
-`queue.is_dynamic = has_dynamic_source(source_items)` — true when any source is a `Playlist` with `is_dynamic`. Everything downstream keys off that flag rather than inspecting the sources again.
+`queue.is_dynamic = has_dynamic_source(source_items)` — true when any source "supplies its own on-demand track feed", which `is_dynamic_source` defines as a `Playlist` **or `Radio`** carrying `is_dynamic` (#5628). Everything downstream keys off that flag rather than inspecting the sources again, and end-of-queue refills call `get_dynamic_source_tracks` on whichever source `find_dynamic_source` resolves — so a dynamic radio station refills exactly like a dynamic playlist.
 
 `store_sources` also calls `ManagedPool.retain()` with the surviving URIs, so a removed source releases its materialized tracks immediately instead of lingering until the queue is torn down.
 
@@ -447,6 +462,27 @@ A song that appears more than once in the batch is deliberately duplicated, so i
 
 Second, **within-tier interleave**: each distinct song's copies get independently randomized positions in evenly spaced strata (`interleave_groups`), so duplicates stay spread out without repeating the same sequence, and then the same bounded `space_by_artist` pass the managed pool uses separates directly adjacent same-artist items. Tiers are concatenated 0, 1, 2 — so recently heard music lands at the back.
 
+#### Smart Fades-aware ordering
+
+`arrange()` has a second path. When `is_smart_fade_ordering_enabled(queue)` holds — the queue has `smart_fades_active` *and* the per-queue `CONF_SMART_SHUFFLE_OPTIMIZE_SMART_FADES` is on (default **off**) — it delegates to `_arrange_for_smart_fades`, which reorders each tier so consecutive tracks *transition* well (#6144).
+
+The scope is deliberately narrow, and the module docstring is emphatic about it:
+
+- **It only reorders tracks MA has already selected.** Recency stays in charge: the tier assignment is identical, and the reordering happens strictly *within* each tier.
+- **It reads only stored analysis** — tempo, Camelot key and end-to-start RMS energy from the `smart_fades` analysis domain. Nothing is analyzed just to place a track in a queue, and missing analysis stays **neutral** rather than sinking a track.
+- **It does not rank candidates through the transition planner.** Smart Fades still decides the actual transition; this only improves the odds it gets a good pair to work with. The signals are ranking inputs, not filters, and close choices retain randomness so the order does not become deterministic.
+
+On this path `space_by_artist` is **not** run afterwards — artist spacing moves inside the local selector (`_prefer_different_artist`), because re-running the spacing pass would undo the ordering just computed. The seam matters too: each tier is ordered against the last item of the previous tier (`preceding_track`), and the first tier against the locked item before the batch, so the joins between tiers are considered rather than left to chance.
+
+Two entry points feed it:
+
+| Caller | What it orders |
+|---|---|
+| `SmartShuffle.arrange` | The movable future part of a fixed queue, one tier at a time |
+| `ManagedPool.fill` | One dynamic refill batch, seeded from the existing queue tail |
+
+`PlayerQueuesController.smart_fade_ordering_enabled` is the controller-level gate. The in-tree [player_queues README](../../music_assistant/controllers/player_queues/README.md#smart-shuffle-and-smart-fades-ordering) covers the user-facing behaviour in both queue modes.
+
 The windows come from the shared `RecencyEngine` and are **global-only** configuration (a per-queue override of a tuning window isn't meaningful). `0` disables a window:
 
 | Key | Default |
@@ -490,10 +526,10 @@ sequenceDiagram
     PQ->>PQ: apply resume position + stored playback speed
 
     loop Up to 5 attempts
-        PQ->>LI: _load_item(item, next_index, is_start=True)
+        PQ->>LI: _load_item(item, is_start=True)
         LI->>SA: get_stream_details(queue_item)
         SA-->>LI: StreamDetails
-        LI->>AB: get_buffer(wait_ready=True, reason="prepare")
+        LI->>AB: get_audio_buffer(item, reason="prepare")
         AB-->>LI: buffer ready
     end
 
@@ -520,17 +556,18 @@ Details worth knowing:
 
 1. Sets `BYPASS_THROTTLER` for this asyncio context, so playback takes priority over background provider requests.
 2. Raises `MediaNotFoundError` if the item is already marked unavailable.
-3. **Album-loudness context** — checks whether the previous or next queue item belongs to the same album, and passes `prefer_album_loudness` accordingly, so tracks from one album share a loudness measurement.
+3. **Album-loudness context** — `_plays_as_album_track(queue_item)` decides whether to pass `prefer_album_loudness`, so tracks played as part of an album share one loudness reference instead of each being levelled individually. The test is **not** whether the adjacent queue items happen to share an album (#5981, #5994); it is whether the user actually *enqueued that album*, checked against `enqueued_media_items`. Two refinements follow from that: the comparison matches on provider mappings rather than plain `item_id` equality, because the album the user pressed play on keeps the shape of the listing it was picked from while the queue's tracks carry the library album; and `RepeatMode.ONE` returns `False`, since a track repeating on its own is its own playback whatever seeded the queue around it.
 4. **Library enrichment** — for tracks, re-fetches the full library item (richer metadata, and possibly better provider qualities), restores the full album object, and puts the album image ahead of the track image. This is where the metadata that `build_queue_item` stripped at enqueue time comes back. YouTube Music is special-cased: its thumbnails are poor by default, so the full item is always fetched when the track has no image or comes from a `ytmusic*` provider.
 5. Calls `StreamsAudio.get_stream_details()` to resolve the audio source, format, loudness data and normalization mode.
 6. Backfills `queue_item.duration` from the stream details when it was unset (common for podcast episodes) and emits `signal_update(items_changed=True)` so the UI shows the real length (#3668).
-7. When `is_start=True`, pre-fills the buffer with `AudioBuffer.get_buffer(wait_ready=True, reason="prepare")` so playback can begin immediately — **except** for `MediaType.AUDIO_SOURCE` items, which are realtime/live and bypass the `AudioBuffer` entirely.
+7. When `is_start=True`, pre-fills the buffer with `mass.streams.audio.get_audio_buffer(queue_item, reason="prepare")` so playback can begin immediately — **except** for `MediaType.AUDIO_SOURCE` items, which are realtime/live and bypass the `AudioBuffer` entirely. The buffer request takes a `capacity_wait_timeout` and an `allow_provider_match` flag: while the owning provider has no free source-stream slot, a compatible provider mapping is reselected rather than failing outright.
+8. Applies a **probed duration** when the provider did not report one — a podcast or audiobook whose length only becomes known once the source is opened. `_apply_probed_duration` runs once after stream details resolve and again after the first chunk is in, and the value is persisted via `store_probed_duration` so a later play of the same item starts out knowing its length (#5178).
 
 ### Pre-Warming the Next Track
 
 Three mechanisms overlap here, and they are easy to conflate.
 
-**1. Buffer pre-warm, ~60 s before the end.** During PCM streaming in `get_queue_item_stream`, once the consumed position passes `duration - 60` the streams layer calls `player_queues.prepare_next_audio_buffer(queue_id)` — the method formerly known as the private `_prepare_next_audio_buffer()`, now public on `StreamFeederMixin`. It only fires for a next item that is a `TRACK`: live sources would open an upstream connection that sits idle and likely times out before the player consumes it. The method itself is defensive — it returns early for `AUDIO_SOURCE` items, when `next_item` still points at the currently playing track (a real race while player state lags), and when a valid buffer already exists — then spawns a task to resolve stream details if needed and call `get_buffer(wait_ready=True, reason="prepare_next")`.
+**1. Buffer pre-warm, ~60 s before the end.** During PCM streaming in `get_queue_item_stream`, once the consumed position passes `duration - 60` the streams layer calls `player_queues.prepare_next_audio_buffer(queue_id)` — the method formerly known as the private `_prepare_next_audio_buffer()`, now public on `StreamFeederMixin`. It only fires for a next item that is a `TRACK`: live sources would open an upstream connection that sits idle and likely times out before the player consumes it. The method itself is defensive — it returns early for `AUDIO_SOURCE` items, when `next_item` still points at the currently playing track (a real race while player state lags), and when a valid buffer already exists — then spawns a task to resolve stream details if needed and call `get_audio_buffer(..., reason="prepare_next", allow_provider_match=False)` — a *pre-warm* must not consume a provider slot by switching mappings, since the currently playing track's own needs come first.
 
 **2. Preloading stream details and enqueuing.** When the streams layer reports `track_loaded_in_buffer(queue_id, item_id)`, the controller records `index_in_buffer`, signals an update, schedules `_cleanup_stale_queue_buffers`, and calls `_preload_next_item`. That waits (one-second polls, `max(120, int(duration) + 10)` of them) for the buffered item to actually become the queue's `current_item` — this prevents preloading too early while the player is still working through a previously enqueued item — and bails out if the queue drains to no current item in the meantime. Then `load_next_queue_item()` resolves the next item's stream details and `_enqueue_next_item()` is scheduled. Radio items and items without a duration skip this path entirely.
 
@@ -549,7 +586,7 @@ Called by the streams layer when the current stream is about to end (crossfade t
 
 Flow mode concatenates the whole queue into one stream, which means the player's "track finished" signal doesn't exist. Two hooks cover it:
 
-- `queue_buffer_completed(queue_id)` is called when the flow stream has generated all its audio. It records the session on `flow_buffer_completed` and starts a task that polls up to 60 seconds for the player to go idle, aborts if the queue went inactive or the session rotated, gives the player a second to settle, and then — if new items have appeared in the queue meanwhile — resumes playback with `play_index`.
+- `queue_buffer_completed(queue_id, queue_exhausted)` is called when the flow stream has generated all its audio. It records the session on `flow_buffer_completed` (and `queue_exhausted` on `flow_queue_exhausted`, so the resume path can tell "ran out of items" from "stopped for another reason") and starts a task that polls up to 60 seconds for the player to go idle, aborts if the queue went inactive or the session rotated, gives the player a second to settle, and then — if new items have appeared in the queue meanwhile — resumes playback with `play_index`.
 - `flow_stream_finished(queue_id)` lets player providers ask whether the current session's flow stream is fully generated. It exists for devices that never report idle: a Cast group that underruns a LIVE flow stream keeps reporting "playing" forever (#4406). The Chromecast provider calls it directly.
 
 `_handle_end_of_queue` knows about this interaction: in flow mode, if a next item is already queued it returns without scheduling its own clear-or-resume, because `queue_buffer_completed`'s resume path owns that restart and racing the two could clear the queue or double-call `play_index`.
@@ -574,13 +611,15 @@ Flow mode concatenates the whole queue into one stream, which means the player's
 
 | Command | Notes |
 |---|---|
-| `set_crossfade` | Per-queue toggle; refreshes `smart_fades_active` and re-enqueues the next item so the new behaviour applies to the upcoming transition |
+| `set_crossfade` | Sets the queue's **override**; refreshes `smart_fades_active` and re-enqueues the next item so the new behaviour applies to the upcoming transition |
 | `set_overlay` | Configures the looping sound effect mixed into playback: `enabled`, `source` (must be a `SOUND_EFFECT` item), `volume` (0–200). An audible change while playing triggers a `resume()` so it is heard immediately rather than after the player's buffer drains (#4674) |
 | `set_playback_speed` | 0.5–3.0, audiobooks and podcast episodes only, and only for items with a known duration. Stored on the item's `extra_attributes` and mirrored onto `queue.playback_speed`; when playing, the wall-clock seconds already elapsed at the old speed are closed off first so `corrected_elapsed_time` doesn't retroactively rescale them |
 | `transfer_queue` | Moves a queue to another player. Dissolves the target's group or sync membership first (ungrouping the target itself for an ad-hoc sync member, so leadership doesn't transfer and recurse), captures the source's position from the live clock when playing and from `resume_pos` when not (#4115), copies settings/sources/enqueued items, then clears the source and loads the items on the target |
 | `save_as_playlist` | Creates a playlist from the queue's items whose media type is in `PLAYLIST_MEDIA_TYPES` |
 | `clear` | Clears items and sources, resets `is_dynamic`, drops the audio-processing state, and cleans up buffers |
-| `move_item` / `move_item_end` / `delete_item` | Reordering and removal; all refuse items at or before `index_in_buffer` |
+| `move_item` / `move_item_end` / `delete_item` | Reordering and removal; all refuse items at or before the committed index |
+
+**Autoplay and crossfade are overrides, not plain toggles** (#6130, #6187). Each has a global default (`CONF_AUTOPLAY_ENABLED`, default on; `CONF_CROSSFADE_ENABLED`, default off) plus an optional per-queue `autoplay_override` / `crossfade_override` on `PlayerQueueData`, which is `None` until the user changes it on that queue. The wire fields `autoplay_enabled` / `crossfade_enabled` report the **resolved** value. Storing the override separately is what lets a queue that has never been touched keep following a later change to the global default, instead of being pinned to whatever the default happened to be when the queue was created. Both overrides are persisted by `to_cache()` alongside `credited_albums`.
 
 ## Player-to-Queue Reconciliation
 
@@ -649,7 +688,7 @@ Filters applied before reporting: items with no media item, items whose stream e
 Two extras layered on top:
 
 - **User-initiated plays.** `_is_user_initiated_play` checks whether the played item is in `enqueued_media_items`, so an explicitly chosen track is recorded differently from one the queue supplied (#4260).
-- **Album credit.** When a track from an explicitly enqueued album finishes, `_enqueued_album_for_track` credits the album — but only on the first track of a contiguous run of its tracks, so one album play counts once. `_mark_album_played` skips artists already credited via the track itself (#4149).
+- **Album credit.** When a track from an explicitly enqueued album finishes, `_claim_enqueued_album_credit` credits the album once per enqueue (#5991). The claim is recorded in the persisted `credited_albums` set on `PlayerQueueData`, so the credit goes to the **first of that album's tracks to complete** rather than to a positionally-first track — which means one album play counts once *however its tracks ended up ordered*, including under shuffle where a "contiguous run" does not exist. A second call for the same enqueue returns `None`. Matching is on provider mappings, since the album the user pressed play on keeps the shape of the listing it came from while the queue's tracks carry the library album, and the **most recent** enqueue wins because that is the one whose credit was just armed. `_mark_album_played` skips artists already credited via the track itself (#4149).
 
 Finally an `EventType.MEDIA_ITEM_PLAYED` event carries a `MediaItemPlaybackProgressReport`: URI, media type, name, version, artist(s) and their MBIDs, album/album-artist and MBIDs, image URL, duration, `seconds_played`, `fully_played`, `is_playing`, `userid` and `player_id`. This is what drives scrobbling (Last.fm, ListenBrainz) and playlog updates.
 
@@ -770,6 +809,7 @@ When `active_source` is some other id (a plugin source such as Spotify Connect, 
 | [`controllers/player_queues/managed_pool.py`](../../music_assistant/controllers/player_queues/managed_pool.py) | `ManagedPool` — bounded dynamic-source pool, weighting, recency gating |
 | [`controllers/player_queues/autoplay.py`](../../music_assistant/controllers/player_queues/autoplay.py) | `Autoplay` / `AutoplayMode` — refill strategies |
 | [`controllers/player_queues/smart_shuffle.py`](../../music_assistant/controllers/player_queues/smart_shuffle.py) | `SmartShuffle` — recency tiers and artist spacing |
+| [`controllers/player_queues/smart_fade_ordering.py`](../../music_assistant/controllers/player_queues/smart_fade_ordering.py) | `order_queue_items` / `order_tracks` — tempo, Camelot key and edge-energy ordering from stored analysis |
 | [`controllers/player_queues/media_resolver.py`](../../music_assistant/controllers/player_queues/media_resolver.py) | `MediaResolver` — media items → concrete tracks |
 | [`controllers/player_queues/config.py`](../../music_assistant/controllers/player_queues/config.py) | Global and per-queue `ConfigEntry` schemas |
 | [`controllers/player_queues/constants.py`](../../music_assistant/controllers/player_queues/constants.py) | Config keys, pool sizing, cache categories, `PLAYBACK_START_TIMEOUT`, `CACHE_FORMAT_VERSION` |
