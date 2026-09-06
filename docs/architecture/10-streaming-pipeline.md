@@ -17,7 +17,7 @@ The [Streams Controller README](../../music_assistant/controllers/streams/README
 ## Pipeline Overview
 
 ```mermaid
-graph LR
+graph TD
     subgraph "Source"
         MP[Music Provider<br/>get_audio_stream]
         HTTP[HTTP / File URL]
