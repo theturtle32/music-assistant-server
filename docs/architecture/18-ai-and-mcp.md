@@ -70,7 +70,7 @@ The contracts are deliberately thin. `ai_query` takes **one string and returns o
 
 `mass.get_providers_supporting_feature(feature, priority=...)` returns every **available** provider declaring the feature, grouped into tiers by provider type in the order given by `priority` (default `MUSIC`, `METADATA`, `PLUGIN`) and sorted within each tier by the provider's own `priority` attribute. Provider types omitted from the tuple are excluded entirely.
 
-Consumers no longer call it directly for AI or TTS: `_collect_engines` in `plugin_engines.py` does it once, gathers each plugin's engines, and returns them in a stable order. Stability matters because "adopt the first available engine" is the auto-selection rule, and it must resolve to the same engine across restarts.
+Consumers do not call it directly for AI or TTS: `_collect_engines` in `plugin_engines.py` does it once, gathers each plugin's engines, and returns them in a stable order. Stability matters because "adopt the first available engine" is the auto-selection rule, and it must resolve to the same engine across restarts.
 
 ### What a consumer can and cannot assume
 
@@ -121,7 +121,7 @@ Any failed check raises, and the caller moves to the next attempt or next provid
 
 ## Backends
 
-Three in-tree plugins answer the AI hooks. `hass` was the first and is still the reference — it is simultaneously a bridge (players, entity controls, automations) and an AI/TTS provider — but it is **no longer the only one**:
+Three in-tree plugins answer the AI hooks. `hass` is the reference implementation — it is simultaneously a bridge (players, entity controls, automations) and an AI/TTS provider — but it is **no longer the only one**:
 
 | Plugin | Declares | Engines |
 |---|---|---|
@@ -385,7 +385,7 @@ Rebuild safety is handled at both ends: `start` rolls back through `stop` on any
 
 ## `ProviderFeature.TTS` and announcements
 
-These used to be entirely separate paths — the TTS hook produced AI Radio queue items, while announcements only ever accepted a pre-synthesized URL. **They are now joined** (#5621, #5630): `players.play_announcement` accepts a `message` and speaks it, so MA no longer depends on something upstream having synthesized the audio first.
+These two share a path (#5621, #5630): `players.play_announcement` accepts a `message` and speaks it, so MA does not depend on something upstream having synthesized the audio first.
 
 `play_announcement(player_id, url=None, ..., message=None, tts_engine=None, language=None)` takes a URL *or* text, never both. Given text it resolves an engine — the caller's `tts_engine`, else the one configured on the player controller via `select_core_tts_engine` — renders the clip up front, and proceeds exactly as it would with a supplied URL. Rendering before the group fan-out is what stops each member of a group from re-speaking the same sentence. The full interrupt-and-restore flow is in [04-player-controller.md](04-player-controller.md#announcement-handling).
 

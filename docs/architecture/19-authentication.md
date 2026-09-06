@@ -288,7 +288,7 @@ The token is delivered by redirecting to a `return_url` with the token appended 
 
 `build_code_redirect_url` then appends the code **before any hash fragment**, so it lands in the query string where the client can read it rather than being swallowed by the fragment.
 
-The `auth/oauth_status` polling flow that older revisions of the in-tree README describe — a pending OAuth session for remote clients, driven by `for_remote_client=true` and a session id — **no longer exists**. #5030 retired the `AUTH_SESSION` popup mechanism and deleted `music_assistant/helpers/auth.py` along with it. That file was `AuthenticationHelper` for provider OAuth popups, not webserver auth; the two are unrelated despite the name.
+There is **no polling flow and no pending-session concept** here: a provider OAuth popup and webserver authentication are unrelated mechanisms that happen to share the word "auth". The `AUTH_SESSION` event member still exists in the enum but nothing emits it — see [01-event-system.md](01-event-system.md#members-present-but-never-emitted).
 
 ### Provider setup-flow OAuth
 

@@ -61,7 +61,7 @@ The session key is `streamdetails.uri`, so a second queue playing the same track
 
 Even a clean EOF is discarded when fewer than `ANALYSIS_MIN_COMPLETENESS_RATIO = 0.9` of the expected duration was received (#4738), so a source that died mid-track without raising cannot persist truncated analysis as if it were complete. That check is skipped when the duration is unknown (radio).
 
-`_distribute_chunk(session_key, chunk, max_interval=CHUNK_HANG_GUARD_SECONDS)` fans each chunk out to the accepting providers. `CHUNK_HANG_GUARD_SECONDS = 120.0` replaced the old `CHUNK_PROCESS_TIMEOUT_SECONDS = 1.0`, and the direction of the change is informative: with the queue-and-backpressure model gone there is nothing to protect the audio source *from*, so the guard is now only about detecting a genuinely stuck provider — and it has to be generous, because analysis runs one offload at a time while a player streams, so a chunk can legitimately wait a long while behind other work before it computes. A provider that exceeds it is evicted from the session.
+`_distribute_chunk(session_key, chunk, max_interval=CHUNK_HANG_GUARD_SECONDS)` fans each chunk out to the accepting providers. The ceiling is `CHUNK_HANG_GUARD_SECONDS = 120.0`, and its generosity is deliberate: it exists only to detect a genuinely **stuck** provider, not to protect the audio source from a slow one. Analysis runs one offload at a time while a player streams, so a chunk can legitimately wait a long while behind other work before it computes. A provider that exceeds the guard is evicted from the session.
 
 ### Persistence helpers
 
@@ -75,7 +75,7 @@ Even a clean EOF is discarded when fewer than `ANALYSIS_MIN_COMPLETENESS_RATIO =
 | `record_analysis_failure(...)` / `clear_analysis_failure(...)` | Write and delete `DB_TABLE_AUDIO_ANALYSIS_FAILURES` rows (#4167). Both no-op when the provider does not resolve to a loaded music provider. |
 | `get_extra_data_for_album_tracks(...)` | Bulk read of `extra_data` across an album's tracks — used by AcoustID's album-level voting. |
 
-**Corrupt-row recovery** (#4721). A row whose `analysis_data` JSON no longer deserializes — a model field changed type, say — used to be able to break reads. `_parse_row()` now catches the failure, logs only the error *type* and field name (the exception message can embed the entire 1800-bin payload), and collects the row id; the caller then **deletes** the unparsable rows so the track is simply re-analyzed. Provider keys are stored as `provider.domain` for streaming providers and `provider.instance_id` otherwise, so a re-added instance of a local filesystem provider does not orphan its rows.
+**Corrupt-row recovery** (#4721). A row whose `analysis_data` JSON fails to deserialize — a model field changed type, say — would otherwise break reads. `_parse_row()` catches the failure, logs only the error *type* and field name (the exception message can embed the entire 1800-bin payload), and collects the row id; the caller then **deletes** the unparsable rows so the track is simply re-analyzed. Provider keys are stored as `provider.domain` for streaming providers and `provider.instance_id` otherwise, so a re-added instance of a local filesystem provider does not orphan its rows.
 
 ## `AudioAnalysisProvider`
 

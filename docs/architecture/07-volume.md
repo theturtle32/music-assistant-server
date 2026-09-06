@@ -48,7 +48,7 @@ The option is offered for `CONF_VOLUME_CONTROL` and `CONF_MUTE_CONTROL` only whe
 
 ### A muted player stays muted
 
-Setting the volume on a muted player used to unmute it first. That is **no longer the case** (#5706): mute and volume are independent, and only an explicit unmute lifts a mute. Adjusting the volume of a muted player therefore changes the level it *will* play at once it is unmuted, and produces no sound in the meantime.
+Mute and volume are **independent** (#5706): only an explicit unmute lifts a mute, and setting the volume never does. Adjusting the volume of a muted player therefore changes the level it *will* play at once it is unmuted, and produces no sound in the meantime.
 
 The one exception is **fake** mute, because it is simulated with the volume itself — there is no separate mute state to leave alone. `_stays_silent_on_volume_change(player)` is true only when all three hold:
 
@@ -86,7 +86,7 @@ Forwarding the logical value instead would silently discard the configured range
 
 ## AudioSource Volume Callbacks
 
-Live inputs from plugin providers — a Spotify Connect session, an AirPlay receiver, a Yandex Ynison session — are first-class `AudioSource` media items played through the normal queue since #3938. There is no longer a `PluginSource` object with an `in_use_by` field and an `on_volume` method. Volume notification now goes to the **provider**:
+Live inputs from plugin providers — a Spotify Connect session, an AirPlay receiver, a Yandex Ynison session — are `AudioSource` media items, either enqueued as a queue item or attached to a player as a [live session](04-player-controller.md#live-audiosource-sessions). Volume notification goes to the **provider**, not to a per-source callback:
 
 ```python
 async def on_volume_change(self, source_id: str, volume: int) -> None:

@@ -2,19 +2,9 @@
 
 Plugin providers are the "everything else" provider type: they bridge external audio sources and services into Music Assistant without being a music library, a speaker, or a metadata lookup. A plugin can inject live audio from an external app (Spotify Connect, AirPlay, AriaCast, VBAN, Yandex Music), report plays to a scrobbling service, expose MA players onto a foreign control surface (Plex, Yandex Alice), host a guest experience (Party, Music Quiz), generate playlists and recommendations, or add a whole server surface such as an MCP endpoint.
 
-The abstraction at the centre of the audio half of the system is the **`AudioSource` media item**. Before #3938 a receiver plugin returned a `PluginSource` — a `PlayerSource` subclass carrying stream configuration *and* a bag of playback-control callbacks — and the player controller special-cased it throughout the source list, active-source resolution, and command routing. That model is gone. An `AudioSource` is now an ordinary `MediaItem` (`MediaType.AUDIO_SOURCE`, defined in `music_assistant_models`) that is browsed, enqueued, and streamed through the same paths as a radio station. Control travels back to the plugin through provider-level hooks on `PluginProvider` rather than per-source callbacks.
+The abstraction at the centre of the audio half of the system is the **`AudioSource` media item**: an ordinary `MediaItem` (`MediaType.AUDIO_SOURCE`, defined in `music_assistant_models`) that is browsed, enqueued, and streamed through the same paths as a radio station. Control travels back to the plugin through provider-level hooks on `PluginProvider` rather than through callbacks attached to the source, and ownership is player-scoped — the core-side record is the [live session](04-player-controller.md#live-audiosource-sessions).
 
-| Old model (pre-#3938) | Current model |
-|---|---|
-| `get_source() -> PluginSource` | `get_audio_sources() -> list[AudioSource]` |
-| Callback fields on the source: `on_play`, `on_pause`, `on_next`, `on_previous`, `on_seek`, `on_volume`, `on_select` | `on_source_control(source_id, action, value=None)` for PLAY / PAUSE / NEXT / PREVIOUS / SEEK, plus a separate `on_volume_change(source_id, volume)` |
-| Ownership tracked centrally in `PluginSource.in_use_by` | Ownership is player-scoped and provider-held, claimed in `on_source_selected(...)` and released in `on_source_unselected(...)`; the core-side record is the [live session](04-player-controller.md#live-audiosource-sessions) |
-| `get_audio_stream(player_id)` | `get_stream_details(source_id, queue_id)` then `get_audio_stream(streamdetails, seek_position=0)` |
-| Live metadata on `PluginSource.metadata` | `StreamMetadata` on the live session, pushed via `mass.players.update_source_metadata(...)` |
-| Selected with `select_source(plugin_instance_id)` | Played with `player_queues.play_media(audio_source_uri)`; the old call survives as a compatibility shim |
-| `get_tts_message()`, `ai_query()` | **unchanged** — still optional hooks gated by `ProviderFeature.TTS` / `AI_QUERY` |
-
-The `PluginSource`, `get_plugin_sources()`, `get_plugin_source()`, and `_handle_select_plugin_source()` symbols no longer exist anywhere in `music_assistant/`, and the `players/plugin_sources` / `players/plugin_source` API commands are gone with them.
+One entry point is kept alive purely for compatibility: `select_source(plugin_instance_id)`, which still works for a provider exposing exactly one source. See [Legacy `select_source` compatibility](#legacy-select_source-compatibility).
 
 ---
 
@@ -36,11 +26,11 @@ There are 25 production plugin providers (`"type": "plugin"` in `manifest.json`)
 Recent additions worth placing:
 
 - **Sendspin Source** (`sendspin_source`, #5658) — builtin, `depends_on: sendspin`. Exposes the **line-in** of a Sendspin client that supports the `source@v1` role (a turntable, a microphone, an aux input) as an `AudioSource`, one per connected client.
-- **Library Recommendations** (`recommendations`, #3890) — builtin and `allow_disable: false`. Supplies the library recommendation rows that used to be built inside the music controller; see [08-media-library.md](08-media-library.md#library-rows).
+- **Library Recommendations** (`recommendations`, #3890) — builtin and `allow_disable: false`. Supplies the library recommendation rows; see [08-media-library.md](08-media-library.md#library-rows).
 - **Milkdrop Visualizer** (`milkdrop_visualizer`, #5511) — experimental, with an empty `SUPPORTED_FEATURES`. Taps decoded playback PCM and relays waveform, beat and colour data over a WebSocket at `/milkdrop_visualizer`.
 - **OpenAI-compatible** and **OpenAI TTS** — see [18-ai-and-mcp.md](18-ai-and-mcp.md#backends).
 
-Four easy misclassifications, all of which are **not** plugins: `teddycloud` is a music provider, `msx_bridge` and `snapcast` are player providers, and `_demo_sendspin_clients` (#6085, fake pairing devices for development) is a *player* provider despite the name. The `dashie_kiosk` provider referenced by older revisions of these docs was deleted upstream (#4192) and was a player provider besides.
+Four easy misclassifications, all of which are **not** plugins: `teddycloud` is a music provider, `msx_bridge` and `snapcast` are player providers, and `_demo_sendspin_clients` (#6085, fake pairing devices for development) is a *player* provider despite the name.
 
 `plex_connect` is a bridge, not a receiver: it declares no `ProviderFeature`s at all and never touches audio. It makes an MA player appear as a controllable device in Plexamp and the Plex web player, then drives that player from Plex's remote-control and timeline protocols.
 
@@ -84,7 +74,7 @@ The old `PlayerSource.passive` flag split into `can_initiate` / `allow_external_
 
 `can_initiate=False` is not a soft hint. The browse tree filters on it, and the owning plugin's `get_stream_details` is expected to raise `AudioError` when it cannot actually acquire the upstream producer — which is exactly what AirPlay Receiver and AriaCast do when no external session is connected.
 
-**Spotify Connect is now `can_initiate=True`.** Starting it from MA resumes the last known Spotify context, claiming active-device status; with no prior context it raises a localized error pointing the user at the app. It is joined by VBAN Receiver and `sendspin_source`, so "receivers are passive" is no longer the general rule it once was. `can_shuffle` / `can_repeat` are derived from the backend's `supports_queue_control` rather than hardcoded.
+**Receivers are not uniformly passive.** Spotify Connect, VBAN Receiver and `sendspin_source` all set `can_initiate=True`. Starting Spotify Connect from MA resumes the last known Spotify context, claiming active-device status; with no prior context it raises a localized error pointing the user at the app. Its `can_shuffle` / `can_repeat` are derived from the backend's `supports_queue_control` rather than hardcoded.
 
 ### The capability flags are the routing gate
 
@@ -102,7 +92,7 @@ The old `PlayerSource.passive` flag split into `can_initiate` / `allow_external_
 |---|---|---|
 | `get_audio_sources() -> list[AudioSource]` | `AUDIO_SOURCE` | Called on demand, never cached. Return `[]` when the plugin currently has nothing to offer (hardware offline) |
 | `get_player_audio_sources(player_id) -> list[AudioSource] \| None` | `AUDIO_SOURCE` | The sources this plugin has bound to **one specific player**. `None` means the plugin is not player-bound at all, which is what distinguishes the two models |
-| `get_stream_details(item_id, media_type) -> StreamDetails` | `AUDIO_SOURCE` | **MUST be side-effect-free** — see below. Note the signature is the same `(item_id, media_type)` pair a `MusicProvider` uses, not the old `(source_id, queue_id)` |
+| `get_stream_details(item_id, media_type) -> StreamDetails` | `AUDIO_SOURCE` | **MUST be side-effect-free** — see below. The signature is the same `(item_id, media_type)` pair a `MusicProvider` uses |
 | `get_audio_stream(streamdetails, seek_position=0)` | called when `stream_type == StreamType.CUSTOM` | Async generator of raw PCM in the format declared by `streamdetails.audio_format`. `seek_position` is ignored for live sources |
 | `on_source_control(source_id, action, value=None)` | `AUDIO_SOURCE` | Transport commands. `action` is a `SourceControl` (`PLAY`, `PAUSE`, `NEXT`, `PREVIOUS`, `SEEK`, `SHUFFLE`, `REPEAT`, `UNKNOWN`); `value` is a `SourceControlValue` — the seek position or volume for `SEEK`/`VOLUME`, the enabled state for `SHUFFLE`, a `RepeatMode` for `REPEAT`, `None` for plain transport |
 | `on_source_selected(source_id, player_id, owner_player_id, stream_session_id)` | `AUDIO_SOURCE` | Non-abstract, no-op by default. Where exclusive sources claim ownership |
@@ -195,11 +185,11 @@ return media_item, provider
 
 It returns the `(AudioSource, PluginProvider)` pair, or `None`. Two guards are deliberate belt-and-suspenders: an `isinstance(media_item, AudioSource)` check rather than a bare `media_type` comparison (so a mutated or wrongly constructed item cannot slip through and crash a downstream hook), and a re-check that the provider still declares `ProviderFeature.AUDIO_SOURCE` (so a feature flag flipped off at runtime by a provider reload does not leave `on_source_control` raising `NotImplementedError` out of `cmd_play`).
 
-`Player.__final_active_source` has correspondingly lost its plugin branch. It now resolves: group/sync parent's active source → protocol parent's active source → `__active_mass_source` (unless the player reports a known-external source such as a TV or line-in input) → the player's own reported source → `__active_mass_source` or the player's own queue id. Its docstring still lists "plugin source active: return the active plugin source" as a case; the code does not, and `AudioSource` activity is a queue property now. See [03-player-model.md](03-player-model.md#resolution-chains).
+`Player.__final_active_source` has no plugin-specific branch. It resolves: group/sync parent's active source → protocol parent's active source → `__active_mass_source` (unless the player reports a known-external source such as a TV or line-in input) → the player's own reported source → `__active_mass_source` or the player's own queue id. Note the docstring is misleading here: it lists "plugin source active: return the active plugin source" as a case, which the code does not implement — a live source surfaces through the player's [session](04-player-controller.md#live-audiosource-sessions) instead. See [03-player-model.md](03-player-model.md#resolution-chains).
 
 ### Legacy `select_source` compatibility
 
-The old API used the plugin's `instance_id` directly as the source string. `_handle_select_source` keeps that working, but only for the 1:1 case the old model implied:
+`select_source` accepts a plugin's `instance_id` directly as the source string, rather than an `AudioSource` URI. `_handle_select_source` keeps that working, but only where it is unambiguous:
 
 - if `source` names a `PlayerQueue`, set it as the active MA source (unchanged)
 - else if `source` resolves to a `PluginProvider`: require `ProviderFeature.AUDIO_SOURCE`, then call `get_audio_sources()`. Exactly one source → translate to `player_queues.play_media(player_id, source.uri)`. More than one → raise `UnsupportedFeaturedException` telling the caller to use an explicit `AudioSource` URI
@@ -269,9 +259,9 @@ Each handler resolves the active `AudioSource`, checks the relevant capability f
 
 ### Current media and the upstream clock
 
-The `PluginSource.metadata` path is gone; live track info now rides on the active queue item's `StreamDetails.stream_metadata`, which is the same field ICY radio metadata uses. `Player.__final_current_media` picks it up generically: whenever the current queue item has `streamdetails.stream_metadata`, the title, artist, album, image, duration, and elapsed time come from there in preference to the queue item's own values. No `AudioSource`-specific branch is needed.
+Live track info rides on `StreamMetadata`, the same field ICY radio metadata uses. A plugin pushes it with `mass.players.update_source_metadata(...)` and it lands on the player's [live session](04-player-controller.md#live-audiosource-sessions); for a queue-item source it arrives via `StreamDetails.stream_metadata`. `Player.__final_current_media` picks it up generically — title, artist, album, image, duration and elapsed time come from there in preference to the queue item's own values — so no `AudioSource`-specific branch is needed.
 
-The insight from the original doc still holds, with a new mechanism. `Player.__final_playback_state` overrides the resolved `elapsed_time` when the active queue item is an `AudioSource` whose `stream_metadata.elapsed_time` is set — because the protocol player's (or the player's own) position tracks **bytes consumed**, which is the wrong clock for a live source: it loses upstream seeks and upstream pause/resume on the queue's `corrected_elapsed_time`, which both the player queues controller and several player providers consume. A `GROUP` player is checked twice, once against `__final_active_source` and once against its own `player_id`, because it outputs the `AudioSource` from its own queue, which `__final_active_source` may not resolve to. See [03-player-model.md](03-player-model.md#the-upstream-clock-override).
+`Player.__final_playback_state` additionally overrides the resolved `elapsed_time` from the session's `stream_metadata`, because the protocol player's (or the player's own) position tracks **bytes consumed**, which is the wrong clock for a live source: it loses upstream seeks and upstream pause/resume on the queue's `corrected_elapsed_time`, which both the player queues controller and several player providers consume. The override is gated on the player owning the source rather than merely hearing it. See [03-player-model.md](03-player-model.md#the-upstream-clock-override).
 
 `mass.players.update_source_metadata(player_id, source_id, provider_instance_id, stream_metadata)` is the push channel, and it is defensive on purpose. The update is dropped silently unless the source playing on that player is owned by that exact provider instance with that exact `item_id` — plugins fire these from arbitrary threads (the AirPlay metadata reader, the Spotify websocket handler, the AriaCast websocket reader), and the GIL makes each attribute write atomic but not the read-then-write sequence.
 
@@ -327,15 +317,16 @@ Volume goes to the player the source actually plays on, exactly once. `_handle_c
 
 ### Stream URLs
 
-The dedicated `/pluginsource/{source_id}/{player_id}.{fmt}` endpoint is gone. An `AudioSource` is a queue item, so it is served from the ordinary per-item stream URL:
+A live source reaches a player over one of two routes, depending on how it is bound. A source the user **enqueued** is an ordinary queue item and uses the per-item URL; a source attached **directly to a player** is not a queue item at all and uses `/source/`, keyed by the owning player:
 
 ```
 http://<host>:8097/single/{session_id}/{queue_id}/{queue_item_id}/{player_id}.{fmt}
+http://<host>:8097/source/{session_id}/{source_player_id}/{player_id}.{fmt}
 ```
 
-`resolve_stream_url` makes two `AUDIO_SOURCE`-specific decisions. The output codec is forced to **WAV** regardless of the player's configured `output_codec`, because a live source is already PCM and a WAV container makes the encode step a pure passthrough. And flow mode is always suppressed — a single infinite stream has no track boundaries to flow across. `get_stream()` (direct-PCM consumers) also suppresses flow for `RADIO` / `AUDIO_SOURCE`, but the WAV force is HTTP-path only — PCM consumers already request a PCM format.
+`resolve_stream_url` makes two `AUDIO_SOURCE`-specific decisions. Flow mode is always suppressed — a single infinite stream has no track boundaries to flow across; `get_stream()` (direct-PCM consumers) suppresses it for `RADIO` / `AUDIO_SOURCE` too. The output codec follows the player's configured `output_codec`, with **WAV available as an opt-in** through the per-player `CONF_PREFER_WAV_FOR_LIVE_SOURCES` (default off).
 
-The WAV choice pays off downstream: `serve_queue_item_stream` skips the encode FFmpeg process entirely when the item is an `AUDIO_SOURCE`, the output is WAV, no filter params apply, and the sample rate / bit depth / channel count all match the source PCM. It then streams a WAV header followed by raw bytes via `_wav_passthrough_stream`, saving a process and its buffer latency on every realtime stream. See [10-streaming-pipeline.md](10-streaming-pipeline.md#stream-url-resolution).
+WAV is worth opting into only when it actually buys a passthrough: `serve_queue_item_stream` skips the encode FFmpeg process entirely when the output is WAV, no filter params apply, and the sample rate, bit depth and channel count all match the source PCM — it then streams a WAV header followed by raw bytes via `_wav_passthrough_stream`, saving a process and its buffer latency. When any of those conditions fail the stream is re-encoded anyway, and WAV costs far more bandwidth than FLAC for nothing. See [10-streaming-pipeline.md](10-streaming-pipeline.md#stream-url-resolution).
 
 ### Stream types
 
@@ -343,10 +334,10 @@ The WAV choice pays off downstream: `serve_queue_item_stream` skips the encode F
 
 | Stream type | Mechanism | Used by |
 |---|---|---|
-| `StreamType.CUSTOM` | The provider implements `get_audio_stream()` as an async generator; the streams controller consumes it directly | Spotify Connect, AriaCast Receiver, VBAN Receiver, Yandex Music Connect |
-| `StreamType.NAMED_PIPE` | The provider creates a FIFO and sets `StreamDetails.path`; the streams controller reads it via `read_named_pipe()` | AirPlay Receiver |
+| `StreamType.CUSTOM` | The provider implements `get_audio_stream()` as an async generator; the streams controller consumes it directly | Spotify Connect (go-librespot backend), AriaCast Receiver, VBAN Receiver, Yandex Music Connect, Sendspin Source |
+| `StreamType.NAMED_PIPE` | The provider creates a FIFO and sets `StreamDetails.path`; the streams controller reads it via `read_named_pipe()` | Spotify Connect (Soloist backend), AirPlay Receiver |
 
-Note that **Spotify Connect is no longer `NAMED_PIPE`**. Since the go-librespot migration (#4384) it is `CUSTOM`, reading the daemon's stdout — go-librespot is configured with `audio_output_pipe: /dev/stdout`, so the subprocess pipe always has a reader and the daemon's non-blocking pipe open never fails for lack of a consumer. AirPlay Receiver is the only remaining `NAMED_PIPE` receiver.
+**Spotify Connect uses either, depending on its backend.** The go-librespot backend is `CUSTOM`, reading the daemon's stdout — the daemon is configured with `audio_output_pipe: /dev/stdout`, so the subprocess pipe always has a reader and its non-blocking open never fails for lack of a consumer. The Soloist backend is `NAMED_PIPE`, because it captures the client's output through PulseAudio into a FIFO (`helpers/pulse_capture.py`). The choice of stream type therefore follows the engine, not the provider.
 
 ### Realtime handling
 
@@ -375,7 +366,7 @@ Some player providers consume `AudioSource` queue items without going through `s
 
 `providers/spotify_connect/` is the most complete receiver and the reference implementation. It now supports two interchangeable playback engines behind one backend-agnostic provider: **Soloist** (Spotify's official headless client, the recommended default, #5810) and **go-librespot** (the community client it was originally rewritten around in #4384). The in-tree [`README.md`](../../music_assistant/providers/spotify_connect/README.md) covers the module layout and the backend contract, with the deep dives — binary provisioning, known limitations — in [`soloist/README.md`](../../music_assistant/providers/spotify_connect/soloist/README.md) and [`go_librespot/README.md`](../../music_assistant/providers/spotify_connect/go_librespot/README.md). What matters at the plugin-system level:
 
-**No Spotify Web API, no Spotify music provider.** The old model shelled out to `librespot` with an `--onevent` callback script that POSTed to a provider webservice, and needed a configured Spotify *music* provider for Web API transport control. Both are gone. The provider now drives one go-librespot subprocess per instance entirely over its loopback HTTP + WebSocket API through `GoLibrespotClient` (`client.py`): REST `POST /player/{resume,pause,next,prev,seek,volume,play}` outbound, and a `/events` WebSocket inbound.
+**No Spotify Web API, no Spotify music provider.** Transport control needs neither: the go-librespot backend drives one subprocess per instance entirely over its loopback HTTP + WebSocket API through `GoLibrespotClient` (`go_librespot/client.py`): REST `POST /player/{resume,pause,next,prev,seek,volume,play}` outbound, and a `/events` WebSocket inbound.
 
 ```mermaid
 graph LR
@@ -388,7 +379,7 @@ graph LR
     Client -->|"play_media / cmd_volume_set"| MA["MA controllers"]
 ```
 
-**Capabilities are static.** `can_play_pause`, `can_seek`, and `can_next_previous` are all hardcoded `True`, because go-librespot's REST API always provides them while a session is active. There is no longer a dynamic upgrade when a Web API credential appears. `exclusive=True`, `allow_external_trigger=True`, `can_initiate=False` — a cold start from MA is unreliable because Spotify needs an existing playback context, so entry comes from the Spotify app.
+**Transport capabilities are static.** `can_play_pause`, `can_seek`, and `can_next_previous` are all hardcoded `True`, because the backend's control API always provides them while a session is active. `can_shuffle` / `can_repeat` are not: they follow the backend's `supports_queue_control`. `exclusive=True`, `allow_external_trigger=True`, and `can_initiate=True` — MA can start the source by resuming the last known Spotify context, though with no prior context it raises a localized error pointing the user at the app, since Spotify needs an existing playback context.
 
 **Format layering.** `audio_format` advertises the *source* codec (Ogg Vorbis 320 kbps) for display, while `decoded_audio_format` is the s16le PCM actually on the wire; the streams controller hands the latter to FFmpeg as the input format. `extra_input_args=["-fflags", "nobuffer"]` keeps the resample path low-latency, and `expiration=0` means streamdetails are never reused from cache, so the active-device check in `get_stream_details` re-runs on every play attempt.
 
@@ -403,7 +394,7 @@ graph LR
 - **MA → Spotify** (`on_volume_change`): return early if `volume == self._last_volume_sent`; otherwise record the new value *before* awaiting `set_volume`, because the daemon echoes a `volume` event back over the WebSocket and that echo can arrive while the await is still in flight. Restore the previous value on failure so a retry is not wrongly deduped.
 - **Spotify → MA** (`_handle_volume_event`): ignore the event if it equals `_last_volume_sent` (our own echo); ignore it entirely within `INITIAL_VOLUME_GRACE_S = 3.0` of the session becoming active, so the player's own volume wins over the daemon's initial value on (re)connect; otherwise `cmd_volume_set` on `_in_use_by_queue`.
 
-The scale is a percentage, not the old 0–65535 librespot range: the daemon config pins `volume_steps: 100` so its 0..max maps 1:1, and `external_volume: True` stops it attenuating the PCM (MA and the target player own the actual volume).
+The scale is a percentage: the daemon config pins `volume_steps: 100` so its 0..max maps 1:1, and `external_volume: True` stops it attenuating the PCM (MA and the target player own the actual volume).
 
 **Player targeting** follows a priority chain in `_get_target_player_id`: the currently active player, else — in `__auto__` mode — a currently playing player then the first available, else the configured default. `on_source_selected` deliberately caches the **`queue_id`** rather than the protocol `player_id`, because some protocol players are ephemeral bridges whose id becomes invalid for `play_media` once torn down.
 
@@ -419,7 +410,7 @@ Wraps `shairport-sync` with two named pipes, audio and metadata, on deterministi
 
 ### AriaCast Receiver
 
-Rewritten in #4871 as a **native Python AriaCast v1.1 protocol server** — the Go binary and its named pipe are gone. An `aiohttp` server on port 12889 serves the wire protocol directly: WebSocket routes for `/audio`, `/control`, `/metadata`, and `/stats`, plus HTTP `POST /metadata`, `POST /api/command`, and artwork GETs, with UDP discovery on 12888. Audio frames land in an `asyncio.Queue` and `get_audio_stream` drains it, VBAN-style. PCM is 48 kHz s16le stereo (20 ms frames = 3840 bytes). Only one `/audio` sender is allowed at a time; a second connection attempt is rejected with HTTP 403.
+A **native Python AriaCast v1.1 protocol server** (#4871), with no external binary. An `aiohttp` server on port 12889 serves the wire protocol directly: WebSocket routes for `/audio`, `/control`, `/metadata`, and `/stats`, plus HTTP `POST /metadata`, `POST /api/command`, and artwork GETs, with UDP discovery on 12888. Audio frames land in an `asyncio.Queue` and `get_audio_stream` drains it, VBAN-style. PCM is 48 kHz s16le stereo (20 ms frames = 3840 bytes). Only one `/audio` sender is allowed at a time; a second connection attempt is rejected with HTTP 403.
 
 `can_play_pause=True` and `can_next_previous=True` (forwarded to the sender as control actions), `can_seek=False`. `can_initiate=False`, `allow_external_trigger=True`. The generator drains stale frames on entry and exit so a pause does not leave built-up silence to play through, and cold-starts fail fast with `AudioError` if the sender never sends. Artwork is served via `resolve_image`.
 
@@ -436,7 +427,7 @@ It is the one receiver with **`can_initiate=True`** (and `allow_external_trigger
 Provider domain `yandex_ynison` (#3614), now at manifest stage `stable`. It makes an MA player appear as a selectable device inside the Yandex Music app over the Ynison protocol. `depends_on: yandex_music` is real, not cosmetic: the plugin follows Ynison state to learn *which track* is playing, then resolves that track's stream through the companion `yandex_music` **music** provider (`_get_stream_details_with_retry`). It is the only receiver whose `get_audio_stream` is multi-track — a single `CUSTOM` generator session streams the current track, waits for a track-change event, and streams the next, running until the source is deselected.
 
 - Transport control goes through `on_source_control` (PLAY / PAUSE / NEXT / PREVIOUS / SEEK), which dispatches to internal `_on_play` / `_on_pause` / `_on_next` / `_on_previous` / `_on_seek` handlers that issue Ynison peer commands.
-- **`on_volume_change` is not implemented.** There is no volume sync with the Yandex device in either direction. Earlier revisions of this document said otherwise.
+- **`on_volume_change` is not implemented.** There is no volume sync with the Yandex device in either direction.
 - Capability flags are dynamic: `_build_audio_source()` sets all three to whether the `yandex_music` provider is currently loaded. `exclusive=True`, `allow_external_trigger=True`, `can_initiate` left at its `False` default.
 - The `allow_player_switch` option turns `on_source_selected` into the redirect-and-`RuntimeError` path described under [Failure handling](#failure-handling).
 - The PCM format is frozen at session start, so a mid-session `_update_normalized_format()` (e.g. a provider reload) takes effect only on the next session rather than causing a bit-depth or sample-rate mismatch mid-stream.
@@ -511,7 +502,7 @@ Provider domain `yandex_smarthome` (#3615). Declares no `ProviderFeature`s: it s
 
 Three connection modes: `cloud` (the public yaha-cloud.ru relay, zero setup but one instance per Yandex account), `cloud_plus` (a private skill through the same relay, registered manually in the dev console), and `direct` (Yandex calls the MA webserver directly, requiring public HTTPS). Playlists are exposed as device sources.
 
-The `auto_skill.py` module described by earlier revisions was deleted in #3834; the auto-create logic now lives in `_smarthome_auto_create.py`, narrowed to smart-home URL derivation only — the `skill_type="dialog"` (Alice voice-skill) branch moved out to the separate `ma-provider-yandex-alice` provider.
+The auto-create logic lives in `_smarthome_auto_create.py` and covers smart-home URL derivation only; Alice voice-skill support is a separate `ma-provider-yandex-alice` provider.
 
 ### Plex Connect
 

@@ -115,7 +115,7 @@ Six static routes, registered in `setup()`:
 
 Dynamic routes (registered via `register_dynamic_route`) handle UGP streams (`/ugp/{player_id}.{codec}`) and other runtime-registered paths.
 
-The former `/pluginsource/{plugin_source}/{player_id}.{fmt}` endpoint is **gone**, but its replacement is now split in two. A live source that the user enqueued is a `MediaType.AUDIO_SOURCE` queue item and streams through `/single/`, inheriting session validation, queue state and transport control. A source **attached directly to a player** — the common case for a receiver like Spotify Connect — is not a queue item at all; it is an [`AudioSourceSession`](04-player-controller.md#live-audiosource-sessions) and streams through `/source/`, keyed by the player that owns the source rather than by a queue. See [11-plugin-system.md](11-plugin-system.md) for the provider-side model.
+Live sources have **two** routes, depending on how they are bound. A live source that the user enqueued is a `MediaType.AUDIO_SOURCE` queue item and streams through `/single/`, inheriting session validation, queue state and transport control. A source **attached directly to a player** — the common case for a receiver like Spotify Connect — is not a queue item at all; it is an [`AudioSourceSession`](04-player-controller.md#live-audiosource-sessions) and streams through `/source/`, keyed by the player that owns the source rather than by a queue. See [11-plugin-system.md](11-plugin-system.md) for the provider-side model.
 
 ### Stream URL Resolution
 
@@ -135,7 +135,7 @@ Flow mode is then forced when any of these hold:
 
 ### Session ID Validation
 
-**Both** `/single/` and `/flow/` enforce the session ID. The session no longer lives on the wire `PlayerQueue` — it is `PlayerQueueData.session_id`, reached through `mass.player_queues.queue_data()`:
+**Both** `/single/` and `/flow/` enforce the session ID. It lives on the server-side record as `PlayerQueueData.session_id`, not on the wire `PlayerQueue`, and is reached through `mass.player_queues.queue_data()`:
 
 ```python
 session_id = request.match_info["session_id"]
@@ -183,10 +183,10 @@ Before a queue item can be streamed, the system must know where its audio comes 
 5. **Duration and seek sanity** — backfill duration from the media item, and drop a requested seek position when the stream does not allow seeking or has no duration.
 6. **Normalization** — set `target_loudness` from the **streams-global** `volume_normalization_target` (validated against the entry's own range and reset to the default if a bad value is stored), then resolve `volume_normalization_mode` via `get_normalization_mode()`.
 
-Two things this method no longer does, both of which earlier revisions of this document described:
+Two things this method deliberately does **not** do, both of which happen later for good reason:
 
-- **No loudness lookup.** Loudness is now hydrated just-in-time in `get_queue_item_stream()`, not here. See [Volume Normalization](#volume-normalization).
-- **No DSP attachment.** `get_stream_dsp_details` is gone; DSP is resolved per output at encode time by `get_player_output_plan()`.
+- **No loudness lookup.** Loudness is hydrated just-in-time in `get_queue_item_stream()`, so a measurement that completed during an earlier play is picked up on this one. See [Volume Normalization](#volume-normalization).
+- **No DSP attachment.** DSP is resolved per output at encode time by `get_player_output_plan()`, because one stream can feed several players with different filter chains.
 
 Note the split in how normalization is configured: the **target LUFS is global** to the streams controller (#4369), while **enablement is per-queue** (#4373), read with `get_effective_player_queue_config_value(queue_id, CONF_VOLUME_NORMALIZATION, ...)`. The mode *preference* (`volume_normalization_radio` / `volume_normalization_tracks`) is global too.
 
@@ -224,7 +224,7 @@ Streams a single queue item from the `AudioBuffer` with optional per-item filter
 
 `FALLBACK_DYNAMIC` and `FALLBACK_FIXED_GAIN` are resolved earlier, by `get_normalization_mode()`: by the time filters are built the mode is always one of DISABLED, DYNAMIC, MEASUREMENT_ONLY, FIXED_GAIN, or [SOURCE](#modes) — the last two of which, like DISABLED, contribute no filter.
 
-**Buffer pre-warm trigger:** when the consumed position passes `duration - 60` seconds, the stream calls `player_queues.prepare_next_audio_buffer(queue_id)` to start filling the next track's buffer. The method is public now and lives on `StreamFeederMixin` (`controllers/player_queues/stream_feeder.py`); it was previously the private `_prepare_next_audio_buffer()` on the queue controller. The trigger fires once per stream, resolves the queue via `get_active_queue()` rather than assuming the streaming player owns one, and only fires when the next item is a `TRACK` — a live source (radio, `AudioSource`) would open an upstream connection that sits idle and likely times out before the player consumes it. See [09-player-queues.md](09-player-queues.md#pre-warming-the-next-track).
+**Buffer pre-warm trigger:** when the consumed position passes `duration - 60` seconds, the stream calls `player_queues.prepare_next_audio_buffer(queue_id)` to start filling the next track's buffer. The method is public and lives on `StreamFeederMixin` (`controllers/player_queues/stream_feeder.py`); it was previously the private `_prepare_next_audio_buffer()` on the queue controller. The trigger fires once per stream, resolves the queue via `get_active_queue()` rather than assuming the streaming player owns one, and only fires when the next item is a `TRACK` — a live source (radio, `AudioSource`) would open an upstream connection that sits idle and likely times out before the player consumes it. See [09-player-queues.md](09-player-queues.md#pre-warming-the-next-track).
 
 **Track hand-off chain:** once a track is loaded into the buffer, `player_queues.track_loaded_in_buffer(queue_id, item_id)` records `index_in_buffer` and kicks off `_preload_next_item`, which waits for that item to actually become the queue's current item, resolves the next item's stream details via `load_next_queue_item()`, and then has `_enqueue_next_item` hand it to the player through `enqueue_next_media()`. That last step re-validates the session before enqueueing, so a track switch mid-preload cannot enqueue against a superseded session.
 
@@ -286,7 +286,7 @@ Two consequences worth knowing: the internal PCM format is upgraded to F32 for c
 
 ## AudioSource: the realtime bypass
 
-`MediaType.AUDIO_SOURCE` items — the first-class media items that replaced the old `PluginSource` model (#3938) — are live and latency-sensitive, so they take the shortest path the pipeline has. `get_audio_source_stream()` skips **all** of it: no `AudioBuffer`, no loudness hydration, no volume normalization, no crossfade or fade-in, no playback-speed shift, no next-track preload, and no analysis session.
+`MediaType.AUDIO_SOURCE` items are live and latency-sensitive, so they take the shortest path the pipeline has. `get_audio_source_stream()` skips **all** of it: no `AudioBuffer`, no loudness hydration, no volume normalization, no crossfade or fade-in, no playback-speed shift, no next-track preload, and no analysis session.
 
 `_iter_audio_source_pcm()` picks one of two routes:
 
@@ -299,7 +299,7 @@ Rate pacing matters because some producers are not realtime — librespot's pipe
 
 `_open_audio_source_generator()` supports two stream types: `CUSTOM` calls the provider's `get_audio_stream()`, and `NAMED_PIPE` reads a pipe via `read_named_pipe()`. Anything else raises.
 
-**The silence-during-pause contract holds.** `PluginProvider.get_stream_details` and `get_audio_stream` both document that the server wraps a `CUSTOM` generator with a silence-keepalive, so a plugin can simply stop yielding while its upstream device is paused without the player disconnecting. `_open_audio_source_generator()` wraps every `CUSTOM` source in `audio_source_silence_keepalive` (`helpers/audio.py`) to honour that. The wrapper was briefly dropped in favour of `realtime_pcm_pacer` — which paces but injects no silence — and restored in #5961, since pacing alone let a paused source starve the connection. Silence injection and pacing now compose: the keepalive fills the gap, the pacer meters the result. The `NAMED_PIPE` half of the contract needs neither, because those producers (shairport-sync, librespot in pipe mode) write silence themselves.
+**The silence-during-pause contract holds.** `PluginProvider.get_stream_details` and `get_audio_stream` both document that the server wraps a `CUSTOM` generator with a silence-keepalive, so a plugin can simply stop yielding while its upstream device is paused without the player disconnecting. `_open_audio_source_generator()` wraps every `CUSTOM` source in `audio_source_silence_keepalive` (`helpers/audio.py`) to honour that. Silence injection and pacing compose rather than substitute for each other: the keepalive fills the gap so a paused source cannot starve the connection, and `realtime_pcm_pacer` meters the result (#5961). The `NAMED_PIPE` half of the contract needs neither, because those producers (shairport-sync, librespot in pipe mode) write silence themselves.
 
 Both delivery paths run the plugin lifecycle hooks. `serve_queue_item_stream` fires `on_source_selected` on every `AUDIO_SOURCE` **GET** — unconditionally, even when stream details are cached, so a disconnect/reconnect re-claims the source with a fresh session id rather than streaming against stale ownership — and pairs it with `on_source_unselected` in a `finally`. A HEAD probe deliberately does **not** fire the hooks: many DLNA renderers probe with HEAD before GET, and claiming ownership then would trigger transfer side effects prematurely. The HEAD response still validates that the providing plugin is loaded (returning 200 for an unloaded provider would lie to a renderer that caches the response) and advertises `audio/wav` for PCM formats, since most renderers pick a decoder from the HEAD content type and cannot handle `application/octet-stream`. `get_stream()` mirrors the same lifecycle through `_wrap_with_audio_source_lifecycle()` for direct-PCM consumers.
 
@@ -429,8 +429,8 @@ Volume normalization ensures consistent perceived loudness across tracks from di
 
 Mode selection (`get_normalization_mode` in `helpers/audio.py`) resolves the `FALLBACK_*` modes down to a concrete one. It considers:
 
-- Whether normalization is enabled — a **per-queue** setting since #4373, resolved with `get_effective_player_queue_config_value()` (see [02-configuration.md](02-configuration.md#per-queue-configuration)). It used to be per-player.
-- Whether a target loudness is set on the stream — a **streams-global** setting since #4369 (`volume_normalization_target`, default −14 LUFS). It used to be per-player.
+- Whether normalization is enabled — a **per-queue** setting since #4373, resolved with `get_effective_player_queue_config_value()` (see [02-configuration.md](02-configuration.md#per-queue-configuration)).
+- Whether a target loudness is set on the stream — a **streams-global** setting (#4369; `volume_normalization_target`, default −14 LUFS).
 - Whether a stored loudness measurement exists.
 - The separate radio vs tracks mode preference in the streams core config (`volume_normalization_radio` / `volume_normalization_tracks`, both defaulting to `fallback_dynamic`).
 
@@ -462,7 +462,7 @@ Crossfade is **queue-scoped** (#4373): `PlayerQueue.crossfade_enabled` is the on
 
 ### `SmartFadesMixer` — build, then mix
 
-The mixer is now split into two phases rather than one `mix()` call:
+The mixer works in two phases:
 
 - **`build(...)`** picks the `SmartFade` implementation and primes its filters, returning it without touching a byte of audio. It walks a degradation chain: attempt `_build_smart_crossfade()` first when the mode is `SMART_CROSSFADE`, and fall through to `_build_standard_crossfade()`, which never fails.
 - **`mix(smart_fade, fade_in_part, fade_out_part, pcm_format)`** executes the already-built fade and yields mixed PCM.
@@ -515,7 +515,7 @@ The filter chain, in order:
 3. **Output gain** — `volume={output_gain}dB`, when non-zero.
 4. **Channel selection** — `pan=mono|c0=FL` or `c0=FR` from `CONF_OUTPUT_CHANNELS`.
 
-The unconditional output `alimiter` stage that used to sit at the end is **gone** (#4901). A limiter is now something the user can opt into as a DSP filter model (`SafetyLimiterFilter`), not a fixed cost on every stream; #4901 shipped a config migration for players that had the old setting. **Rendering is a separate matter** — see the catalog below.
+There is **no unconditional limiter** at the end of the chain: clipping protection is something the user opts into as a DSP filter (`SafetyLimiterFilter`) rather than a fixed cost on every stream (#4901). The removed per-player `output_limiter` setting still has a live migration — `_migrate_output_limiter` in `config/migrations.py` drops the stored value, keyed off `LEGACY_CONF_OUTPUT_LIMITER` — so you will encounter the old name there. **Rendering is a separate matter** — see the catalog below.
 
 Only filters that actually emit parameters are recorded as `effective_filters`. A neutral filter — 0 dB gain, centred balance — produces no params and is deliberately excluded, so it is not reported as an active stage and does not defeat bit-perfect detection.
 
@@ -548,11 +548,11 @@ One output path can serve several players. `get_player_output_plan` takes `share
 
 Two related nuances: a plan built for a protocol player is attributed to its `protocol_parent_id`, and passing an *empty* iterable (rather than `None`) marks a path that can gain shared destinations later — which is what lets `retain_outputs()` fan a stored template out to players that join mid-stream.
 
-`get_player_dsp_details` and `get_stream_dsp_details` no longer exist; the `AudioOutputDetails` published by the output plan is what clients read instead.
+Clients read the `AudioOutputDetails` published by the output plan.
 
 ## Audio Processing Metadata
 
-`AudioProcessingManager` (`audio_processing.py`, #4793) answers a question the pipeline could not previously answer: *what is actually happening to this audio right now?* It tracks processing per queue session and publishes a complete `AudioProcessingChain` onto each queue item's `StreamDetails`, where clients can read it.
+`AudioProcessingManager` (`audio_processing.py`, #4793) answers the question *what is actually happening to this audio right now?* It tracks processing per queue session and publishes a complete `AudioProcessingChain` onto each queue item's `StreamDetails`, where clients can read it.
 
 ### Structure
 
@@ -612,7 +612,7 @@ Picks the internal PCM format for a single-item stream:
 
 ### `select_flow_pcm_format`
 
-Flow mode is no longer a fixed ladder from 192 kHz down. The rate comes from the player's `CONF_FLOW_MODE_SAMPLE_RATE` setting:
+The flow-mode sample rate comes from the player's `CONF_FLOW_MODE_SAMPLE_RATE` setting rather than a fixed ladder:
 
 | Mode | Rate |
 |---|---|

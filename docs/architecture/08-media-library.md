@@ -43,8 +43,6 @@ graph TB
 
 ## Package Structure
 
-`controllers/music.py` plus the separate `controllers/media/` directory were merged into a single `controllers/music/` package (#4266). Every path in this document reflects that: `controllers/media/base.py` is now `controllers/music/media/base.py`, and so on.
-
 The package's own [`README.md`](../../music_assistant/controllers/music/README.md) is the authoritative module inventory — it lists each module's role, states the one-way dependency rule (the `media/` sub-controllers never import `MusicController` back), explains the database split via `MusicDatabaseSetupMixin`, and documents the migration backup/reset-on-failure policy. Rather than restate that, this document covers the cross-cutting behavior the README does not: search architecture, summary modes, FTS indexing, collections, the recommendations API, the recency engine, the user-scoped playlog, and how plugin providers participate in browse and search.
 
 ## MusicController
@@ -78,7 +76,7 @@ The metadata controller runs the album counterpart hourly; see [14-metadata.md](
 
 ### Search
 
-Global search was rebuilt for robustness and latency (#4671): a slow or rate-limited provider can no longer stall the whole search, and repeated searches are served from layered caches.
+Global search is built for robustness and latency (#4671): a slow or rate-limited provider cannot stall the whole search, and repeated searches are served from layered caches.
 
 `search(search_query, media_types, limit, library_only, providers)`:
 
@@ -175,7 +173,7 @@ async def _update_library_item(self, item_id: str | int, update: ItemCls, overwr
 async def match_providers(self, db_item: ItemCls) -> None
 ```
 
-`radio_mode_base_tracks()` used to be a fourth: it is **gone**, along with the rest of radio mode, which moved to the plugin layer as dynamic playlists (#4498 — see [09-player-queues.md](09-player-queues.md)).
+Endless playback is not among them: it is a plugin-layer concern, handled as dynamic playlists (#4498 — see [09-player-queues.md](09-player-queues.md)).
 
 Many of the public methods are marked `@final`, so subclass customization happens through the two query properties (`base_query`, `summary_query`), the `_parse_*` row hooks, and the `_add_library_item` / `_update_library_item` implementations rather than by overriding the public surface.
 
@@ -241,7 +239,7 @@ That implicit merge grew into an explicit, reusable one. `merge_library_items(ta
 
 ### The external ID lookup table
 
-External-ID matching used to mean a `LIKE` scan over an `external_ids` JSON column, which no index could serve. It now goes through a dedicated, indexed `external_id_lookup` table `(media_type, external_id_type, external_id, item_id)` — first as an accelerator (#4628), then as the single source of truth with the JSON column dropped (#4645, schema v51).
+External-ID matching goes through a dedicated, indexed `external_id_lookup` table — a JSON column would need a `LIKE` scan that no index can serve `(media_type, external_id_type, external_id, item_id)` — first as an accelerator (#4628), then as the single source of truth with the JSON column dropped (#4645, schema v51).
 
 - `set_external_ids()` rewrites an item's rows (delete-then-upsert), but an **empty set is a no-op** and never clears stored ids (#5548). This mirrors the provider-mapping policy: a sync that happens to return nothing must not leave an item stripped of the identity evidence everything else matches on.
 - `get_library_item_by_external_id()` / `get_library_item_by_external_ids()` resolve through an `IN (SELECT ...)` subquery, optionally constrained to one `ExternalID` type.
@@ -467,7 +465,7 @@ Every media item table has a companion `{table}_fts` FTS5 virtual table over `se
 | `audio_analysis_failures` | Recorded analysis failures with `reason` and optional `next_retry` |
 | `settings` | Key/value bookkeeping; holds the stored schema version |
 
-**Removed tables.** `loudness_measurements` and `smart_fades_analysis` are no longer library tables. Smart fades analysis moved to the audio-analysis provider model (`smart_fades` as an analysis provider domain in `audio_analysis`) and the legacy table is dropped by migration; loudness measurements were folded into `audio_analysis` under the builtin `loudness_analysis` provider and that table dropped too (schema v39). `DB_TABLE_LOUDNESS_MEASUREMENTS` survives in `constants.py` only because the migration references it.
+**Two table names you will meet only in migrations.** `loudness_measurements` and `smart_fades_analysis` are not library tables: both kinds of analysis live in `audio_analysis`, under the builtin `loudness_analysis` domain and the `smart_fades` analysis-provider domain respectively. The migrations still `DROP TABLE IF EXISTS` them, which is why `DB_TABLE_LOUDNESS_MEASUREMENTS` remains in `constants.py`.
 
 **The `playlog` table** grew from a simple play history into the user-scoped record that recommendations, resume, scrobbling and recency all read:
 
@@ -562,7 +560,7 @@ The largest sub-controller, and the only one with an editable taxonomy of its ow
 
 ## Recommendations
 
-`controllers/music/recommendations/` is a small sub-controller that owns the recommendations **API** — it aggregates over providers and no longer produces any rows itself. It exposes two commands, both requiring `Scope.LIBRARY_READ`:
+`controllers/music/recommendations/` is a small sub-controller that owns the recommendations **API** — it aggregates over providers and produces no rows itself. It exposes two commands, both requiring `Scope.LIBRARY_READ`:
 
 | Command | Returns |
 |---|---|
@@ -573,7 +571,7 @@ Splitting rows from items is the point (#4487): the listing must be cheap enough
 
 **Row sources.** `get_recommendations()` has exactly **one** kind of source: it gathers rows from every provider declaring `ProviderFeature.RECOMMENDATIONS` — which can be a music provider, a metadata provider or a plugin provider — after passing them through the user provider filter. Sources are interleaved with `zip_longest`, one folder per source per pass, so no single provider monopolizes the top of the page.
 
-The library rows are no exception, because **they are a provider too** (#3890). `recommendations/library.py` is gone; the built-in rows now come from `providers/recommendations/`, a builtin plugin provider (`domain="recommendations"`, `builtin: true`, `allow_disable: false`) whose only declared feature is `RECOMMENDATIONS`. The controller has no special-cased library branch left — it is purely an aggregator. Moving the rows out means they compose through the ordinary provider machinery (feature declaration, user filter, timeout isolation) rather than needing a parallel path, and it lets the rows be reordered or extended without touching the music controller.
+The library rows are no exception, because **they are a provider too** (#3890): they come from `providers/recommendations/`, a builtin plugin provider (`domain="recommendations"`, `builtin: true`, `allow_disable: false`) whose only declared feature is `RECOMMENDATIONS`. The controller has no special-cased library branch left — it is purely an aggregator. Moving the rows out means they compose through the ordinary provider machinery (feature declaration, user filter, timeout isolation) rather than needing a parallel path, and it lets the rows be reordered or extended without touching the music controller.
 
 **Timeouts and isolation.** Per-provider row fetches are bounded by `RECOMMENDATIONS_ROWS_TIMEOUT` (5 s — rows are contractually cheap, with no live backend calls), and item fetches by `RECOMMENDATIONS_ITEMS_TIMEOUT` (30 s). A timeout or exception in either logs a warning and yields an empty list, so one misbehaving provider degrades to a missing row rather than a failed page.
 
@@ -683,7 +681,7 @@ The set of providers feeding the library keeps growing; classification matters m
 | [`controllers/music/constants.py`](../../music_assistant/controllers/music/constants.py) | `DB_SCHEMA_VERSION`, search timeouts and cache expirations, task ids |
 | [`controllers/music/helpers.py`](../../music_assistant/controllers/music/helpers.py) | `search_name_match_clause` (FTS), `sort_search_result`, `filter_search_results` |
 | [`controllers/music/recency.py`](../../music_assistant/controllers/music/recency.py) | `RecencyEngine` / `RecencySnapshot` / `RecencyWindows` |
-| [`controllers/music/recommendations/`](../../music_assistant/controllers/music/recommendations/) | `RecommendationsController` — the aggregating API only; it no longer owns any rows |
+| [`controllers/music/recommendations/`](../../music_assistant/controllers/music/recommendations/) | `RecommendationsController` — the aggregating API only; owns no rows itself |
 | [`providers/recommendations/`](../../music_assistant/providers/recommendations/) | `LibraryRecommendationsProvider` — the builtin plugin supplying the sixteen library rows |
 | [`helpers/external_ids.py`](../../music_assistant/helpers/external_ids.py) | GTIN/ISRC/MBID canonicalization, lookup variants, validation |
 | [`controllers/music/media/base.py`](../../music_assistant/controllers/music/media/base.py) | MediaControllerBase — shared library interaction pattern, summary mode, `SUPPRESS_MEDIA_ITEM_UPDATES` |

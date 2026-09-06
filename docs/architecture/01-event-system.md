@@ -21,7 +21,7 @@ Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with **32 
 
 Two of these are recent. **`DSP_IRS_UPDATED`** is signalled by `config/dsp.py` whenever the convolution impulse-response library changes (upload or remove), carrying the new list as its data — the library is server-wide, so it has no `object_id`. **`PLAYLOG_UPDATED`** (#6005) is signalled by the music controller when an item's play state or resume position changes, with the item's `uri` as `object_id` and a `PlaylogUpdate` payload; it lets a client update a progress bar without re-reading the item.
 
-### Three members no longer emitted
+### Members present but never emitted
 
 Reading the enum alone would suggest otherwise, so these are worth calling out:
 
@@ -205,7 +205,7 @@ The decorator sets five attributes on the function:
 | `api_allow_impersonation` | Whether the command accepts an injected `user` argument |
 | `api_alias` | Whether this is a backward-compatible alias, hidden from the API docs |
 
-Authorization is **scope-based** since #4613; the earlier `required_role` parameter no longer exists. See [19-authentication.md](19-authentication.md) for the scope model and [12-webserver-api.md](12-webserver-api.md#the-api_command-decorator) for the dispatch that enforces it.
+Authorization is **scope-based** (#4613); there is no `required_role` parameter. See [19-authentication.md](19-authentication.md) for the scope model and [12-webserver-api.md](12-webserver-api.md#the-api_command-decorator) for the dispatch that enforces it.
 
 ### `APICommandHandler` Dataclass
 

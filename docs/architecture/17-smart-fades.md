@@ -11,20 +11,13 @@ The subsystem splits in two, and keeping the halves straight is the key to readi
 
 Execution never analyzes audio. It reads persisted rows through `mass.streams.audio_analysis.get_audio_analysis(item_id, provider, priority=(SMART_FADES_ANALYSIS_DOMAIN,))` — the `priority` tuple insisting on the smart-fades provider's own row rather than a merged view that another provider might have contributed conflicting fields to. See [16-audio-analysis.md](16-audio-analysis.md) for the analysis half and [10-streaming-pipeline.md](10-streaming-pipeline.md#crossfade) for where the mixer plugs into the audio path.
 
-## What this replaced
+## Why plan and render are separate
 
-The engine was refactored from a monolith into a plan/render architecture in #4532, and the shape of the old design explains most of the new one's structure.
+The architecture (#4532) splits deciding a transition from performing it, and that split is what the rest of this document follows.
 
-| Was | Is |
-|---|---|
-| `SmartFadesMixer.mix()` did everything: loaded analysis, beat-matched inline, built filters, executed | `build()` plans and primes; `mix()` only executes an already-built fade |
-| Beat matching mutated a scratchpad on the planner (`self._pristine_*` snapshots, re-anchoring in place) | An immutable `TransitionContext` every candidate build reads and none mutates |
-| One transition computed directly, take it or leave it | Many *candidates* generated, scored by independent policies, best one wins |
-| A ~0.3 analysis-confidence gate decided smart vs standard | Requires BPM and beats on both tracks; feasibility is decided by candidate generation and policy rejection |
-| `FrequencySweepFilter`, `TrimFilter` | `ShelfFilter`, `PeakFilter`, `FadeInTrimFilter`, `FadeOutTrimFilter` |
-| `music_assistant/models/smart_fades.py` held shared models | **Deleted.** Models live in `controllers/streams/smart_fades/models.py`, next to the only code that uses them |
+`build()` plans and primes; `mix()` only executes an already-built fade. Planning reads an **immutable** `TransitionContext` that every candidate build shares and none mutates, generates many *candidates*, scores them with independent policies, and ships the winner. Feasibility is decided by candidate generation and policy rejection rather than by a single confidence threshold.
 
-The payoff of the split: a `TransitionPlan` is pure data over the two analysis rows and the available holdback window, so it can be computed and reasoned about before a single audio byte is buffered, and alternative strategies drop in as sibling `TransitionPlanner` subclasses.
+The payoff: a `TransitionPlan` is pure data over the two analysis rows and the available holdback window, so it can be computed and reasoned about before a single audio byte is buffered, and alternative strategies drop in as sibling `TransitionPlanner` subclasses. Models live in `controllers/streams/smart_fades/models.py`, next to the only code that uses them.
 
 ## Pipeline
 
@@ -92,7 +85,7 @@ One detail that matters for quality: when the smart build falls back, it **retai
 
 `build_transition_context()` produces a frozen `TransitionContext` holding every **per-transition** fact: the two `Deck`s (each a track's analysis plus the beat and downbeat grids usable for *this* transition), their `BandProfile`s, the outgoing tail's energy and kick anchors and audible boundary, the chosen `TransitionTier`, the vocal-activity masks, and the coda / fade-onset detections.
 
-What it deliberately excludes is anything that depends on a candidate's chosen overlap length or re-anchor point — those anchor-*dependent* derivations are the candidate factory's job. Building this once, frozen, is what replaced the old planner's mutable scratchpad: two builds of the same candidate spec are guaranteed identical.
+What it deliberately excludes is anything that depends on a candidate's chosen overlap length or re-anchor point — those anchor-*dependent* derivations are the candidate factory's job. Building it once, frozen, is what makes candidate scoring trustworthy: two builds of the same candidate spec are guaranteed identical.
 
 ### `candidates.py` — intent, then timing
 
@@ -178,7 +171,7 @@ Vocal and energy awareness (#4816) is what most distinguishes the current engine
 
 The trim and downbeat facts are populated on every plan; the collision fields need *both* tracks to carry a validated vocal timeline and otherwise keep their defaults.
 
-A related fix worth knowing about: an energy-drop transition could previously strand the listener in silence, because trimming to the audible boundary interacted badly with a quiet outgoing tail (#4926).
+Note the interaction these guard against: trimming to the audible boundary against a quiet outgoing tail can otherwise strand the listener in silence on an energy-drop transition (#4926).
 
 ## The renderer
 
