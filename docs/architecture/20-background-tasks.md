@@ -46,6 +46,7 @@ A scheduled task is *always listed*, even when it has never run — that is the 
 | `progress` / `progress_text` | Integer percentage (validated 0–100) or `None` for indeterminate, plus a human-readable phase string |
 | `failure_count` / `failure_messages` | **Non-fatal** issues reported during a run — the mechanism behind `partial_success` |
 | `logs` | In-memory tail of log lines captured during the run |
+| `report` | A **Markdown** report the task can attach for the user to read (#5925) — persisted on scheduled tasks and reset when the task reruns |
 | `last_run_user_id` | Who last triggered it; `None` for automatic/system runs. Distinct from `user_id`, which is who *queued* an ad hoc task |
 | `allow_retry` / `allow_cancel` | What the UI is allowed to offer |
 | `translation_owner` | The namespace the task's `translation_key` resolves under; stamped by the controller and **not serialized** — see [21-localization.md](21-localization.md) |
@@ -148,6 +149,22 @@ Who registers work here:
 | Providers | `builtin`, `playlist_metadata`, `sonic_similarity` (index refresh), `lastfm_recommendations` |
 
 Note that `unregister_scheduled_task` exists and is used: a provider that unloads removes its scheduled tasks, and by default clears their persisted state too.
+
+**`unregister_scheduled_task_and_wait` is the teardown variant** (#5197). Plain unregistering only *requests* cancellation, so the task can still be unwinding when the caller continues — which is a problem for a teardown path that is about to destroy state the task is still touching, such as [unloading a provider](15-provider-lifecycle.md#unloading) whose sync holds a network-share mount. This variant waits, bounded by `TASK_CANCEL_TIMEOUT` (10 s). Its docstring is careful about the limit of that guarantee: a task blocked in a thread (`asyncio.to_thread` and friends) unwinds immediately while its thread keeps running, so a return does not prove all of the task's work has stopped.
+
+### Markdown reports
+
+Beyond progress and failure messages, a task can attach a **report**: a Markdown document explaining what it did, which the UI renders for the user. It is the right shape for outcomes that are neither a percentage nor an error — the [playlist migration](08-media-library.md#playlistcontroller) reports which tracks matched exactly, which were approximated and which could not be found at all.
+
+Three entry points, differing only in how the task is addressed:
+
+| Function | Use |
+|---|---|
+| `set_task_report(task_id, markdown)` | On the controller, addressing a task by id. Thread-safe — it bounces to the event loop via `call_soon_threadsafe` when called off-loop |
+| `set_current_task_report(markdown)` | The task active in the current async context, resolved from `ACTIVE_TASK_CONTEXT` |
+| `TaskExecutionContext.set_report(markdown)` | From inside a handler that already holds its context |
+
+Passing `None` clears the report.
 
 ---
 

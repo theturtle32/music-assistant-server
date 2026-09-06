@@ -59,8 +59,9 @@ During `setup(config)`:
 2. Align `async_upnp_client` log level with the controller's log level
 3. Set up the aggregated mDNS browser via `_setup_mdns_browser()`
 4. Register the MA server as `_mass._tcp.local.` via `_register_mass_service()`
-5. If running as an HA add-on: announce to the Supervisor, **and** schedule the periodic re-announce
-6. Schedule periodic UPnP discovery via `_schedule_periodic_upnp_discovery()`
+5. Subscribe `_on_core_state_updated` to `EventType.CORE_STATE_UPDATED` (#6031). The mDNS record **embeds the server info**, so renaming the server or changing its URLs has to re-register the service or the advertised record goes stale — the handler simply calls `_register_mass_service()` again, guarding on the Zeroconf instance still existing and the server not closing
+6. If running as an HA add-on: announce to the Supervisor, **and** schedule the periodic re-announce
+7. Schedule periodic UPnP discovery via `_schedule_periodic_upnp_discovery()`
 
 ### Teardown
 

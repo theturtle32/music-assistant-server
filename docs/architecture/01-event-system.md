@@ -4,13 +4,13 @@ The event system is the pub/sub backbone that ties Music Assistant together. Eve
 
 ## `EventType` Enum
 
-Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with **30 members** — 29 real event types plus the `UNKNOWN` fallback:
+Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with **32 members** — 31 real event types plus the `UNKNOWN` fallback (verified against `music-assistant-models==1.1.207`, the version pinned in `pyproject.toml`):
 
 | Category | Events | Typical `object_id` |
 |---|---|---|
-| **Player** | `PLAYER_ADDED`, `PLAYER_UPDATED`, `PLAYER_REMOVED`, `PLAYER_CONFIG_UPDATED`, `PLAYER_DSP_CONFIG_UPDATED`, `PLAYER_OPTIONS_UPDATED`, `PLAYER_SLEEP_TIMER_UPDATED`, `DSP_PRESETS_UPDATED` | `player_id` |
+| **Player** | `PLAYER_ADDED`, `PLAYER_UPDATED`, `PLAYER_REMOVED`, `PLAYER_CONFIG_UPDATED`, `PLAYER_DSP_CONFIG_UPDATED`, `PLAYER_OPTIONS_UPDATED`, `PLAYER_SLEEP_TIMER_UPDATED`, `DSP_PRESETS_UPDATED`, `DSP_IRS_UPDATED` | `player_id`; none for the two DSP-library events, which are server-wide |
 | **Queue** | `QUEUE_ADDED`, `QUEUE_UPDATED`, `QUEUE_ITEMS_UPDATED`, `QUEUE_TIME_UPDATED` | `queue_id` |
-| **Media** | `MEDIA_ITEM_PLAYED`, `MEDIA_ITEM_ADDED`, `MEDIA_ITEM_UPDATED`, `MEDIA_ITEM_DELETED`, `MUSIC_SYNC_COMPLETED` | URI or item identifier |
+| **Media** | `MEDIA_ITEM_PLAYED`, `MEDIA_ITEM_ADDED`, `MEDIA_ITEM_UPDATED`, `MEDIA_ITEM_DELETED`, `PLAYLOG_UPDATED`, `MUSIC_SYNC_COMPLETED` | URI or item identifier |
 | **Provider** | `PROVIDERS_UPDATED`, `PROVIDER_EVENT` | provider `instance_id` for `PROVIDER_EVENT`; none for `PROVIDERS_UPDATED` |
 | **Setup flows** | `SETUP_FLOW_UPDATED` | `flow_id` |
 | **Tasks** | `TASKS_UPDATED`, `SYNC_TASKS_UPDATED` *(reserved — see below)* | (varies) |
@@ -18,6 +18,8 @@ Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with **30 
 | **System** | `CORE_STATE_UPDATED`, `AUTH_SESSION` *(retired)*, `SHUTDOWN` *(deprecated)* | — |
 
 `UNKNOWN` is the fallback returned by `_missing_()`, so an event name from a newer server deserializes into something inert instead of raising.
+
+Two of these are recent. **`DSP_IRS_UPDATED`** is signalled by `config/dsp.py` whenever the convolution impulse-response library changes (upload or remove), carrying the new list as its data — the library is server-wide, so it has no `object_id`. **`PLAYLOG_UPDATED`** (#6005) is signalled by the music controller when an item's play state or resume position changes, with the item's `uri` as `object_id` and a `PlaylogUpdate` payload; it lets a client update a progress bar without re-reading the item.
 
 ### Three members no longer emitted
 
@@ -138,11 +140,12 @@ def create_task(
     task_id: str | None = None,
     abort_existing: bool = False,
     eager_start: bool = True,
+    log_exceptions: bool = True,
     **kwargs: Any,
 ) -> asyncio.Task[_R]:
 ```
 
-Three behaviours worth knowing:
+Four behaviours worth knowing:
 
 **`eager_start=True` is the default.** The task is constructed as `asyncio.Task(coro, loop=..., eager_start=eager_start)`, so the coroutine begins executing synchronously up to its first real suspension point instead of waiting for the next loop iteration. This is what makes ordering predictable when a caller creates several tasks in sequence — each has already run its setup by the time the next is created.
 
@@ -150,7 +153,9 @@ Three behaviours worth knowing:
 
 **Duplicate coroutines are closed** (#3929). If the caller already built a coroutine object and the dedupe check decides to return the existing task, that orphan coroutine is explicitly `.close()`d. Without it, Python would emit a "coroutine was never awaited" `RuntimeWarning` — noisy and misleading, since the skip was intentional.
 
-Tasks are tracked in `_tracked_tasks` keyed by `task_id` (a random hex id when none is supplied), removed by a done-callback, and cancelled during `stop()`. The done-callback also logs unhandled exceptions at warning level when debug logging is on, which is why `TaskManager` (below) can note that "logging of exceptions is done by the `mass.create_task` helper".
+**`log_exceptions=False` demotes rather than drops.** The done-callback always retrieves a failed task's exception — otherwise asyncio logs a noisy "Task exception was never retrieved" at garbage-collection time — and logs it at `WARNING` by default, or `DEBUG` when `log_exceptions=False`. The flag is for work whose waiters report the failure themselves; demoting instead of silencing matters because work that outlives every waiter (`join_task` keeps it running) would otherwise fail with no trace anywhere.
+
+Tasks are tracked in `_tracked_tasks` keyed by `task_id` (a random hex id when none is supplied), removed by a done-callback, and cancelled during `stop()`. Because done-callbacks run one event-loop iteration *after* the task finished, the callback only untracks when the entry still points at **this** task — a caller may already have replaced it under the same `task_id`. Cancelled tasks return early without logging. This is why `TaskManager` (below) can note that "logging of exceptions is done by the `mass.create_task` helper".
 
 ### Three things called "tasks"
 

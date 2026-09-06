@@ -40,13 +40,13 @@ English source strings live in **nested** `strings.json` files, one per translat
 |---|---|---|
 | `music_assistant/strings.json` | `common.` | 1 (top-level sections: `config_entries`, `config_categories`, `media`, `player_options`, `errors`, `setup_flow`, `page`) |
 | `music_assistant/controllers/<name>/strings.json` | `core.<name>.` | 10 |
-| `music_assistant/providers/<domain>/strings.json` | `provider.<domain>.` | 113 |
+| `music_assistant/providers/<domain>/strings.json` | `provider.<domain>.` | 123 |
 
 The `common.` file is where shared strings live — a label like "Username" is authored once rather than 40 times.
 
 ### Building
 
-`scripts/build_translations.py` flattens every authoring file into one sorted, fully-qualified `key -> English` map at `music_assistant/translations/en.json` (currently ~2,500 keys). It is standalone by design — no `music_assistant` imports at all — so it runs without the server's import chain and under any models version.
+`scripts/build_translations.py` flattens every authoring file into one sorted, fully-qualified `key -> English` map at `music_assistant/translations/en.json` (currently ~2,790 keys). It is standalone by design — no `music_assistant` imports at all — so it runs without the server's import chain and under any models version.
 
 Two behaviours matter:
 
@@ -68,7 +68,7 @@ These are easy to conflate and mean different things:
 
 | List | Where | Count | Purpose |
 |---|---|---|---|
-| **UI locales** | `translations/*.json`, discovered at startup | **31** (30 translated files plus the `en` source) | Which languages the server can localize *its own output* into. Returned by `translations/locales` |
+| **UI locales** | `translations/*.json`, discovered at startup | **32** (31 translated files plus the `en` source) | Which languages the server can localize *its own output* into. Returned by `translations/locales` |
 | **Metadata language** | `LOCALES` in `controllers/metadata/constants.py` | **38** | The `CONF_LANGUAGE` option: which language to request from metadata providers, and the locale used for reverse-lookup of localized media names |
 
 The metadata list is larger because asking Spotify for German metadata does not require anyone to have translated MA's own UI into German. Neither list should be hardcoded into documentation — read `translations/` and `controllers/metadata/constants.py`. See [14-metadata.md](14-metadata.md) for the metadata-language setting.
