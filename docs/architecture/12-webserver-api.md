@@ -106,11 +106,11 @@ Plus one static-content mount: `/assets` → the frontend's `assets` subdirector
 
 **Frontend files are registered individually, not through a catch-all.** `setup()` walks `locate_frontend()` and appends one explicit `GET /{filename}` route per file found (skipping `.py`), each bound to `serve_static` with a `partial`. There is no `GET /{filename}` wildcard, so a request for a path the frontend does not ship falls through to the dynamic-route catch-all rather than being answered with a static file.
 
-**`/imageproxy` is not registered here.** The old query-string endpoint was replaced by opaque image ids in #3960 / #4544. `MetaDataController.post_setup()` now registers the canonical `/imageproxy/{image_id}?size=&fmt=` form as a **dynamic** route, on *both* the webserver and the streams controller, and unregisters it on teardown. See [14-metadata.md](14-metadata.md#image-proxy-system).
+**`/imageproxy` is not registered here.** Images are addressed by opaque id (#3960, #4544), and `MetaDataController.post_setup()` registers the canonical `/imageproxy/{image_id}?size=&fmt=` form as a **dynamic** route, on *both* the webserver and the streams controller, and unregisters it on teardown. See [14-metadata.md](14-metadata.md#image-proxy-system).
 
 **CORS** is deliberately narrow: only `/info` and `/auth/login` answer `OPTIONS`, via `_handle_cors_preflight`, which returns `Access-Control-Allow-Origin: *`, allows `GET, POST, OPTIONS` and the `Content-Type`/`Authorization` headers, and caches the preflight for 24 hours. `_handle_auth_login` repeats those headers on its own responses. Nothing else is cross-origin accessible.
 
-**`/preview` is token-addressed** (#5821). It no longer takes `?provider=&item_id=`; instead `create_preview_url(provider, item_id)` mints an opaque `secrets.token_urlsafe(16)` and returns `/preview?token=…`, with an unknown or expired token answered as **404**. Three details follow from what a preview URL is actually for:
+**`/preview` is token-addressed** (#5821): `create_preview_url(provider, item_id)` mints an opaque `secrets.token_urlsafe(16)` and returns `/preview?token=…`, with an unknown or expired token answered as **404**. It takes no `provider` / `item_id` query parameters. Three details follow from what a preview URL is actually for:
 
 - The path is **relative on purpose**. A client reaches this server through whatever address its own setup uses — HA ingress, a reverse proxy, the remote connection — and the advertised `base_url` is not necessarily any of them.
 - `PREVIEW_TOKEN_TTL` is **60 seconds** and the token is *not* single-use: it only has to survive the hop from the API response to the audio element that plays it, but players routinely re-request a media URL they have already opened.
@@ -151,7 +151,7 @@ The command system is the backbone of the MA API. Every controller method decora
 
 ### The `@api_command` Decorator
 
-Defined in `helpers/api.py`. Authorization is **scope-based** since #4613 — there is no `required_role` parameter, and the name no longer appears in any Python code:
+Defined in `helpers/api.py`. Authorization is **scope-based** (#4613). There is no `required_role` parameter anywhere in the Python code:
 
 ```python
 @api_command(
@@ -479,7 +479,7 @@ The URL itself embeds a **guest join code**: a `dashboard_viewer` guest account 
 
 ### Provider icons
 
-`providers/icon` (#4907) returns a provider icon variant as a base64 `data:` URI, gated on `Scope.PROVIDERS_READ`. Icons used to be inlined into every provider manifest; serving them on demand keeps the manifest payload small.
+`providers/icon` (#4907) returns a provider icon variant as a base64 `data:` URI, gated on `Scope.PROVIDERS_READ`. Serving them on demand keeps the manifest payload small.
 
 ### MCP
 

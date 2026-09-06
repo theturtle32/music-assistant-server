@@ -386,7 +386,7 @@ Which providers take part, and in what role:
 
 ### AirPlay
 
-The AirPlay provider was rearchitected around a unified `cliairplay` binary that handles native AirPlay 2, PTP, and MediaRemote (#4879). The former `protocols/` package — with its `_protocol.py` / `airplay2.py` / `raop.py` split behind a protocol abstraction — is gone. The current shape is `player.py` plus `control_player.py`, `stream.py` / `stream_session.py`, `sendspin_bridge.py`, and `pairing.py` for the interactive pairing flow. Nothing in the linking contract changed: AirPlay still registers `PlayerType.PROTOCOL` players with `AIRPLAY_ID` and MAC identifiers, and still commonly reports a locally administered MAC, which is why [MAC normalization](#normalization-for-matching) exists.
+The AirPlay provider was rearchitected around a unified `cliairplay` binary that handles native AirPlay 2, PTP, and MediaRemote (#4879). The shape is `player.py` plus `control_player.py`, `stream.py` / `stream_session.py`, `sendspin_bridge.py`, and `pairing.py` for the interactive pairing flow. Nothing in the linking contract changed: AirPlay still registers `PlayerType.PROTOCOL` players with `AIRPLAY_ID` and MAC identifiers, and still commonly reports a locally administered MAC, which is why [MAC normalization](#normalization-for-matching) exists.
 
 ### local_audio (retired)
 

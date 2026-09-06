@@ -278,7 +278,7 @@ AsyncServiceInfo(
 )
 ```
 
-**The registration publishes a list of addresses, not one.** The mDNS record used to carry the single `webserver.publish_ip`; #4646 introduced `webserver.publish_addresses` and advertises all of them, so one record can cover both IPv4 and IPv6 (and several interfaces on a multi-homed host). That matters on a dual-stack LAN, where a client would otherwise only ever see whichever single family happened to be picked.
+**The registration publishes a list of addresses, not one.** `webserver.publish_addresses` (#4646) advertises all of them, so one record can cover both IPv4 and IPv6 (and several interfaces on a multi-homed host). That matters on a dual-stack LAN, where a client would otherwise only ever see whichever single family happened to be picked.
 
 The webserver keeps both: `publish_ip` is still the single primary address baked into `base_url`, while `publish_addresses` is computed alongside it at setup by `_get_publish_addresses(bind_ip, publish_ip, all_addresses)` — respecting a specific configured bind IP, otherwise using the host's detected addresses. The **streams** controller is unaffected and still publishes one `publish_ip`, because a player is handed exactly one stream URL; see [10-streaming-pipeline.md](10-streaming-pipeline.md#network-architecture).
 

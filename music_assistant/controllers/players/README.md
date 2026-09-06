@@ -100,8 +100,8 @@ Mixin class containing all protocol linking logic:
 ### 3. AudioSourceMixin ([audio_sources.py](audio_sources.py))
 
 Owns the live external sources playing on players. An `AudioSourceSession` is held per player in
-`_source_sessions`, independent of that player's queue — selecting Spotify Connect no longer
-rewrites the queue:
+`_source_sessions`, independent of that player's queue — selecting Spotify Connect leaves the
+queue untouched:
 - `get_audio_source_session` / `get_player_audio_source` — read the live session
 - `claim_audio_source_session` — commit a stream request, evicting whichever other player held
   the source (first request for a selection only)

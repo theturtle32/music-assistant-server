@@ -379,7 +379,7 @@ The config controller exposes the whole settings surface as API commands. Every 
 | `config/players/save`, `config/players/remove`, `config/players/invoke_action`, `config/players/setup`, `config/players/dsp/save`, `config/players/dsp/apply_preset`, `config/dsp_presets/save`, `config/dsp_presets/remove`, `config/player_queues/save` | `config.players.write` |
 | `config/flows/get`, `config/flows/submit`, `config/flows/abort` | any authenticated user, then re-checked against the scope the flow's *starting* command required |
 
-Note that `config/providers/save` no longer creates instances: adding a provider goes exclusively through `config/providers/setup`. Scope semantics and enforcement are documented in [12-webserver-api.md](12-webserver-api.md).
+Note that `config/providers/save` does not create instances: adding a provider goes exclusively through `config/providers/setup`. Scope semantics and enforcement are documented in [12-webserver-api.md](12-webserver-api.md).
 
 ## SQLite Databases
 
@@ -425,7 +425,7 @@ PRAGMA cache_size=-<scaled>;
 
 These settings trade durability for speed — appropriate for a music library where data can always be re-synced from providers. On close, `PRAGMA optimize` is called to update query planner statistics.
 
-The last two PRAGMAs are no longer fixed values. `get_sqlite_memory_settings()` scales them to the host's total RAM: capable hosts (≥ 4 GB, or unknown memory, which fails open) keep the historical 64 MB page cache and a ~2 GiB mmap ceiling, hosts with 8/12/16 GB or more get progressively larger page caches to keep a big library hot, and memory-constrained devices drop to a 16–32 MB cache and a 256 MB–1 GiB mmap ceiling. Callers may override both per connection via `setup(cache_size_kib=…, mmap_size_bytes=…)`.
+The last two PRAGMAs are not fixed values. `get_sqlite_memory_settings()` scales them to the host's total RAM: capable hosts (≥ 4 GB, or unknown memory, which fails open) keep the historical 64 MB page cache and a ~2 GiB mmap ceiling, hosts with 8/12/16 GB or more get progressively larger page caches to keep a big library hot, and memory-constrained devices drop to a 16–32 MB cache and a 256 MB–1 GiB mmap ceiling. Callers may override both per connection via `setup(cache_size_kib=…, mmap_size_bytes=…)`.
 
 The class also supports list parameters in queries: a list value in `params` is automatically expanded to `(:_param_0, :_param_1, ...)` SQL syntax via the `query_params` helper.
 

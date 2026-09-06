@@ -92,7 +92,7 @@ Defined in `music_assistant/controllers/players/helpers.py`, this decorator wrap
 5. **Optional locking** — see below.
 6. **Error wrapping** — catches exceptions, re-raises as `PlayerCommandFailed`.
 
-The decorator does **no rate limiting**. The per-player `Throttler(1, 0.05)` that used to wrap every command was removed in #4024 ("Drop redundant per-player throttler and harden the command lock") — it added latency to every command while the purpose-scoped locks already provide the serialization that actually matters.
+The decorator does **no rate limiting** — deliberately (#4024). Throttling every command adds latency to all of them, while the purpose-scoped locks already provide the serialization that actually matters.
 
 `@handle_player_command(lock=PlayerLockPurpose.…)` wraps the command body in `get_player_lock(player.player_id, purpose)`. The argument is a `PlayerLockPurpose` member, not a boolean, and locks are keyed on `(purpose, player_id)` rather than on the function name — see [Per-Player Locking](#per-player-locking).
 
@@ -236,7 +236,7 @@ Power is a unifying abstraction that the controller normalizes across diverse ha
 7. **Refresh** — `player.refresh_state()` so the UI reflects the change even when the device is slow to report.
 8. **Auto-play on power on** — if `powered=True`, the player is neither grouped nor synced, `CONF_AUTO_PLAY` is enabled, the active source is the player's own queue (or unset), and no announcement is in progress, resumes the queue via `player_queues.resume()`.
 
-> **Note (#3659):** Earlier versions of the controller forwarded power commands to a designated protocol player when `power_control` was a player ID. That forwarding has been removed — `power_control` now only accepts `NONE`, `NATIVE`, `FAKE`, or an external `PlayerControl` ID. Protocol players are no longer used as a delegated power target.
+> **Note:** unlike volume and mute, power is **never delegated to a protocol player** (#3659). `power_control` resolves only to `NONE`, `NATIVE`, `FAKE`, or an external `PlayerControl` ID. A stored value naming a protocol player does not resolve as a `PlayerControl`, so it falls through to auto-select — worth knowing when reading a config that still carries one.
 
 **Power-on demand**: Several command handlers (`_handle_play_media`, `_handle_cmd_play`, `_handle_set_members`) call `_handle_cmd_power(player_id, True, skip_auto_play=True)` before executing, ensuring the player is powered on before receiving playback commands.
 
@@ -256,7 +256,7 @@ Volume and mute follow the same control-chain pattern as power: the per-player `
 6. **`FAKE`** — stores the **logical** (unscaled) value in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
 7. **`NONE`** — raises `UnsupportedFeaturedException`.
 8. **External `PlayerControl`** — `control.volume_set(device_volume)`.
-9. **Protocol player** — `await protocol_player.volume_set(device_volume)` directly (#5697). This used to recurse back into `_handle_cmd_volume_set` for the protocol player; calling the protocol player's own setter avoids re-running the whole resolution chain (limits, mute lock, source notification) against a player none of it is configured on.
+9. **Protocol player** — `await protocol_player.volume_set(device_volume)` directly (#5697). Calling the protocol player's own setter, rather than re-entering `_handle_cmd_volume_set`, avoids re-running the whole resolution chain (limits, mute lock, source notification) against a player none of it is configured on.
 
 **Passing `device_volume` on redirect (#4461)** is deliberate for both delegating branches. The min/max limits are configured on the *user-facing* player; the external control and the protocol player have no limits of their own, so their own scaling is an identity pass-through. Forwarding the logical value instead would silently discard the configured range.
 
@@ -313,14 +313,14 @@ MA re-hosts announcement audio on its own stream server via `streams.get_announc
 3. Delegates to `_handle_select_source`, which:
    - If switching away from a different source, stops current playback and waits for the state update.
    - If the source is a known queue ID → `set_active_mass_source(source)` and return.
-   - **Legacy plugin-source compatibility**: the old API used a plugin provider's `instance_id` directly as the source string. Plugin sources are now first-class `AudioSource` media items played through `player_queues.play_media` (#3938), so a source that resolves to a `PluginProvider` is translated into that flow — but only when the provider exposes **exactly one** `AudioSource`, since the old API was always a 1:1 mapping. Multi-source providers raise, directing the caller to the explicit URI. This keeps old frontends, third-party scripts, and HA automations working.
+   - **Legacy plugin-source compatibility**: `select_source` also accepts a plugin provider's `instance_id` directly as the source string, rather than an `AudioSource` URI. Live sources are first-class `AudioSource` media items played through `player_queues.play_media` (#3938), so a source that resolves to a `PluginProvider` is translated into that flow — but only when the provider exposes **exactly one** `AudioSource`, since the old API was always a 1:1 mapping. Multi-source providers raise, directing the caller to the explicit URI. This keeps old frontends, third-party scripts, and HA automations working.
    - Otherwise → requires `PlayerFeature.SELECT_SOURCE`, validates the ID against `state.source_list`, calls `player.select_source()`.
 
 `AudioSource` internals are covered in [11-plugin-system.md](11-plugin-system.md); queue management in [09-player-queues.md](09-player-queues.md).
 
 ## Live AudioSource Sessions
 
-An external source playing on a player used to be modelled as a `MediaType.AUDIO_SOURCE` **queue item**, which meant selecting one had to clear and rewrite the player's queue. That was the wrong shape: switching to Spotify Connect and back destroyed whatever the user had queued up, and every question about the live source ("what is it playing?", "can it seek?") had to be answered by inspecting a queue item. `AudioSourceMixin` (`players/audio_sources.py`, #5913/#5914) replaced it with a per-player session held in `_source_sessions`, keyed by `player_id`. **The queue is left completely intact.**
+An external source playing on a player is tracked as a **per-player session**, not as a queue item: `AudioSourceMixin` (`players/audio_sources.py`, #5913/#5914) holds them in `_source_sessions`, keyed by `player_id`. **Selecting a live source leaves the queue completely intact**, so switching to Spotify Connect and back does not destroy whatever the user had queued up, and questions about the live source ("what is it playing?", "can it seek?") are answered from the session rather than by inspecting a queue item.
 
 `AudioSourceSession` carries what the source is, who owns it, and what it reports about itself:
 

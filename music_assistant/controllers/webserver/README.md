@@ -189,10 +189,6 @@ client supplies is classified as trusted, external or blocked by
 [helpers/redirect_validation.py](../../helpers/redirect_validation.py) before the token is
 appended to it, which is what makes the redirect safe across origins.
 
-> The `auth/authorization_url?for_remote_client=true` + `auth/oauth_status` polling flow
-> that earlier revisions of this document described was removed along with the
-> `AUTH_SESSION` popup mechanism, and no longer exists.
-
 ### Ingress Authentication (Home Assistant Add-on)
 
 When running as a Home Assistant add-on:

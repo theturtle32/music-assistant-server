@@ -2,12 +2,12 @@
 
 The Player Queue system sits between the media library and the audio streaming pipeline. Every player in Music Assistant has an associated queue that holds the ordered list of items to play, tracks playback state, and orchestrates the handoff between tracks. The `PlayerQueuesController` is the central coordinator — it resolves media into queue items, drives playback via the player controller, and pre-warms audio buffers so transitions are seamless.
 
-Two things dominate the current design and are worth internalizing before reading further:
+Two structural facts dominate the design and are worth internalizing before reading further:
 
-1. **The controller is a package, not a module.** `controllers/player_queues.py` (then ~3300 lines) became `controllers/player_queues/`, where the public controller composes three logic mixins and four stateful helper services (#4263, #4509).
-2. **`PlayerQueue` is the wire model; `PlayerQueueData` is the server-side record.** The pile of parallel `queue_id`-keyed dictionaries that used to live on the controller is now one `PlayerQueueData` per queue, and the fields that never belonged on the wire moved onto it.
+1. **The controller is a package, not a module.** `controllers/player_queues/` composes the public controller from three logic mixins and four stateful helper services (#4263, #4509).
+2. **`PlayerQueue` is the wire model; `PlayerQueueData` is the server-side record.** There is exactly one `PlayerQueueData` per queue, holding both the wire snapshot and every field that does not belong on the wire — items, sources, user, stream session, runtime flags.
 
-The [Player Queues README](../../music_assistant/controllers/player_queues/README.md) is the in-tree companion. It owns the module inventory, the per-module responsibilities, and the config inventory; this document owns the cross-stack integration (players, streams, events, API), the end-to-end flows, and what changed relative to the monolith.
+The [Player Queues README](../../music_assistant/controllers/player_queues/README.md) is the in-tree companion. It owns the module inventory, the per-module responsibilities, and the config inventory; this document owns the cross-stack integration (players, streams, events, API) and the end-to-end flows.
 
 ## Package Structure
 
@@ -130,7 +130,7 @@ Two mashumaro hooks keep older clients working across the rename:
 - `__pre_deserialize__` accepts the legacy `dont_stop_the_music_enabled` and `radio_source` keys and maps them onto `autoplay_enabled` / `sources`.
 - `__post_serialize__` mirrors `dont_stop_the_music_enabled` back out, and emits `radio_source` as a permanently empty list.
 
-Fields that used to be on this model and are not any more: `dont_stop_the_music_enabled` (renamed to `autoplay_enabled`), `radio_source` (renamed to `sources` and re-typed from `list[MediaItemType]` to `list[ItemMapping]`), `items_last_updated` (removed), and `flow_mode_stream_log` / `next_item_id_enqueued` / `session_id` / `userid` / `enqueued_media_items` (all moved to `PlayerQueueData`).
+The **restore path carries the same aliases**, independently of the wire hooks: `PlayerQueueData.from_cache` reads `queue_data.get("sources", queue_data.get("radio_source", []))`, so a cache written before the rename still restores. `PlayerQueuesController.set_dont_stop_the_music` likewise survives as a thin alias for `set_autoplay`.
 
 ### `PlayerQueueData` — the server record
 
@@ -317,13 +317,13 @@ Playlists, artists, genres and podcasts are also marked played as user-initiated
 
 ## Dynamic Playlists and the Managed Pool
 
-Radio mode and dynamic playlists used to be two separate mechanisms with two separate refill paths. They are now one model: a dynamic playlist is a *source* on the queue, and a queue with any dynamic source becomes a small bounded pool that is topped up as it plays down.
+Endless playback is one model: a dynamic playlist is a *source* on the queue, and a queue with any dynamic source becomes a small bounded pool that is topped up as it plays down.
 
 ### Radio mode is deprecated
 
-`radio_mode=True` no longer builds a mix itself. `_handle_play_media` logs a deprecation warning and rewrites each seed into the `radio_playlist` provider's URI — `radio_playlist://playlist/<seed-uri>`, unless the URI already starts with `radio_playlist://` — then clears the flag and continues down the ordinary enqueue path. The `radio_playlist` provider (`providers/radio_playlist/`) is a plugin provider that generates a dynamic playlist from an artist/album/track/genre/playlist seed; because the playlist's `item_id` *is* the seed URI, the URI round-trips back to the seed. A "radio" is therefore just a dynamic playlist like any station or smart playlist.
+The `radio_mode=True` parameter is still accepted but builds nothing itself. `_handle_play_media` logs a deprecation warning and rewrites each seed into the `radio_playlist` provider's URI — `radio_playlist://playlist/<seed-uri>`, unless the URI already starts with `radio_playlist://` — then clears the flag and continues down the ordinary enqueue path. The `radio_playlist` provider (`providers/radio_playlist/`) is a plugin provider that generates a dynamic playlist from an artist/album/track/genre/playlist seed; because the playlist's `item_id` *is* the seed URI, the URI round-trips back to the seed. A "radio" is therefore just a dynamic playlist like any station or smart playlist.
 
-Gone with it: `_fill_radio_tracks`, the `radio_mode_base_tracks()` abstract provider method, and `_get_radio_tracks`. `RADIO_TRACK_MAX_DURATION_SECS` (20 minutes) still exists, but it moved to `controllers/music/constants.py` and is now applied by the `radio_playlist` provider when it assembles a batch — the queue controller no longer filters on duration at all.
+`RADIO_TRACK_MAX_DURATION_SECS` (20 minutes) lives in `controllers/music/constants.py` and is applied by the `radio_playlist` provider when it assembles a batch — the queue controller no longer filters on duration at all.
 
 ### A dynamic playlist is a source, not a batch
 
@@ -448,7 +448,7 @@ Mode details:
 
 Smart shuffle is a per-queue setting with a global default (#4537). When it is off, `load(shuffle=True)` is a plain `random.sample`. When it is on, `SmartShuffle.arrange()` takes one recency snapshot for the queue's user and runs the pure `_arrange` algorithm (#4475, #4773).
 
-This is a genuine algorithm now, not the name-adjacency check that `_smart_shuffle` used to be: `_smart_shuffle` on the controller is the `SmartShuffle` service instance, not a method.
+Note that `_smart_shuffle` on the controller is the `SmartShuffle` **service instance**, not a method — an easy misread when following call sites.
 
 The algorithm has two stages. First, **recency tiering** puts each item in one of three buckets:
 
@@ -567,7 +567,7 @@ Details worth knowing:
 
 Three mechanisms overlap here, and they are easy to conflate.
 
-**1. Buffer pre-warm, ~60 s before the end.** During PCM streaming in `get_queue_item_stream`, once the consumed position passes `duration - 60` the streams layer calls `player_queues.prepare_next_audio_buffer(queue_id)` — the method formerly known as the private `_prepare_next_audio_buffer()`, now public on `StreamFeederMixin`. It only fires for a next item that is a `TRACK`: live sources would open an upstream connection that sits idle and likely times out before the player consumes it. The method itself is defensive — it returns early for `AUDIO_SOURCE` items, when `next_item` still points at the currently playing track (a real race while player state lags), and when a valid buffer already exists — then spawns a task to resolve stream details if needed and call `get_audio_buffer(..., reason="prepare_next", allow_provider_match=False)` — a *pre-warm* must not consume a provider slot by switching mappings, since the currently playing track's own needs come first.
+**1. Buffer pre-warm, ~60 s before the end.** During PCM streaming in `get_queue_item_stream`, once the consumed position passes `duration - 60` the streams layer calls `player_queues.prepare_next_audio_buffer(queue_id)`, public on `StreamFeederMixin`. It only fires for a next item that is a `TRACK`: live sources would open an upstream connection that sits idle and likely times out before the player consumes it. The method itself is defensive — it returns early for `AUDIO_SOURCE` items, when `next_item` still points at the currently playing track (a real race while player state lags), and when a valid buffer already exists — then spawns a task to resolve stream details if needed and call `get_audio_buffer(..., reason="prepare_next", allow_provider_match=False)` — a *pre-warm* must not consume a provider slot by switching mappings, since the currently playing track's own needs come first.
 
 **2. Preloading stream details and enqueuing.** When the streams layer reports `track_loaded_in_buffer(queue_id, item_id)`, the controller records `index_in_buffer`, signals an update, schedules `_cleanup_stale_queue_buffers`, and calls `_preload_next_item`. That waits (one-second polls, `max(120, int(duration) + 10)` of them) for the buffered item to actually become the queue's `current_item` — this prevents preloading too early while the player is still working through a previously enqueued item — and bails out if the queue drains to no current item in the meantime. Then `load_next_queue_item()` resolves the next item's stream details and `_enqueue_next_item()` is scheduled. Radio items and items without a duration skip this path entirely.
 
@@ -694,7 +694,7 @@ Finally an `EventType.MEDIA_ITEM_PLAYED` event carries a `MediaItemPlaybackProgr
 
 ## Persistence and Restore
 
-Queues and their settings now survive a restart (#4529). The cache format is owned entirely by `PlayerQueueData`; the wire `PlayerQueue` no longer carries a `from_cache()` hook or any other cache logic of its own.
+Queues and their settings survive a restart (#4529). The cache format is owned entirely by `PlayerQueueData` — the wire `PlayerQueue` carries no cache logic of its own.
 
 ### Two cache categories
 

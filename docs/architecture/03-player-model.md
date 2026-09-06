@@ -129,7 +129,7 @@ _CONFIG_CACHED_PROPS = frozenset({"hide_in_ui", "expose_to_ha"})
 
 These two are derived purely from config, which only changes through `set_config()`. That method clears the cache *unconditionally* (config feeds many other cached values too) and marks the state dirty, so the config-derived entries stay correct while surviving the far more frequent per-update invalidation. Everything else — including cached properties defined by provider subclasses — is dropped on every `update_state()` call.
 
-`icon` used to be in this set and no longer is (#5521). It now falls back to `default_icon`, which calls `get_default_player_icon(player_type, provider_domain, manufacturer, model)` in `helpers/player.py` — so the icon depends on live device attributes rather than on config alone, and must be recomputed like any other derived value. That helper resolves in order: group and stereo-pair types first, then a per-provider default (`airplay` → `airplay`, `sonos` → `sonos`, `wiim` → `wiim`, …), then a per-player-type default (`DISPLAY` → `monitor`, `LIGHT` → `sun`, `SOURCE` → `vinyl`, `VISUALIZER` → `monitor`), then substring matches against manufacturer and model (`homepod`, `apple tv`, `nest audio`, `voice pe`, `soundbar`, `carplay`, …).
+`icon` is deliberately **not** in this set (#5521): it falls back to `default_icon`, which calls `get_default_player_icon(player_type, provider_domain, manufacturer, model)` in `helpers/player.py` — so the icon depends on live device attributes rather than on config alone, and must be recomputed like any other derived value. That helper resolves in order: group and stereo-pair types first, then a per-provider default (`airplay` → `airplay`, `sonos` → `sonos`, `wiim` → `wiim`, …), then a per-player-type default (`DISPLAY` → `monitor`, `LIGHT` → `sun`, `SOURCE` → `vinyl`, `VISUALIZER` → `monitor`), then substring matches against manufacturer and model (`homepod`, `apple tv`, `nest audio`, `voice pe`, `soundbar`, `carplay`, …).
 
 ## Change Detection
 
@@ -255,7 +255,7 @@ The override is gated on the player *owning* the source rather than merely heari
 
 ### Active Group Resolution
 
-`__final_active_group` answers "is some group player currently *holding* this player?", which determines whether commands aimed at the player get redirected to the group. The test is no longer "is the group playing or paused":
+`__final_active_group` answers "is some group player currently *holding* this player?", which determines whether commands aimed at the player get redirected to the group. Note the test is **not** "is the group playing or paused":
 
 - PROTOCOL players always resolve to `None` — they follow their parent's group state.
 - For every other GROUP player, the **raw** `powered` attribute is read rather than `state.powered`. A group's own `power()` sets `_attr_powered` directly, while `state.powered` routes through `__final_power_state` and can be `None` for `power_control == NONE` even while the group is actively capturing members.
@@ -491,11 +491,11 @@ The base declares no `PLAY_MEDIA`; the player controller routes playback to a li
 - **Delegated transport** — `stop`, `play`, `pause`, `next_track`, `previous_track`, `seek`, `set_shuffle`, `set_repeat`.
 - **External-source surfacing** — the interesting part, below.
 
-Subclasses supply only `_backing_protocol_player_ids()`, which is why `UniversalPlayer` is now a thin wrapper over its member id list.
+Subclasses supply only `_backing_protocol_player_ids()`, which is why `UniversalPlayer` is a thin wrapper over its member id list.
 
 ### External sources on a linked protocol
 
-Two module-level constants (moved here from the Universal Player, which used to own them) handle the case where something plays on a linked protocol *without going through Music Assistant* — someone casts to the device's Chromecast endpoint directly:
+Two module-level constants handle the case where something plays on a linked protocol *without going through Music Assistant* — someone casts to the device's Chromecast endpoint directly:
 
 ```python
 EXTERNAL_SOURCE_PROTOCOLS = {"chromecast", "dlna"}

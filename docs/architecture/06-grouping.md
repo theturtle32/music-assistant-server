@@ -177,7 +177,7 @@ Two guards in that flow are worth calling out:
 - **Stuck-synced leader.** If the freshly selected leader still believes it is synced to a previous leader (protocol-level state that has not propagated yet), `_form_syncgroup` waits for `synced_to` to clear. `_wait_member_unsynced` first waits 5s, then tries to *kick* the member from its stale parent and waits 2s more — this rescues the common Sonos UPnP event-lag case. If the member is genuinely stuck, the form **aborts** rather than issuing a `play_media` that the provider would reject with "I'm synced to another player".
 - **Staleness re-checks.** After each `await`, the method re-checks that `self.sync_leader` is still the leader it pinned. A concurrent dissolve or re-lead makes the in-flight form attempt stale, and it returns instead of acting on the old leader.
 
-Formation is no longer serialized by a method-level `@lock` decorator. Instead, each mutating step takes the controller's purpose-scoped lock — `get_player_lock(leader, PlayerLockPurpose.PLAYBACK)` — around the `_handle_set_members` call, and `play()` / `play_media()` hold the group's own playback lock until the leader confirms it is playing (`_await_leader_playback`, up to `PLAYBACK_START_TIMEOUT` = 5s). Holding it that long prevents a concurrent (un)group command from racing a start that is still in flight at the device, which would otherwise strand a player streaming outside the group. See [04-player-controller.md](04-player-controller.md#per-player-locking).
+Formation is not serialized by a method-level `@lock` decorator. Each mutating step instead takes the controller's purpose-scoped lock — `get_player_lock(leader, PlayerLockPurpose.PLAYBACK)` — around the `_handle_set_members` call, and `play()` / `play_media()` hold the group's own playback lock until the leader confirms it is playing (`_await_leader_playback`, up to `PLAYBACK_START_TIMEOUT` = 5s). Holding it that long prevents a concurrent (un)group command from racing a start that is still in flight at the device, which would otherwise strand a player streaming outside the group. See [04-player-controller.md](04-player-controller.md#per-player-locking).
 
 > **Why `_handle_set_members` and not `cmd_set_members`?** `cmd_set_members` redirects commands targeting a member of an active group player back to the group itself (see [Active-Group Forwarding](#active-group-forwarding)). If `_form_syncgroup` called `cmd_set_members(sync_leader_id, ...)`, that redirect would loop the command back into `SyncGroupPlayer.set_members` on the same syncgroup. The implementation deliberately calls the lower-level `_handle_set_members` to bypass the redirect. The same reasoning applies to `_dissolve_syncgroup` and `SyncGroupPlayer.set_members` below, and to the `_handle_cmd_stop` / `_handle_play_media` calls the group makes against its leader.
 
@@ -223,7 +223,7 @@ was_playing = self.playback_state == PlaybackState.PLAYING or (
 
 ### Dynamic Leader Switch
 
-Removing the sync leader from a *playing* group used to require a full dissolve + re-form cycle (a brief audio gap). Some protocols support a **seamless leader handoff** at the protocol level: the live session keeps running while leadership transfers to another member (#3672).
+Removing the sync leader from a *playing* group would otherwise mean a full dissolve and re-form cycle, with a brief audio gap. Where the protocol supports it, MA instead performs a **seamless leader handoff**: the live session keeps running while leadership transfers to another member (#3672).
 
 Eligibility is expressed by exactly one thing — membership of the `PROVIDERS_WITH_DYNAMIC_LEADER_SWITCH` tuple in `sync_group/constants.py`, currently **AirPlay**, **Snapcast**, and **Sendspin**. There is no per-provider capability property; the domain checked is that of the player owning the *live session* (`_active_session_player()`), which is the active protocol player when the leader is streaming via a protocol, and the leader itself otherwise.
 
@@ -353,7 +353,7 @@ def is_active_session(self) -> bool:
 3. Ungroups it if it is synced to another player.
 4. Powers it on if it has a power control.
 
-A newly added member joins a **live** stream immediately: `set_members` sends it the per-member stream URL when `self.stream` is still running. The `self.powered` gate that used to guard this is gone with the session refactor, since a group now normally has `_attr_powered = None`.
+A newly added member joins a **live** stream immediately: `set_members` sends it the per-member stream URL when `self.stream` is still running. There is no `self.powered` gate on this path, because a group normally has `_attr_powered = None`.
 
 ### Playback Flow
 
