@@ -12,14 +12,42 @@ The first two are covered together because they share one contract. The third is
 
 ## The provider-feature pattern
 
-**There is no central AI abstraction.** No `mass.ai`, no AI controller, no registry, no shared prompt builder, no shared retry policy. A consumer that wants an LLM asks the provider registry for anything that declares the feature and calls the hook directly:
+**There is still no AI controller** — no `mass.ai`, no cross-cutting AI state, no shared prompt builder, no shared retry policy. AI is not a subsystem; it is a request/response capability that some plugin happens to offer, exactly like lyrics lookup or image resolution, and it stays modelled as a provider feature.
+
+What *did* get factored out is **which backend answers**. Discovery, selection and the config picker are shared in `helpers/plugin_engines.py` (#5253), because once more than one plugin could serve a hook — and once a single plugin could expose several — every consumer reimplementing "pick a provider" produced both duplicated code and inconsistent behaviour. The prompt, the timeout, the parsing and the failure policy remain each consumer's own.
+
+### AI and TTS engines
+
+The unit of choice is an **engine**, not a provider. One plugin can expose several — Home Assistant exposes one per matching entity, `openai_compatible` one per configured model — so treating the plugin as the choice would make half the available backends unreachable.
 
 ```python
-providers = mass.get_providers_supporting_feature(ProviderFeature.AI_QUERY)
-response: str = await providers[0].ai_query(prompt)
+@dataclass(kw_only=True)
+class PluginEngine:
+    id: str                    # provider-scoped
+    name: str
+    provider: PluginProvider
+
+    @property
+    def uid(self) -> str:      # globally unique; what config stores
+        return f"{self.provider.instance_id}/{self.id}"
 ```
 
-This is a deliberate consequence of MA's provider model rather than an oversight. AI is not a subsystem with cross-cutting state to manage — it is a request/response capability that some plugin happens to offer, exactly like lyrics lookup or image resolution. Adding a controller would buy indirection and nothing else. The cost is that **each consumer implements its own discovery, timeout, retry, validation, and failure policy**, and as the table further down shows, no two of them do it the same way.
+`AIEngine` and `TTSEngine` are marker subclasses for the two hooks. `PluginEngine` is **server-side only and never serialized to clients**. The `/` separator is chosen because it occurs in neither MA instance ids nor Home Assistant entity ids, so the uid can always be split back apart.
+
+The helper surface:
+
+| Function | Role |
+|---|---|
+| `get_ai_engines(mass)` / `get_tts_engines(mass)` | Every engine currently exposed by loaded plugins declaring the feature, in a stable order |
+| `resolve_ai_engine(mass, selected)` / `resolve_tts_engine(...)` | Look up a configured uid; returns `None` when unset or when it names an engine that no longer exists |
+| `select_ai_engine(provider, key)` / `select_tts_engine(...)` | Read a provider's stored selection, **adopting the first available engine when it has none yet**, optionally from `setup_data` |
+| `select_core_tts_engine(mass, domain, key)` | The same, for a core controller's config (the player controller's announcement engine) |
+| `create_ai_engine_config_entries(...)` / `create_tts_engine_config_entries(...)` | Build the picker `ConfigEntry` so every consumer's setting looks and behaves alike |
+| `engine_display_name(engine)` | `"{provider name} | {engine name}"` — engine names alone are ambiguous, since two plugins can expose the same one |
+
+**One rule is repeated in every docstring: another engine is never substituted for a missing one.** An unset selection auto-adopts the first available engine, but a selection the user made *explicitly* is either honoured or reported as missing. Silently falling back would send a prompt to a different model — with different cost, latency and output — while the UI still showed the original choice.
+
+What a consumer still owns is everything downstream of that: the prompt, the timeout, the validation and the failure policy. As the table further down shows, they do not all agree.
 
 ### The two hooks
 
@@ -27,8 +55,12 @@ Both live on `PluginProvider` (`music_assistant/models/plugin.py`) and were adde
 
 | Hook | Signature | Gate | Returns |
 |---|---|---|---|
-| `ai_query` | `(query: str) -> str` | `ProviderFeature.AI_QUERY` | The model's response as plain text |
-| `get_tts_message` | `(message: str, language: str \| None = None) -> StreamDetails` | `ProviderFeature.TTS` | `StreamDetails` for the synthesized audio |
+| `ai_query` | `(query: str, engine_id: str \| None = None) -> str` | `ProviderFeature.AI_QUERY` | The model's response as plain text |
+| `get_tts_message` | `(message: str, language=None, engine_id=None, options=None) -> StreamDetails` | `ProviderFeature.TTS` | `StreamDetails` for the synthesized audio |
+| `get_ai_engines` | `() -> list[AIEngine]` | `ProviderFeature.AI_QUERY` | The selectable AI backends this plugin exposes |
+| `get_tts_engines` | `() -> list[TTSEngine]` | `ProviderFeature.TTS` | The selectable TTS backends this plugin exposes |
+
+Both invocation hooks take a provider-scoped `engine_id` — the part of the uid after the separator — so a plugin exposing several engines knows which one the caller picked. `get_tts_message` additionally takes free-form `options`, which is how per-host voice settings reach a backend without the core needing to model them.
 
 The contracts are deliberately thin. `ai_query` takes **one string and returns one string** — there is no message-role structure, no system prompt parameter, no conversation history, no token budget, no streaming, no tool-calling, and no structured-output request. A consumer that wants JSON back asks for JSON in the prompt and validates the reply itself. A consumer that wants a system prompt concatenates it into the query.
 
@@ -36,7 +68,9 @@ The contracts are deliberately thin. `ai_query` takes **one string and returns o
 
 ### Provider discovery
 
-`mass.get_providers_supporting_feature(feature, priority=...)` returns every **available** provider declaring the feature, grouped into tiers by provider type in the order given by `priority` (default `MUSIC`, `METADATA`, `PLUGIN`) and sorted within each tier by the provider's own `priority` attribute. Provider types omitted from the tuple are excluded entirely. AI Radio passes `priority=(ProviderType.PLUGIN,)` to restrict the search; the quiz and playlist consumers take the default and filter with `isinstance(provider, PluginProvider)` instead.
+`mass.get_providers_supporting_feature(feature, priority=...)` returns every **available** provider declaring the feature, grouped into tiers by provider type in the order given by `priority` (default `MUSIC`, `METADATA`, `PLUGIN`) and sorted within each tier by the provider's own `priority` attribute. Provider types omitted from the tuple are excluded entirely.
+
+Consumers no longer call it directly for AI or TTS: `_collect_engines` in `plugin_engines.py` does it once, gathers each plugin's engines, and returns them in a stable order. Stability matters because "adopt the first available engine" is the auto-selection rule, and it must resolve to the same engine across restarts.
 
 ### What a consumer can and cannot assume
 
@@ -52,15 +86,19 @@ The contracts are deliberately thin. `ai_query` takes **one string and returns o
 
 Here is how the four in-tree consumers differ, which is the clearest illustration of the missing shared policy:
 
-| Consumer | Discovery | Timeout | Retry / fallback | On total failure |
-|---|---|---|---|---|
-| **AI Radio** text | `priority=(PLUGIN,)`, take `[0]` | none | none | Raises `MusicAssistantError` naming the plugin; the whole station run fails. A `NotConnected` error is rewritten into an actionable "reconnect the provider" message rather than surfacing the raw exception |
-| **AI Radio** TTS | `priority=(PLUGIN,)`, take `[0]` | none | none | Raises; the run fails |
-| **Music Quiz** distractors | all AI plugins sorted by `instance_id`, take `[0]` | 30 s | none | Returns `None`; the round silently falls back to non-AI distractors |
-| **Music Quiz** trivia | all AI plugins sorted by `instance_id`, iterate | 30 s per attempt | 2 attempts per provider, then next provider | Raises a localized `InvalidDataError`; trivia is unavailable as a quiz type |
-| **Smart Playlists** description | `get_providers_supporting_feature(AI_QUERY)` (type tiers + priority), then `isinstance(PluginProvider)`, iterate | none | next provider on exception or empty reply | Returns `None`; the playlist just has no description |
+Every consumer now resolves **one configured engine** through the shared helpers rather than walking the provider registry itself. What still differs is the timeout and what happens when the call fails:
 
-Sorting by `instance_id` is not cosmetic: it makes provider selection deterministic across restarts when several AI plugins are configured, which matters for a game that must behave the same way for every player.
+| Consumer | Engine selection | Timeout | Retry / fallback | On total failure |
+|---|---|---|---|---|
+| **AI Radio** text | `resolve_ai_engine` (stored via `select_ai_engine(..., in_setup_data=True)`) | 180 s | none | Raises `MusicAssistantError` naming the plugin; the whole station run fails. A `NotConnected` error is rewritten into an actionable "reconnect the provider" message rather than surfacing the raw exception |
+| **AI Radio** TTS | `resolve_tts_engine`, same storage | 180 s | none | Raises; the run fails |
+| **Music Quiz** distractors | `select_ai_engine(self, CONF_AI_ENGINE)` | 30 s | none | Returns `None`; the round silently falls back to non-AI distractors |
+| **Music Quiz** trivia | the same configured engine | 30 s per attempt | 2 attempts | Raises a localized `InvalidDataError`; trivia is unavailable as a quiz type |
+| **Smart Playlists** description | `select_ai_engine(self, CONF_AI_ENGINE)` | 60 s | none | Returns `None`; the playlist just has no description |
+
+The timeouts differ by how long a user is waiting. A quiz round is interactive, so 30 seconds is already generous; a smart playlist is a foreground action worth 60; an AI Radio station run is a long background task where a slow model is acceptable but an unbounded hang is not — hence 180 rather than the "no timeout" the base contract implies.
+
+Music Quiz additionally **bounds the payload in both directions** (`ai_guards.py`, `MAX_AI_PROMPT_BYTES` 8192, `MAX_AI_RESPONSE_BYTES` 4096, #5448). Capping the prompt keeps a large grounded fact set from being sent to a metered API; capping the response bounds the parsing work a hostile or malfunctioning model can impose.
 
 ### Grounding: the server owns the facts, the model owns the phrasing
 
@@ -81,11 +119,21 @@ Any failed check raises, and the caller moves to the next attempt or next provid
 
 ---
 
-## `hass` — the reference AI and TTS backend
+## Backends
 
-Nothing in the name suggests it, so it is worth stating plainly: **the Home Assistant plugin is the only in-tree backend for both AI hooks.** It is simultaneously a bridge (players, entity controls, automations) and MA's AI provider.
+Three in-tree plugins answer the AI hooks. `hass` was the first and is still the reference — it is simultaneously a bridge (players, entity controls, automations) and an AI/TTS provider — but it is **no longer the only one**:
 
-Its features are **computed at runtime**, not declared statically. `_resolve_feature_entities()` fetches the states of the `tts` and `ai_task` domains, builds the option lists, then discards and re-adds both flags:
+| Plugin | Declares | Engines |
+|---|---|---|
+| `hass` | `AI_QUERY`, `TTS` (both computed at runtime) | One per matching Home Assistant `tts` / `ai_task` entity |
+| `openai_compatible` | `AI_QUERY` | One per configured model against any OpenAI-compatible chat endpoint (#5261) |
+| `openai_tts` | `TTS` | One per voice against the `/audio/speech` endpoint, with a disk cache and a stream-server route (#5262) |
+
+`openai_compatible` is multi-instance, so a user can point one instance at a local llama.cpp server and another at a hosted API and choose per consumer. Together with the engine layer above, this is what turned "which plugin has the feature?" into "which engine did the user pick?".
+
+### `hass` in detail
+
+Its features are **computed at runtime**, not declared statically — which is why "cannot assume availability" is a rule for every consumer. `_resolve_feature_entities()` fetches the states of the `tts` and `ai_task` domains, builds the option lists, then discards and re-adds both flags:
 
 ```python
 self._supported_features.discard(ProviderFeature.TTS)
@@ -110,9 +158,20 @@ See [11-plugin-system.md](11-plugin-system.md#home-assistant) for the `hass` plu
 
 ## AI Radio — the orchestrator
 
-`providers/ai_radio/` (#3407, manifest stage `alpha`) is a pure consumer: `SUPPORTED_FEATURES` is an **empty set**. It declares no features, provides no audio source, and implements no music features. Everything it does, it does by calling other subsystems — which makes it the best worked example of the pattern above.
+`providers/ai_radio/` (#3407, manifest stage `alpha`) declares an **empty `SUPPORTED_FEATURES`** set: no provider feature, no audio source, no music features. Almost everything it does, it does by calling other subsystems — which makes it the best worked example of the pattern above. The one thing it now owns itself is *clip streaming*, since a just-in-time render has to be served from somewhere.
 
 The job it performs is: take a source playlist, decide where a human radio host would say something, generate that speech, and interleave the resulting audio with the music.
+
+It has grown into a multi-module package (#5538, #5301):
+
+| Module | Role |
+|---|---|
+| `provider.py` | The MA-facing surface: API command registration, engine selection, lifecycle |
+| `runtime.py` | Section planning, LLM generation, both run modes |
+| `rendering.py` | **Just-in-time** clip rendering and the stream details for serving it |
+| `hosts.py` | Host (personality) storage and normalization, plus built-in presets |
+| `queue_dj.py` | The sticky per-queue AI DJ |
+| `storage.py` | Station and section persistence and normalization |
 
 ### The station model
 
@@ -125,7 +184,18 @@ Configuration is provider-local JSON under `<storage>/ai_radio/<instance_id>/`, 
 
 Stations may embed section definitions inline; `_upsert_embedded_sections_from_station` lifts them into the shared store. Both save and validate run that against a **scratch copy** of the section store, so a station that fails normalization cannot leave half-applied section edits behind. A shared section cannot be deleted while a station references it — the error names the stations.
 
-Fourteen API commands (`ai_radio/stations/{list,get,save,delete,validate,template}`, `ai_radio/sections/{list,get,save,delete,template}`, `ai_radio/{start,stop,status}`) are registered in `loaded_in_mass()` with scopes derived from the command name: read-ish suffixes (`/list`, `/get`, `/template`, `/validate`, `/status`) get `Scope.CONFIG_PROVIDERS_READ`, everything else `Scope.CONFIG_PROVIDERS_WRITE`.
+Twenty-four API commands are registered in `loaded_in_mass()` with scopes derived from the command name: read-ish suffixes (`/list`, `/get`, `/template`, `/validate`, `/status`) get `Scope.CONFIG_PROVIDERS_READ`, everything else `Scope.CONFIG_PROVIDERS_WRITE`.
+
+| Group | Commands |
+|---|---|
+| Stations | `list`, `get`, `save`, `delete`, `validate`, `template` |
+| Sections | `list`, `get`, `save`, `delete`, `template` |
+| Hosts | `list`, `get`, `save`, `delete`, `template`, `presets/list` |
+| Queue DJ | `set`, `status` |
+| Engines | `engines/tts/list` |
+| Run control | `start`, `stop`, `status` |
+
+**Hosts** are a third concept alongside stations and sections: a named personality (voice, tone, per-host TTS options) that a station references, with built-in presets so a user does not have to write one from scratch (#5634). **Queue DJ** is a different entry point altogether — rather than running a whole station program, it attaches a *sticky* DJ to one queue that comments on whatever that queue happens to play, keyed by session so it survives track changes (#5538).
 
 ### The generation pipeline
 
@@ -191,7 +261,7 @@ Despite the name, AI Radio's `dynamic` mode has **nothing to do with MA's dynami
 
 ## Music Quiz
 
-`providers/music_quiz/` (#4572, stage `experimental`) is a multiplayer quiz engine — the heaviest AI *consumer* plugin at roughly 7,400 lines (not the largest plugin overall; see FastMCP below). It declares no `ProviderFeature`s. Guests join by QR code through the standard guest-access flow and play on their own devices.
+`providers/music_quiz/` (#4572, stage `beta`) is a multiplayer quiz engine — the heaviest AI *consumer* plugin at roughly 7,800 lines (not the largest plugin overall; see FastMCP below). It declares no `ProviderFeature`s. Guests join by QR code through the standard guest-access flow and play on their own devices.
 
 Three quiz types are registered in `QUIZ_TYPES`, each a `QuizType` strategy class:
 
@@ -313,18 +383,29 @@ Rebuild safety is handled at both ends: `start` rolls back through `stop` on any
 
 ---
 
-## What `ProviderFeature.TTS` is *not*
+## `ProviderFeature.TTS` and announcements
 
-It is easy to assume the TTS hook powers MA's announcements. It does not, and the two paths are worth separating explicitly.
+These used to be entirely separate paths — the TTS hook produced AI Radio queue items, while announcements only ever accepted a pre-synthesized URL. **They are now joined** (#5621, #5630): `players.play_announcement` accepts a `message` and speaks it, so MA no longer depends on something upstream having synthesized the audio first.
 
-`players.play_announcement(player_id, url, ...)` takes a **URL** and rejects anything that does not start with `http`. It never calls `get_tts_message`. Synthesis has already happened by the time MA is involved — typically by Home Assistant's own TTS integration, whose proxy URL an automation passes to MA. From there MA re-hosts the audio on its own stream server via `get_announcement_url`, so the pre-announce chime can be prepended and players that dislike HTTPS still work. The full interrupt-and-restore flow is documented in [04-player-controller.md](04-player-controller.md#announcement-handling).
+`play_announcement(player_id, url=None, ..., message=None, tts_engine=None, language=None)` takes a URL *or* text, never both. Given text it resolves an engine — the caller's `tts_engine`, else the one configured on the player controller via `select_core_tts_engine` — renders the clip up front, and proceeds exactly as it would with a supplied URL. Rendering before the group fan-out is what stops each member of a group from re-speaking the same sentence. The full interrupt-and-restore flow is in [04-player-controller.md](04-player-controller.md#announcement-handling).
 
-The only coupling between the two is a heuristic and a shared upstream:
+The shared plumbing lives in `helpers/tts.py`:
 
-- when `pre_announce` is not specified, the controller enables it if the substring `"tts"` appears in the URL — a cheap way to recognise an HA `tts_proxy` URL and chime before speech, while not chiming for arbitrary announcement audio
+| Function | Role |
+|---|---|
+| `query_tts_engine(engine, message, ...)` | Invoke an engine's `get_tts_message` with a timeout and consistent error handling |
+| `query_tts_engine_with_language_fallback(...)` | The same, retrying **without** the language when the engine rejects the requested one — a voice that cannot speak `nl-NL` should still say something rather than fail |
+| `resolve_tts_language(mass)` | The configured locale as a hyphenated code (`en-US`); `None` leaves the engine on its own default voice |
+| `resolve_tts_stream_path(engine, stream_details)` | Validate what the engine returned into a `(path, StreamType)` pair: an `http(s)`/`rtsp`/`rtmp` URL becomes `HTTP`, an absolute path to an existing file becomes `LOCAL_FILE` (#5279), anything else raises `InvalidDataError` naming the offending engine |
+
+That last one is why `get_tts_message` returns `StreamDetails` rather than bytes or a URL: a cloud backend answers with a URL, a local synthesizer with a file it just wrote, and both are playable without the core caring which.
+
+Two further couplings are worth knowing:
+
+- when `pre_announce` is not specified, the controller enables it for a spoken `message`, or — for a URL — if the substring `"tts"` appears in it, a cheap way to recognise an HA `tts_proxy` URL and chime before speech without chiming for arbitrary announcement audio
 - `hass` also offers `play_announcement_on_entity`, used by `hass_players` and `sendspin` to hand an announcement to HA's own `media_player.play_media` with `announce: True` so the target integration handles ducking. Because HA gives no completion signal, the method parses the audio's duration and sleeps for it so callers can chain announcements
 
-So `get_tts_message` has exactly one in-tree consumer — AI Radio — and it uses it to produce **queue items**, not announcements. Anything else wanting synthesized speech in the audio path today would follow AI Radio's approach: synthesize, wrap as a builtin `SOUND_EFFECT` URI, seed the duration cache, enqueue.
+AI Radio remains the other consumer, using the same helpers to produce **queue items** rather than announcements: synthesize, wrap as a builtin `SOUND_EFFECT` URI, seed the duration cache, enqueue.
 
 ---
 
@@ -332,12 +413,20 @@ So `get_tts_message` has exactly one in-tree consumer — AI Radio — and it us
 
 | File | Purpose |
 |---|---|
-| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider.ai_query`, `PluginProvider.get_tts_message` — the two hook contracts |
+| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider.ai_query`, `get_tts_message`, `get_ai_engines`, `get_tts_engines`, plus `PluginEngine` / `AIEngine` / `TTSEngine` |
+| [`music_assistant/helpers/plugin_engines.py`](../../music_assistant/helpers/plugin_engines.py) | Engine collection, resolution, auto-selection and picker config entries |
+| [`music_assistant/helpers/tts.py`](../../music_assistant/helpers/tts.py) | `query_tts_engine`, language fallback, `resolve_tts_language`, `resolve_tts_stream_path` |
 | [`music_assistant/mass.py`](../../music_assistant/mass.py) | `get_providers_supporting_feature` — tiered, priority-sorted provider discovery |
 | [`music_assistant/providers/hass/`](../../music_assistant/providers/hass/) | The reference backend: runtime feature resolution, `ai_task.generate_data`, `/api/tts_get_url`, `play_announcement_on_entity` |
-| [`music_assistant/providers/ai_radio/runtime.py`](../../music_assistant/providers/ai_radio/runtime.py) | Section planning, LLM generation, TTS rendering, both run modes, the builtin duration-cache warm-up |
-| [`music_assistant/providers/ai_radio/models.py`](../../music_assistant/providers/ai_radio/models.py) | `Slot`, `PlannedSection`, `GeneratedSection`, `AudioSection`, `SessionState` |
+| [`music_assistant/providers/openai_compatible/`](../../music_assistant/providers/openai_compatible/) | Multi-instance AI backend against any OpenAI-compatible chat endpoint, one engine per model |
+| [`music_assistant/providers/openai_tts/`](../../music_assistant/providers/openai_tts/) | TTS backend against `/audio/speech`, one engine per voice, with a disk cache |
+| [`music_assistant/providers/ai_radio/runtime.py`](../../music_assistant/providers/ai_radio/runtime.py) | Section planning, LLM generation, both run modes, the builtin duration-cache warm-up |
+| [`music_assistant/providers/ai_radio/rendering.py`](../../music_assistant/providers/ai_radio/rendering.py) | Just-in-time clip rendering and the stream details for serving it |
+| [`music_assistant/providers/ai_radio/hosts.py`](../../music_assistant/providers/ai_radio/hosts.py) | Host personalities: storage, normalization, built-in presets |
+| [`music_assistant/providers/ai_radio/queue_dj.py`](../../music_assistant/providers/ai_radio/queue_dj.py) | The sticky per-queue AI DJ |
+| [`music_assistant/providers/ai_radio/models.py`](../../music_assistant/providers/ai_radio/models.py) | `Slot`, `PlannedSection`, `GeneratedSection`, `AudioSection`, `SessionState`, `DJQueueState` |
 | [`music_assistant/providers/ai_radio/storage.py`](../../music_assistant/providers/ai_radio/storage.py) | Station and section persistence and normalization |
+| [`music_assistant/providers/music_quiz/ai_guards.py`](../../music_assistant/providers/music_quiz/ai_guards.py) | Prompt and response byte caps shared across the quiz's AI call sites |
 | [`music_assistant/providers/music_quiz/ai_distractors.py`](../../music_assistant/providers/music_quiz/ai_distractors.py) | Bounded prompts and strict response validation for AI distractors |
 | [`music_assistant/providers/music_quiz/quiz_types/trivia.py`](../../music_assistant/providers/music_quiz/quiz_types/trivia.py) | Grounded trivia generation, per-provider retry, `is_available` gating |
 | [`music_assistant/providers/smart_playlist/__init__.py`](../../music_assistant/providers/smart_playlist/__init__.py) | `_generate_ai_description`, `_build_ai_prompt` — AI as an optional garnish |

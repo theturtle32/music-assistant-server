@@ -8,9 +8,9 @@ The abstraction at the centre of the audio half of the system is the **`AudioSou
 |---|---|
 | `get_source() -> PluginSource` | `get_audio_sources() -> list[AudioSource]` |
 | Callback fields on the source: `on_play`, `on_pause`, `on_next`, `on_previous`, `on_seek`, `on_volume`, `on_select` | `on_source_control(source_id, action, value=None)` for PLAY / PAUSE / NEXT / PREVIOUS / SEEK, plus a separate `on_volume_change(source_id, volume)` |
-| Ownership tracked centrally in `PluginSource.in_use_by` | Ownership is queue-scoped and provider-held, claimed in `on_source_selected(...)` and released in `on_source_unselected(...)` |
+| Ownership tracked centrally in `PluginSource.in_use_by` | Ownership is player-scoped and provider-held, claimed in `on_source_selected(...)` and released in `on_source_unselected(...)`; the core-side record is the [live session](04-player-controller.md#live-audiosource-sessions) |
 | `get_audio_stream(player_id)` | `get_stream_details(source_id, queue_id)` then `get_audio_stream(streamdetails, seek_position=0)` |
-| Live metadata on `PluginSource.metadata` | `StreamDetails.stream_metadata`, pushed via `mass.streams.update_stream_metadata(...)` |
+| Live metadata on `PluginSource.metadata` | `StreamMetadata` on the live session, pushed via `mass.players.update_source_metadata(...)` |
 | Selected with `select_source(plugin_instance_id)` | Played with `player_queues.play_media(audio_source_uri)`; the old call survives as a compatibility shim |
 | `get_tts_message()`, `ai_query()` | **unchanged** — still optional hooks gated by `ProviderFeature.TTS` / `AI_QUERY` |
 
@@ -20,19 +20,27 @@ The `PluginSource`, `get_plugin_sources()`, `get_plugin_source()`, and `_handle_
 
 ## Plugin Taxonomy
 
-There are 20 production plugin providers (`"type": "plugin"` in `manifest.json`), plus `_demo_plugin_provider` as an annotated template. Only the first category participates in the `AudioSource` machinery; the rest use the plain `Provider` surface plus whatever API commands, event subscriptions, or HTTP routes they register.
+There are 25 production plugin providers (`"type": "plugin"` in `manifest.json`), plus `_demo_plugin_provider` as an annotated template. Only the first category participates in the `AudioSource` machinery; the rest use the plain `Provider` surface plus whatever API commands, event subscriptions, or HTTP routes they register.
 
 | Category | Plugins | `AUDIO_SOURCE` | What it does |
 |---|---|---|---|
-| **Receiver** (live audio source) | Spotify Connect, AirPlay Receiver, AriaCast Receiver, VBAN Receiver, Yandex Music Connect (Ynison) | Yes | Exposes one or more `AudioSource` items; audio flows *into* MA from an external app or device |
+| **Receiver** (live audio source) | Spotify Connect, AirPlay Receiver, AriaCast Receiver, VBAN Receiver, Yandex Music Connect (Ynison), Sendspin Source | Yes | Exposes one or more `AudioSource` items; audio flows *into* MA from an external app or device |
 | **Scrobbler** | Last.fm, ListenBrainz, Subsonic | No | Subscribes to `EventType.MEDIA_ITEM_PLAYED` and reports plays outward |
 | **External control bridge** | Plex Connect, Yandex Smart Home | No | Advertises MA players on a foreign protocol and translates inbound commands into `PlayerController` calls |
-| **Home Assistant bridge** | Home Assistant (`hass`) | No | Two-way HA integration; also the only in-tree backend for `ProviderFeature.TTS` and `AI_QUERY` |
+| **Home Assistant bridge** | Home Assistant (`hass`) | No | Two-way HA integration; also an AI/TTS backend |
+| **AI and TTS backend** | Home Assistant (`hass`), OpenAI-compatible, OpenAI TTS | No | Answers `ProviderFeature.AI_QUERY` / `TTS` by exposing selectable [engines](18-ai-and-mcp.md#ai-and-tts-engines) |
 | **Guest and social experience** | Party, Music Quiz | No | Guest access, join codes, shared playback sessions, guest-scoped queue mutation |
-| **Library and discovery** | Radio Playlists, Smart Playlists, Sonic Similarity, AI Radio | No | Implements *music* features (`BROWSE`, `SEARCH`, `RECOMMENDATIONS`, `SIMILAR_TRACKS`, playlist resolution) from a plugin |
-| **Server extension** | MCP Server (`fastmcp_server`), Hue Lights Sync, Profiler | No | Mounts a new server surface, virtual players, or diagnostics onto the running instance |
+| **Library and discovery** | Radio Playlists, Smart Playlists, Sonic Similarity, AI Radio, Library Recommendations | No | Implements *music* features (`BROWSE`, `SEARCH`, `RECOMMENDATIONS`, `SIMILAR_TRACKS`, playlist resolution) from a plugin |
+| **Server extension** | MCP Server (`fastmcp_server`), Hue Lights Sync, Milkdrop Visualizer, Profiler | No | Mounts a new server surface, virtual players, or diagnostics onto the running instance |
 
-Three easy misclassifications, all of which are **not** plugins: `teddycloud` is a music provider, `msx_bridge` and `snapcast` are player providers. The `dashie_kiosk` provider referenced by older revisions of these docs was deleted upstream (#4192) and was a player provider besides.
+Recent additions worth placing:
+
+- **Sendspin Source** (`sendspin_source`, #5658) — builtin, `depends_on: sendspin`. Exposes the **line-in** of a Sendspin client that supports the `source@v1` role (a turntable, a microphone, an aux input) as an `AudioSource`, one per connected client.
+- **Library Recommendations** (`recommendations`, #3890) — builtin and `allow_disable: false`. Supplies the library recommendation rows that used to be built inside the music controller; see [08-media-library.md](08-media-library.md#library-rows).
+- **Milkdrop Visualizer** (`milkdrop_visualizer`, #5511) — experimental, with an empty `SUPPORTED_FEATURES`. Taps decoded playback PCM and relays waveform, beat and colour data over a WebSocket at `/milkdrop_visualizer`.
+- **OpenAI-compatible** and **OpenAI TTS** — see [18-ai-and-mcp.md](18-ai-and-mcp.md#backends).
+
+Four easy misclassifications, all of which are **not** plugins: `teddycloud` is a music provider, `msx_bridge` and `snapcast` are player providers, and `_demo_sendspin_clients` (#6085, fake pairing devices for development) is a *player* provider despite the name. The `dashie_kiosk` provider referenced by older revisions of these docs was deleted upstream (#4192) and was a player provider besides.
 
 `plex_connect` is a bridge, not a receiver: it declares no `ProviderFeature`s at all and never touches audio. It makes an MA player appear as a controllable device in Plexamp and the Plex web player, then drives that player from Plex's remote-control and timeline protocols.
 
@@ -48,7 +56,14 @@ The URI is the standard media-item form, which is what makes the source addressa
 spotify_connect--a1b2c3://audio_source/main
 ```
 
-Every in-tree receiver uses the literal `item_id` `"main"` for its single source (`AUDIO_SOURCE_ID = "main"`), so the instance id is what distinguishes two receivers of the same kind. The contract permits several sources per provider — the base-class docstring calls out a paired hardware device whose favorites come and go — and `get_audio_sources()` is re-called rather than cached, so the set may change over the provider's lifetime.
+There are now **two id conventions**, reflecting two different bindings:
+
+- **One source per provider instance** uses the literal `item_id` `"main"` (`AUDIO_SOURCE_ID = "main"`), so the instance id is what distinguishes two receivers of the same kind. AriaCast Receiver, VBAN Receiver and Yandex Ynison still work this way, as does `_demo_plugin_provider`.
+- **One source per player** uses the **player id** as the `item_id`. Spotify Connect and AirPlay Receiver moved to this (#6026): a single provider instance runs one daemon per connected player and exposes each as its own source, which is what lets a user enable Spotify Connect on some speakers and not others without configuring multiple provider instances. `sendspin_source` keys on the Sendspin `client_id` for the same reason.
+
+Because `item_id` is only provider-scoped, code that needs a server-wide unique value uses the source's `uri` — see [04-player-controller.md](04-player-controller.md#live-audiosource-sessions).
+
+The contract permits several sources per provider either way — the base-class docstring calls out a paired hardware device whose favorites come and go — and `get_audio_sources()` is re-called rather than cached, so the set may change over the provider's lifetime.
 
 ### Fields specific to `AudioSource`
 
@@ -59,13 +74,17 @@ Every in-tree receiver uses the literal `item_id` `"main"` for its single source
 | `can_play_pause` | `False` | Whether the UI shows play/pause and the controller proxies PLAY/PAUSE to `on_source_control` |
 | `can_seek` | `False` | Same, for SEEK |
 | `can_next_previous` | `False` | Same, for NEXT/PREVIOUS |
+| `can_shuffle` | `False` | Whether the source can reorder its own session; gates `SourceControl.SHUFFLE` (#5880) |
+| `can_repeat` | `False` | Same, for `SourceControl.REPEAT` |
 | `exclusive` | `True` | **Convention / documentation for plugins**, not a core gate — no controller reads `AudioSource.exclusive`. In-tree receivers set it `True` and implement single-consumer ownership in `on_source_selected` / stream claim logic; `False` would mean the plugin must serve independent per-consumer streams itself |
 | `allow_external_trigger` | `False` | **Convention only** — signals that an external app may start playback (e.g. the Spotify app picking MA as its device). Core does not branch on this field |
 | `can_initiate` | `False` | MA may start this source on demand from the UI. `False` means the source is reachable only via an external trigger, and the browse listings filter it out |
 
-The old `PlayerSource.passive` flag split into the last two. `passive = False` meant "show it in the selectable source list"; the replacement is finer-grained, because "the user can start this" (`can_initiate`) and "the external app can start this" (`allow_external_trigger`) are genuinely independent, and most receivers are `can_initiate=False` / `allow_external_trigger=True`. Only `can_initiate` is enforced by core (browse filter); `allow_external_trigger` and `exclusive` are provider contracts.
+The old `PlayerSource.passive` flag split into `can_initiate` / `allow_external_trigger`. `passive = False` meant "show it in the selectable source list"; the replacement is finer-grained, because "the user can start this" (`can_initiate`) and "the external app can start this" (`allow_external_trigger`) are genuinely independent. Only `can_initiate` is enforced by core (browse filter); `allow_external_trigger` and `exclusive` are provider contracts.
 
-`can_initiate=False` is not a soft hint. The browse tree filters on it, and the owning plugin's `get_stream_details` is expected to raise `AudioError` when it cannot actually acquire the upstream producer — which is exactly what Spotify Connect, AirPlay Receiver, and AriaCast all do when no external session is connected.
+`can_initiate=False` is not a soft hint. The browse tree filters on it, and the owning plugin's `get_stream_details` is expected to raise `AudioError` when it cannot actually acquire the upstream producer — which is exactly what AirPlay Receiver and AriaCast do when no external session is connected.
+
+**Spotify Connect is now `can_initiate=True`.** Starting it from MA resumes the last known Spotify context, claiming active-device status; with no prior context it raises a localized error pointing the user at the app. It is joined by VBAN Receiver and `sendspin_source`, so "receivers are passive" is no longer the general rule it once was. `can_shuffle` / `can_repeat` are derived from the backend's `supports_queue_control` rather than hardcoded.
 
 ### The capability flags are the routing gate
 
@@ -82,16 +101,24 @@ The old `PlayerSource.passive` flag split into the last two. `passive = False` m
 | Method | Gate | Notes |
 |---|---|---|
 | `get_audio_sources() -> list[AudioSource]` | `AUDIO_SOURCE` | Called on demand, never cached. Return `[]` when the plugin currently has nothing to offer (hardware offline) |
-| `get_stream_details(source_id, queue_id) -> StreamDetails` | `AUDIO_SOURCE` | **MUST be side-effect-free** — see below |
+| `get_player_audio_sources(player_id) -> list[AudioSource] \| None` | `AUDIO_SOURCE` | The sources this plugin has bound to **one specific player**. `None` means the plugin is not player-bound at all, which is what distinguishes the two models |
+| `get_stream_details(item_id, media_type) -> StreamDetails` | `AUDIO_SOURCE` | **MUST be side-effect-free** — see below. Note the signature is the same `(item_id, media_type)` pair a `MusicProvider` uses, not the old `(source_id, queue_id)` |
 | `get_audio_stream(streamdetails, seek_position=0)` | called when `stream_type == StreamType.CUSTOM` | Async generator of raw PCM in the format declared by `streamdetails.audio_format`. `seek_position` is ignored for live sources |
-| `on_source_control(source_id, action, value=None)` | `AUDIO_SOURCE` | Transport commands. `action` is a `SourceControl` (`PLAY`, `PAUSE`, `NEXT`, `PREVIOUS`, `SEEK`, `UNKNOWN`); `value` carries the seek position in seconds |
-| `on_source_selected(source_id, player_id, queue_id, stream_session_id)` | `AUDIO_SOURCE` | Non-abstract, no-op by default. Where exclusive sources claim ownership |
-| `on_source_unselected(source_id, queue_id, stream_session_id)` | `AUDIO_SOURCE` | Non-abstract, no-op by default. Where they release it |
-| `on_volume_change(source_id, volume)` | optional | Push MA's new volume (0–100) upstream. Only Spotify Connect implements it in-tree |
+| `on_source_control(source_id, action, value=None)` | `AUDIO_SOURCE` | Transport commands. `action` is a `SourceControl` (`PLAY`, `PAUSE`, `NEXT`, `PREVIOUS`, `SEEK`, `SHUFFLE`, `REPEAT`, `UNKNOWN`); `value` is a `SourceControlValue` — the seek position or volume for `SEEK`/`VOLUME`, the enabled state for `SHUFFLE`, a `RepeatMode` for `REPEAT`, `None` for plain transport |
+| `on_source_selected(source_id, player_id, owner_player_id, stream_session_id)` | `AUDIO_SOURCE` | Non-abstract, no-op by default. Where exclusive sources claim ownership |
+| `on_source_unselected(source_id, owner_player_id, stream_session_id)` | `AUDIO_SOURCE` | Non-abstract, no-op by default. Where they release it |
+| `on_source_released(source_id, player_id)` | optional | Fired when a player lets go of the source **for good** — another source was selected, it was deselected, or the player went away. *Not* fired when a stream merely ends (#5875) |
+| `on_volume_change(source_id, volume)` | optional | Push MA's new volume (0–100) upstream |
 
-`SourceControl` has no `VOLUME` member — the `on_source_control` docstring mentions one, but volume genuinely travels on its own hook. `on_volume_change` exists separately because the routing conditions differ: transport commands follow the active queue item, while volume is gated on *direct queue ownership* to avoid a group firing one callback per member. See [07-volume.md](07-volume.md#audiosource-volume-callbacks).
+**`player_id` and `owner_player_id` are both passed, and the distinction matters.** `player_id` is the player the audio is *served to*, which for a direct-PCM consumer or the legacy queue-item path can be a protocol bridge or a group member. `owner_player_id` is the user-facing player that owns the session, and is the one to store: a protocol bridge's id can be gone by the time the plugin uses it for `play_media` or `cmd_stop`.
 
-**Why `get_stream_details` must be side-effect-free.** It is called from two places: the real stream request, and queue preload (`_load_item`, which drives the generator to fill an initial buffer). If a plugin claimed its exclusive lock here, a preload would reserve the source and then block a genuine cross-queue handoff at the actual stream request. Ownership therefore belongs in `on_source_selected`, which fires only on the real request and is always paired with `on_source_unselected` in a `finally`.
+**`stream_session_id` must be checked on unselect.** It is a fresh per-request token paired between the two hooks, and implementations are required to guard on it rather than on the player alone. A same-player reconnect — the player drops and reopens the same stream URL before the original request's `finally` runs — would otherwise let the *old* request's late callback clear the live claim of the new stream, silently dropping metadata and volume sync.
+
+`SourceControl` still has no `VOLUME` member despite the value type naming one; volume travels on its own hook. `on_volume_change` is separate because the routing conditions differ: transport commands follow the source playing on the player, while volume is gated on the player having its own [live session](04-player-controller.md#live-audiosource-sessions) so a group cannot fire one callback per member. See [07-volume.md](07-volume.md#audiosource-volume-callbacks).
+
+Metadata is pushed the other way through `mass.players.update_source_metadata(player_id, ...)`, with `update_source_options` for shuffle/repeat state and `refresh_source` to re-read the source itself.
+
+**Why `get_stream_details` must be side-effect-free.** It is called from two places: the real stream request, and queue preload (`_load_item`, which drives the generator to fill an initial buffer). If a plugin claimed its exclusive lock here, a preload would reserve the source and then block a genuine handoff at the actual stream request. Ownership therefore belongs in `on_source_selected` — which fires only on the real request, is always paired with `on_source_unselected` in a `finally`, and is deliberately fired **before** `get_stream_details` so the plugin can stop the previous player and replace its claim before the upcoming details fetch.
 
 ### Music features
 
@@ -124,21 +151,13 @@ See [18-ai-and-mcp.md](18-ai-and-mcp.md) for the TTS/AI backend contract and its
 
 There is no registration step. Everything flows from `get_audio_sources()` being called on demand by whichever core path needs it.
 
-### The player source list no longer carries plugin sources
+### The player source list carries plugin sources again
 
-`Player.__final_source_list` (`models/player.py`) used to append every plugin source, converted through `PluginSource.as_player_source()` to strip the unpicklable callbacks. It no longer does — and `as_player_source()` no longer exists, because an `AudioSource` has no callbacks to strip. The property now only takes the player's native `source_list` and ensures a "Music Assistant Queue" entry exists:
+This went back and forth, so it is worth stating where it landed. Originally `Player.__final_source_list` appended every plugin source, converted through `PluginSource.as_player_source()` to strip unpicklable callbacks. That was removed when `PluginSource` became `AudioSource`. It is now **back**, but on a different basis: the entries come from the player-bound model rather than from a global list of every plugin source.
 
-```python
-def __final_source_list(self) -> UniqueList[PlayerSource]:
-    """Return the FINAL source list for the player."""
-    sources = UniqueList(self.source_list)
-    if self.type == PlayerType.PROTOCOL:
-        return sources
-    # always ensure the Music Assistant Queue is in the source list
-    mass_source = next((x for x in sources if x.id == self.player_id), None)
-    if mass_source is None:
-        ...
-```
+`__final_source_list` assembles native sources, the synthesized "Music Assistant Queue" entry, the player's [live session](04-player-controller.md#live-audiosource-sessions) if it has one, and then standing entries from `prov.get_player_audio_sources(self.player_id)` for every loaded `AUDIO_SOURCE` plugin (#6026, #6042, #6070). A uri already present is skipped, so the live session — which alone knows the current shuffle/repeat state — wins over the standing entry for the same source.
+
+The point of the standing entries is that a player's own Spotify Connect or line-in is selectable from the source menu *before* anything is playing on it, which the session-only model could not express. `as_player_source()` remains gone; an `AudioSource` has no callbacks to strip, and the `PlayerSource` is built field by field. See [03-player-model.md](03-player-model.md#source-list-composition) for the full ordering.
 
 The `PlayerType.PROTOCOL` early return still stands: protocol players get their native source list and nothing else, not even the MA Queue entry.
 
@@ -150,7 +169,7 @@ The `PlayerType.PROTOCOL` early return still stands: protocol players get their 
 - **more than one** → a `BrowseFolder` at `{instance_id}://`, whose listing (handled at the provider level, since these providers implement no `browse()`) is the initiable sources
 - **none** → the provider does not appear at all
 
-Note what this means for the passive receivers: Spotify Connect, AirPlay Receiver, and AriaCast are all `can_initiate=False`, so they are invisible in browse and can only be started from their external app. VBAN is `can_initiate=True` and is therefore browsable and playable on demand.
+Note what this means for the genuinely passive receivers: AirPlay Receiver and AriaCast are `can_initiate=False`, so they are invisible in browse and can only be started from their external app. Spotify Connect, VBAN and `sendspin_source` are `can_initiate=True` and therefore browsable and playable on demand. Player-bound sources are additionally scoped by `_get_plugin_audio_sources` so a browse listing shows the sources belonging to the relevant player rather than every player's.
 
 The `"Live Inputs"` node named in `PluginProvider`'s docstrings and in `_demo_plugin_provider`'s comments is a leftover from #3938; #3964 replaced that dedicated node with the root-level placement above. The name survives in the queue config entry `default_enqueue_option_live_sources`, which `AudioSource` shares with `RADIO` — both are infinite live streams where `REPLACE` is almost always the right enqueue semantic. See [08-media-library.md](08-media-library.md#browse) and [09-player-queues.md](09-player-queues.md).
 
@@ -215,13 +234,13 @@ sequenceDiagram
     PC->>Streams: resolve_stream_url() → /single/{session}/{queue}/{item}/{player}.wav
 
     Note over Streams: player GETs the stream URL
-    Streams->>Plugin: on_source_selected(source_id, player_id, queue_id, stream_session_id)
-    Streams->>Plugin: get_stream_details(source_id, queue_id)
+    Streams->>Plugin: on_source_selected(source_id, player_id, owner_player_id, stream_session_id)
+    Streams->>Plugin: get_stream_details(item_id, media_type)
     Plugin-->>Streams: StreamDetails (CUSTOM or NAMED_PIPE)
     Streams->>Plugin: get_audio_stream(streamdetails)  [CUSTOM only]
 
     Note over Ext,Plugin: live metadata while streaming
-    Plugin->>Streams: update_stream_metadata(queue_id, source_id, provider, StreamMetadata)
+    Plugin->>PC: update_source_metadata(player_id, source_id, provider, StreamMetadata)
 
     Note over User: transport / volume commands
     User->>PC: cmd_play / cmd_pause / cmd_seek / cmd_next / cmd_previous
@@ -254,7 +273,9 @@ The `PluginSource.metadata` path is gone; live track info now rides on the activ
 
 The insight from the original doc still holds, with a new mechanism. `Player.__final_playback_state` overrides the resolved `elapsed_time` when the active queue item is an `AudioSource` whose `stream_metadata.elapsed_time` is set — because the protocol player's (or the player's own) position tracks **bytes consumed**, which is the wrong clock for a live source: it loses upstream seeks and upstream pause/resume on the queue's `corrected_elapsed_time`, which both the player queues controller and several player providers consume. A `GROUP` player is checked twice, once against `__final_active_source` and once against its own `player_id`, because it outputs the `AudioSource` from its own queue, which `__final_active_source` may not resolve to. See [03-player-model.md](03-player-model.md#the-upstream-clock-override).
 
-`mass.streams.update_stream_metadata(queue_id, source_id, provider, stream_metadata)` is the push channel, and it is defensive on purpose. The update is dropped unless the queue's current item's streamdetails are an `AUDIO_SOURCE` from that exact `provider` with that exact `item_id`, and the identity is re-checked *after* the write is prepared — plugins fire these from arbitrary threads (the AirPlay metadata reader, the Spotify websocket handler, the AriaCast websocket reader), and the GIL makes each attribute write atomic but not the read-then-write sequence.
+`mass.players.update_source_metadata(player_id, source_id, provider_instance_id, stream_metadata)` is the push channel, and it is defensive on purpose. The update is dropped silently unless the source playing on that player is owned by that exact provider instance with that exact `item_id` — plugins fire these from arbitrary threads (the AirPlay metadata reader, the Spotify websocket handler, the AriaCast websocket reader), and the GIL makes each attribute write atomic but not the read-then-write sequence.
+
+It is keyed on the **player** rather than the queue, because the live source is a player-scoped session now. One consequence is worth noting: metadata is accepted from the moment the source is *selected*, before any stream exists, so a provider can report what it already knows rather than waiting for audio to start flowing. A placeholder adopted from `get_stream_details` stays replaceable by a later placeholder, but anything the source actually *reported* is not overwritten by one — see `attach_streamdetails` in [04-player-controller.md](04-player-controller.md#live-audiosource-sessions).
 
 ---
 
@@ -363,7 +384,7 @@ graph LR
     Daemon <-->|"HTTP + /events WS<br/>on 127.0.0.1"| Client["GoLibrespotClient"]
     Stream --> Core["streams controller"]
     Core --> Player["MA player"]
-    Client -->|"update_stream_metadata"| Core
+    Client -->|"update_source_metadata"| Core
     Client -->|"play_media / cmd_volume_set"| MA["MA controllers"]
 ```
 
@@ -393,7 +414,7 @@ Wraps `shairport-sync` with two named pipes, audio and metadata, on deterministi
 - `StreamType.NAMED_PIPE`, `path = audio_pipe.path`. `audio_format` is ALAC 44.1/16 (the protocol-native source format, for display); `decoded_audio_format` is the s16le PCM shairport-sync actually writes.
 - `can_play_pause` / `can_seek` / `can_next_previous` are all `False`, and `on_source_control` is an explicit no-op that exists only to satisfy the contract. `can_initiate=False`, `allow_external_trigger=True` — audio only flows when an AirPlay client connects, and `get_stream_details` raises `AudioError` when there is no active client.
 - **Volume is inbound only.** `on_volume_change` is *not* implemented. The AirPlay client's volume arrives on the metadata pipe and `_handle_volume_change` pushes it into MA with `cmd_volume_set(self._in_use_by_queue, volume)`, skipping the very first event of each session (which is shairport-sync's initial sync from `default_airplay_volume`) so it cannot clobber the player's current volume. shairport-sync runs with `ignore_volume_control = "yes"`, so it never attenuates the audio itself.
-- Metadata (title, artist, album, duration, elapsed time) comes from a `MetadataReader` on the metadata pipe and is pushed with `update_stream_metadata`. Cover art is served through `resolve_image`, keyed on a `cover_art_{hash}` path so each unique image gets its own thumbnail cache entry and a stale request cannot cache new bytes under an old key.
+- Metadata (title, artist, album, duration, elapsed time) comes from a `MetadataReader` on the metadata pipe and is pushed with `update_source_metadata`. Cover art is served through `resolve_image`, keyed on a `cover_art_{hash}` path so each unique image gets its own thumbnail cache entry and a stale request cannot cache new bytes under an old key.
 - A `play_state` of `"playing"` from shairport-sync's sessioncontrol hooks starts playback via `play_media` on the target player; `"stopped"` clears the claim, writes the unblocking silence, and stops the player. `_start_playback` awaits any pending stop first so a rapid stop/start cannot race.
 
 ### AriaCast Receiver
@@ -478,7 +499,7 @@ Guest tokens, join codes, and the guest-access flow itself belong to [19-authent
 
 ### Music Quiz
 
-`music_quiz` (#4572, stage `experimental`) is a multiplayer quiz game at roughly 7,400 lines — among the largest plugins, though `fastmcp_server` is larger by line count (~10.3k). It declares no `ProviderFeature`s but is the heaviest consumer of other subsystems: `SharedPlaybackSession` for playback (mode chosen **per game**, unlike Party), guest access for joining, `ProviderFeature.AI_QUERY` for two of its three quiz types, and twenty `music_quiz/*` API commands.
+`music_quiz` (#4572, stage `beta`) is a multiplayer quiz game at roughly 7,800 lines — among the largest plugins, though `fastmcp_server` is larger by line count (~10.3k). It declares no `ProviderFeature`s but is the heaviest consumer of other subsystems: `SharedPlaybackSession` for playback (mode chosen **per game**, unlike Party), guest access for joining, `ProviderFeature.AI_QUERY` for two of its three quiz types, and twenty `music_quiz/*` API commands.
 
 Three quiz types register as strategy classes in `QUIZ_TYPES`: `guess_the_song` (multiple choice, optional AI distractors), `music_timeline` (a shared chronological timeline with optional artist and title bonuses, no AI), and `trivia` (AI-worded questions grounded in library metadata, AI required). `get_available_quiz_types` filters on each class's `is_available(mass)`, so trivia disappears from the options rather than failing when no AI plugin is loaded.
 
@@ -498,7 +519,7 @@ The `auto_skill.py` module described by earlier revisions was deleted in #3834; 
 
 ### Home Assistant
 
-`hass` is the odd one out: a plugin whose `supported_features` are computed at runtime. It adds `ProviderFeature.TTS` and `ProviderFeature.AI_QUERY` to its own feature set when the connected HA instance offers the matching services, and discards them otherwise. That makes it the only in-tree backend for both hooks, consumed by AI Radio (`get_tts_message` for moderator segments, `ai_query` for text), Music Quiz (trivia and distractors), and Smart Playlists (rule generation from a prompt). See [18-ai-and-mcp.md](18-ai-and-mcp.md).
+`hass` is the odd one out: a plugin whose `supported_features` are computed at runtime. It adds `ProviderFeature.TTS` and `ProviderFeature.AI_QUERY` to its own feature set when the connected HA instance offers the matching services, and discards them otherwise. It was once the only in-tree backend for both hooks; `openai_compatible` (AI) and `openai_tts` (speech) now serve them too, and all three expose their backends as selectable **engines** rather than being chosen as whole providers. Consumers are AI Radio (speech for moderator segments, `ai_query` for text), Music Quiz (trivia and distractors), Smart Playlists (rule generation from a prompt) and the player controller's spoken announcements. See [18-ai-and-mcp.md](18-ai-and-mcp.md#ai-and-tts-engines).
 
 ### Library and discovery plugins
 
@@ -557,10 +578,14 @@ The in-tree [`README.md`](../../music_assistant/providers/hue_entertainment/READ
 
 | File | Purpose |
 |---|---|
-| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider` base class: `get_audio_sources`, `get_stream_details`, `get_audio_stream`, `on_source_control`, `on_source_selected`, `on_source_unselected`, `on_volume_change`, the music-feature surface, `get_tts_message`, `ai_query`, `resolve_image` |
+| [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider` base class: `get_audio_sources`, `get_player_audio_sources`, `get_stream_details`, `get_audio_stream`, `on_source_control`, `on_source_selected`, `on_source_unselected`, `on_source_released`, `on_volume_change`, the music-feature surface, `get_tts_message`, `ai_query`, `resolve_image`, plus `PluginEngine` / `AIEngine` / `TTSEngine` and `SourceControlValue` |
 | `music_assistant_models.media_items.AudioSource` | The `AudioSource` media item itself — lives in the shared models package, not in MA core |
-| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `_get_active_audio_source`, transport proxying in the `cmd_*` handlers, volume notification in `_handle_cmd_volume_set` / `set_group_volume`, the legacy `select_source` shim in `_handle_select_source` |
-| [`music_assistant/controllers/streams/controller.py`](../../music_assistant/controllers/streams/controller.py) | Selection lifecycle (`serve_queue_item_stream`, `_wrap_with_audio_source_lifecycle`), `resolve_stream_url` WAV forcing, `update_stream_metadata`, WAV passthrough |
+| [`music_assistant/controllers/players/audio_sources.py`](../../music_assistant/controllers/players/audio_sources.py) | `AudioSourceMixin`, `AudioSourceSession` — the per-player live session, claiming and takeover |
+| [`music_assistant/controllers/players/announcements.py`](../../music_assistant/controllers/players/announcements.py) | `AnnouncementsMixin` — spoken announcements through a TTS engine |
+| [`music_assistant/helpers/plugin_engines.py`](../../music_assistant/helpers/plugin_engines.py) | AI/TTS engine collection, resolution, auto-selection and picker config |
+| [`music_assistant/helpers/tts.py`](../../music_assistant/helpers/tts.py) | Shared TTS invocation, language fallback and stream-path validation |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `_get_active_audio_source`, transport proxying in the `cmd_*` handlers (including `cmd_shuffle` / `cmd_repeat`), volume notification in `_handle_cmd_volume_set` / `set_group_volume`, the legacy `select_source` shim in `_handle_select_source` |
+| [`music_assistant/controllers/streams/controller.py`](../../music_assistant/controllers/streams/controller.py) | Selection lifecycle (`serve_queue_item_stream`, `serve_audio_source_stream`, `_wrap_with_audio_source_lifecycle`), `resolve_stream_url` codec choice, WAV passthrough |
 | [`music_assistant/controllers/streams/audio.py`](../../music_assistant/controllers/streams/audio.py) | `get_audio_source_stream`, `_iter_audio_source_pcm`, `_open_audio_source_generator`, `_select_audio_source_pcm_format` |
 | [`music_assistant/controllers/music/controller.py`](../../music_assistant/controllers/music/controller.py) | Root browse placement of `AUDIO_SOURCE` providers, provider-level listing, `get_item` resolution for `MediaType.AUDIO_SOURCE` |
 | [`music_assistant/controllers/player_queues/`](../../music_assistant/controllers/player_queues/) | `play_media`, the shared `default_enqueue_option_live_sources` default, and the preload paths that skip `AudioSource` items |
@@ -571,7 +596,10 @@ The in-tree [`README.md`](../../music_assistant/providers/hue_entertainment/READ
 | [`music_assistant/providers/spotify_connect/`](../../music_assistant/providers/spotify_connect/) | Reference receiver: pluggable Soloist / go-librespot backends, bidirectional volume. See its [`README.md`](../../music_assistant/providers/spotify_connect/README.md) |
 | [`music_assistant/providers/airplay_receiver/`](../../music_assistant/providers/airplay_receiver/) | `NAMED_PIPE` receiver, via shairport-sync |
 | [`music_assistant/providers/ariacast_receiver/`](../../music_assistant/providers/ariacast_receiver/) | Native Python AriaCast protocol server |
-| [`music_assistant/providers/vban_receiver/`](../../music_assistant/providers/vban_receiver/) | VBAN UDP receiver; the only `can_initiate=True` receiver |
+| [`music_assistant/providers/vban_receiver/`](../../music_assistant/providers/vban_receiver/) | VBAN UDP receiver; `can_initiate=True` |
+| [`music_assistant/providers/sendspin_source/`](../../music_assistant/providers/sendspin_source/) | Builtin receiver exposing a Sendspin client's line-in (`source@v1`) as an `AudioSource` |
+| [`music_assistant/providers/recommendations/`](../../music_assistant/providers/recommendations/) | Builtin, undisableable plugin supplying the library recommendation rows |
+| [`music_assistant/providers/milkdrop_visualizer/`](../../music_assistant/providers/milkdrop_visualizer/) | Taps decoded PCM and relays waveform/beat/colour data over a WebSocket |
 | [`music_assistant/providers/yandex_ynison/`](../../music_assistant/providers/yandex_ynison/) | Multi-track receiver bridging the Ynison protocol |
 | [`music_assistant/providers/party/`](../../music_assistant/providers/party/) | Guest access, shared playback, priority-section queue management |
 | [`music_assistant/providers/music_quiz/`](../../music_assistant/providers/music_quiz/) | Quiz engine: per-game shared playback, guest-safe state broadcast, AI-grounded trivia |
