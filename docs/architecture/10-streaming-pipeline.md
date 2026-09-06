@@ -80,7 +80,7 @@ The streams server publishes **one** address. The multi-address advertising adde
 
 ## StreamsController
 
-`StreamsController` (`controllers/streams/controller.py`, ~1600 lines) extends `CoreController` with `domain = "streams"`. It owns the HTTP server and the three sub-components.
+`StreamsController` (`controllers/streams/controller.py`, ~2340 lines) extends `CoreController` with `domain = "streams"`. It owns the HTTP server and the three sub-components.
 
 ### Initialization
 
@@ -170,7 +170,7 @@ Per-player `CONF_HTTP_PROFILE` controls response behavior:
 
 ## StreamsAudio
 
-`StreamsAudio` (`controllers/streams/audio.py`, ~3400 lines) is the audio processing engine, accessible as `self.audio` on `StreamsController`. It handles stream acquisition, format selection, normalization, crossfade, overlay, and the player output plan.
+`StreamsAudio` (`controllers/streams/audio.py`, ~4840 lines) is the audio processing engine, accessible as `self.audio` on `StreamsController`. It handles stream acquisition, format selection, normalization, crossfade, overlay, and the player output plan.
 
 ### `get_stream_details` — Resolving Audio Sources
 

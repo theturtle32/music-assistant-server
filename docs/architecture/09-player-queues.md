@@ -4,7 +4,7 @@ The Player Queue system sits between the media library and the audio streaming p
 
 Two things dominate the current design and are worth internalizing before reading further:
 
-1. **The controller is a package, not a module.** `controllers/player_queues.py` (~3300 lines) became `controllers/player_queues/`, where the public controller composes three logic mixins and four stateful helper services (#4263, #4509).
+1. **The controller is a package, not a module.** `controllers/player_queues.py` (then ~3300 lines) became `controllers/player_queues/`, where the public controller composes three logic mixins and four stateful helper services (#4263, #4509).
 2. **`PlayerQueue` is the wire model; `PlayerQueueData` is the server-side record.** The pile of parallel `queue_id`-keyed dictionaries that used to live on the controller is now one `PlayerQueueData` per queue, and the fields that never belonged on the wire moved onto it.
 
 The [Player Queues README](../../music_assistant/controllers/player_queues/README.md) is the in-tree companion. It owns the module inventory, the per-module responsibilities, and the config inventory; this document owns the cross-stack integration (players, streams, events, API), the end-to-end flows, and what changed relative to the monolith.

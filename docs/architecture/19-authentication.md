@@ -1,6 +1,6 @@
 # 19 — Authentication and Authorization
 
-Music Assistant authenticates every API caller and then authorizes each individual command against a **scope**. Authentication answers "who is this?" and lives in `AuthenticationManager` (`controllers/webserver/auth.py`, ~2000 lines) plus its login providers. Authorization answers "may they do this?" and is a per-command declaration enforced identically on both transports.
+Music Assistant authenticates every API caller and then authorizes each individual command against a **scope**. Authentication answers "who is this?" and lives in `AuthenticationManager` (`controllers/webserver/auth.py`, ~2420 lines) plus its login providers. Authorization answers "may they do this?" and is a per-command declaration enforced identically on both transports.
 
 The two are deliberately separate. Roles exist, but nothing in the API checks a role directly — a role is only a named bundle of scopes, resolved through one mapping. That indirection is what made `SERVICE` accounts and future custom roles possible without touching a single command handler.
 

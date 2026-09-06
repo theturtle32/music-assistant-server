@@ -1,6 +1,6 @@
 # The Player Abstraction
 
-The `Player` class in `music_assistant/models/player.py` (~3050 lines) is the most complex single model in the codebase. It represents a physical or virtual audio device — managing raw provider state, computing derived "final" values, snapshotting state for the API, and providing the abstract control surface that every player provider must implement. Its design is modeled after Home Assistant's Entity model, using class-level `_attr_*` attributes with matching `@property` accessors to let providers report state while the framework adds computed overrides on top.
+The `Player` class in `music_assistant/models/player.py` (~3650 lines) is the most complex single model in the codebase. It represents a physical or virtual audio device — managing raw provider state, computing derived "final" values, snapshotting state for the API, and providing the abstract control surface that every player provider must implement. Its design is modeled after Home Assistant's Entity model, using class-level `_attr_*` attributes with matching `@property` accessors to let providers report state while the framework adds computed overrides on top.
 
 The [Player Controller README](../../music_assistant/controllers/players/README.md) is the in-tree companion to this document: it owns the module inventory, the protocol-linking developer guide, and the identifier-matching rules. This document covers the model's semantics and the resolution chains that produce `PlayerState`.
 

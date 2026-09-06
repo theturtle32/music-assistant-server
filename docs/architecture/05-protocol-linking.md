@@ -6,7 +6,7 @@ Two in-tree READMEs are the companions to this document: the [Player Controller 
 
 ## The ProtocolLinkingMixin
 
-`ProtocolLinkingMixin` (`music_assistant/controllers/players/protocol_linking.py`, ~2440 lines) is mixed into `PlayerController`:
+`ProtocolLinkingMixin` (`music_assistant/controllers/players/protocol_linking.py`, ~3130 lines) is mixed into `PlayerController`:
 
 ```python
 class PlayerController(ProtocolLinkingMixin, CoreController):
@@ -472,7 +472,7 @@ A GROUP player represents a logical grouping rather than a physical device, so i
 
 | File | Description |
 |---|---|
-| [`music_assistant/controllers/players/protocol_linking.py`](../../music_assistant/controllers/players/protocol_linking.py) | `ProtocolLinkingMixin` — matching, linking flows, protocol selection, config/membership migration (~2440 lines) |
+| [`music_assistant/controllers/players/protocol_linking.py`](../../music_assistant/controllers/players/protocol_linking.py) | `ProtocolLinkingMixin` — matching, linking flows, protocol selection, config/membership migration (~3130 lines) |
 | [`music_assistant/providers/universal_player/player.py`](../../music_assistant/providers/universal_player/player.py) | `UniversalPlayer` — virtual player wrapping protocols, setup propagation, external-source passthrough |
 | [`music_assistant/providers/universal_player/provider.py`](../../music_assistant/providers/universal_player/provider.py) | `UniversalPlayerProvider` — lifecycle, persistence, device key and name resolution |
 | [`music_assistant/providers/universal_player/constants.py`](../../music_assistant/providers/universal_player/constants.py) | `UNIVERSAL_PLAYER_PREFIX`, `CONF_DEVICE_IDENTIFIERS`, `CONF_DEVICE_INFO`, `EXTERNAL_SOURCE_PROTOCOLS` |

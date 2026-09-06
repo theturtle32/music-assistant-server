@@ -24,7 +24,7 @@ Only the third emits events or appears in the frontend. See [01-event-system.md]
 
 ## `TasksController`
 
-`TasksController` (`controllers/tasks/`, ~1450 lines across six modules) manages work that a user should be able to see and interfere with: library syncs, playlist mutations, metadata refreshes, index rebuilds, the audio-analysis background scan.
+`TasksController` (`controllers/tasks/`, ~1580 lines across six modules) manages work that a user should be able to see and interfere with: library syncs, playlist mutations, metadata refreshes, index rebuilds, the audio-analysis background scan.
 
 ### Two kinds of task
 

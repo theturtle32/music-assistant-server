@@ -207,7 +207,7 @@ The base class provides:
 
 ### `MusicProvider` (`music_assistant/models/music_provider.py`)
 
-Adds the full media browsing/search/library API surface. Distinguishes between "streaming" providers (Spotify, Tidal — have shared catalogs) and "unique" providers (local filesystem — have unique data). This distinction affects how the music controller handles provider failover and library deduplication. (~1594 lines, covered in detail in [08-media-library.md](08-media-library.md).)
+Adds the full media browsing/search/library API surface. Distinguishes between "streaming" providers (Spotify, Tidal — have shared catalogs) and "unique" providers (local filesystem — have unique data). This distinction affects how the music controller handles provider failover and library deduplication. (~1980 lines, covered in detail in [08-media-library.md](08-media-library.md).)
 
 ### `PlayerProvider` (`music_assistant/models/player_provider.py`)
 
