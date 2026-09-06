@@ -60,7 +60,11 @@ graph TB
 | `CONF_BIND_PORT` | `8095` | Main webserver port |
 | `CONF_BIND_IP` | `0.0.0.0` | Bind address |
 | `CONF_BASE_URL` | Auto-detected | Public URL for external references |
+| `CONF_SERVER_NAME` | Derived | Friendly name for this server (#6031); a change refreshes the mDNS record — see [13-discovery.md](13-discovery.md) |
+| `CONF_EXTERNAL_URL` | Unset | Explicitly configured external URL, trailing slash stripped (#5284, #5299) |
 | Ingress port | `8094` | HA internal network only (`172.30.32.x`) |
+
+**`internal_base_url` is not `base_url`.** It is the address at which *this host* can reach its own API, derived from what the webserver actually binds to rather than from what it advertises. The advertised address is not necessarily dialable locally: a configured `base_url` would route out through DNS and a reverse proxy only to come back in, and a published IP need not exist on this host at all in a container or NAT setup. Remote-access WebSocket bridging uses `internal_base_url` for exactly that reason.
 
 ### Route Map
 
@@ -77,7 +81,7 @@ graph TB
 | OPTIONS | `/info` | `_handle_cors_preflight` | CORS preflight |
 | GET | `/ws` | `_handle_ws_client` | WebSocket API |
 | POST | `/api` | `_handle_jsonrpc_api_command` | HTTP JSON-RPC API |
-| GET | `/preview` | `serve_preview_stream` | Audio preview (AAC) |
+| GET | `/preview` | `serve_preview_stream` | Audio preview (AAC), addressed by a short-lived `?token=` — see below |
 | GET | `/login` | `_handle_login_page` | Login page |
 | POST | `/auth/login` | `_handle_auth_login` | Login action |
 | OPTIONS | `/auth/login` | `_handle_cors_preflight` | CORS preflight |
@@ -105,6 +109,12 @@ Plus one static-content mount: `/assets` → the frontend's `assets` subdirector
 **`/imageproxy` is not registered here.** The old query-string endpoint was replaced by opaque image ids in #3960 / #4544. `MetaDataController.post_setup()` now registers the canonical `/imageproxy/{image_id}?size=&fmt=` form as a **dynamic** route, on *both* the webserver and the streams controller, and unregisters it on teardown. See [14-metadata.md](14-metadata.md#image-proxy-system).
 
 **CORS** is deliberately narrow: only `/info` and `/auth/login` answer `OPTIONS`, via `_handle_cors_preflight`, which returns `Access-Control-Allow-Origin: *`, allows `GET, POST, OPTIONS` and the `Content-Type`/`Authorization` headers, and caches the preflight for 24 hours. `_handle_auth_login` repeats those headers on its own responses. Nothing else is cross-origin accessible.
+
+**`/preview` is token-addressed** (#5821). It no longer takes `?provider=&item_id=`; instead `create_preview_url(provider, item_id)` mints an opaque `secrets.token_urlsafe(16)` and returns `/preview?token=…`, with an unknown or expired token answered as **404**. Three details follow from what a preview URL is actually for:
+
+- The path is **relative on purpose**. A client reaches this server through whatever address its own setup uses — HA ingress, a reverse proxy, the remote connection — and the advertised `base_url` is not necessarily any of them.
+- `PREVIEW_TOKEN_TTL` is **60 seconds** and the token is *not* single-use: it only has to survive the hop from the API response to the audio element that plays it, but players routinely re-request a media URL they have already opened.
+- `MAX_PREVIEW_TOKENS` caps the store at 500. `LIBRARY_READ` is a guest scope, so minting is reachable by every signed-in client; expired tokens are swept during minting (the only regular traffic on the store), and if all 500 are still live the oldest is dropped to make room.
 
 ### Dynamic Routes
 
@@ -325,7 +335,9 @@ The response locale comes from the request headers rather than connection state,
 | `/sendspin` | Ingress headers, or an `{"type": "auth", "token": ...}` first message; the auth message also carries the `client_id` that binds the socket to a Sendspin player |
 | Other HTTP routes | **Handler-local** — each route that needs a user calls `get_authenticated_user` (or equivalent) itself. There is no app-wide aiohttp middleware |
 
-`helpers/auth_middleware.py` is still a live module: it owns `ROLE_SCOPES`, `has_scope`, the auth context vars, ingress detection, and `get_authenticated_user`. The `auth_middleware` *function* and `require_authentication` helper are **not** registered on `web.Application` (`helpers/webserver.py` builds the app with no middlewares) and have no in-tree call sites — treat them as unused surface, not the request path.
+`helpers/auth_middleware.py` is a live module *despite its name*: it owns `ROLE_SCOPES`, `has_scope`, the auth context vars, ingress detection, and `get_authenticated_user`. What it no longer owns is any middleware. The `auth_middleware` function and the `require_authentication` helper were **deleted** in #5211 — they had been carried as dead surface, never registered on `web.Application`, and are now gone rather than merely unused. `helpers/webserver.py` still builds the app with no `middlewares` argument at all.
+
+There is therefore no app-wide HTTP authentication layer. Authentication is **handler-local**: each route that needs an identity calls `get_authenticated_user(request)` itself, and the JSON-RPC surface enforces scopes per command through `@api_command`. A new HTTP route added without such a call is unauthenticated by construction, which is worth knowing before adding one.
 
 ### Ingress and socket-level verification
 
@@ -389,9 +401,16 @@ Crucially, `get_or_create_remote_id()` derives the ID **without importing the We
 - **Signaling server**: `wss://signaling.music-assistant.io/ws`. The gateway holds a persistent connection with exponential-backoff reconnection, from 10 s up to a 300 s ceiling. Close code 4000 (`CLOSE_CODE_REPLACED`) means another instance registered the same Remote ID — reconnection then stops rather than fighting for the registration.
 - **ICE servers**: there are two public-STUN lists, and which one applies depends on the path. In basic mode `RemoteAccessManager` passes no ICE servers to the gateway, so `WebRTCGateway.DEFAULT_ICE_SERVERS` applies — **four** entries: `stun.home-assistant.io:3478`, `stun.l.google.com:19302`, `stun1.l.google.com:19302`, `stun.cloudflare.com:3478`. When HA Cloud is available its STUN/TURN set is passed in instead, adding relay for restrictive networks, and `get_ice_servers()` is additionally wired in as a per-session callback so TURN credentials stay fresh. That method's own fallback is a shorter three-entry list (no `stun1`), which is only reached if HA Cloud reports available and then yields nothing. `get_ice_servers()` works whether or not remote access is enabled.
 - **Data channel bridging**: each WebRTC session opens a local WebSocket connection to `/ws?webrtc_session_id=...`, so remote access is transparent to the API layer — the same handler, the same auth, the same scope checks.
-- **Message chunking**: libdatachannel caps a data-channel message at 256 KiB, so `ma-api` messages larger than `MA_API_CHUNK_SIZE` (64 KiB) are split and reassembled.
-- **HTTP proxy**: remote clients tunnel plain HTTP requests over the data channel for endpoints that are not WebSocket-based (the image proxy, audio preview), bounded by `HTTP_PROXY_CONCURRENCY` (6).
-- **Sendspin channel**: a separate data channel labelled `"sendspin"` bridges to the internal Sendspin server.
+- **Message chunking**: libdatachannel caps a data-channel message at 256 KiB, so `ma-api` messages larger than `DATA_CHANNEL_CHUNK_SIZE` (64 KiB) are split and reassembled. The piece size is *preferred*, not fixed: each piece becomes a base64 frame roughly a third larger, and the channel's own negotiated `max_message_size` can size it down further. `DATA_CHANNEL_CHUNK_OVERHEAD` (128 bytes) accounts for the JSON envelope's fixed keys plus the group/sequence/count numbers.
+- **Dedicated channels.** Beyond the client's own API channel, the gateway routes three labelled data channels (#5635, #5643, #5648, #5693, #5626):
+
+| Label | Bridges to |
+|---|---|
+| `http_proxy` | Plain HTTP requests for endpoints that are not WebSocket-based (the image proxy, audio preview). Requires schema ≥ 49 |
+| `live_announcement` | The [live announcement](10-streaming-pipeline.md#live-announcements) inbound WebSocket |
+| `sendspin` | The internal Sendspin server |
+
+- **The HTTP proxy carries raw binary**, so it needs no base64 escaping and its `HTTP_PROXY_BODY_CHUNK_SIZE` (192 KiB) sits close to libdatachannel's cap. It is bounded by `HTTP_PROXY_CONCURRENCY` (6), a `HTTP_PROXY_SEND_TIMEOUT` (10 s) so a client that stops draining cannot park the channel's send lock and a semaphore slot for the session, and a `HTTP_PROXY_FETCH_TIMEOUT` (20 s total) in place of aiohttp's five-minute default. Both budgets sit inside the 30 seconds a client waits before abandoning a proxied request, so the server never works on — or answers — a request nobody is listening for.
 
 ### Configuration and scopes
 
@@ -484,7 +503,7 @@ The FastMCP server plugin mounts a Model Context Protocol endpoint at `/mcp/v1` 
 | [`music_assistant/controllers/webserver/api_docs.py`](../../music_assistant/controllers/webserver/api_docs.py) | OpenAPI/Swagger/commands documentation generation |
 | [`music_assistant/controllers/webserver/sendspin_proxy.py`](../../music_assistant/controllers/webserver/sendspin_proxy.py) | Sendspin WebSocket proxy |
 | [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — see [19-authentication.md](19-authentication.md) |
-| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context vars, `is_request_from_ingress`, `get_authenticated_user`, `has_scope` (the unused `auth_middleware` function also lives here) |
+| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context vars, `is_request_from_ingress`, `get_authenticated_user`, `has_scope`, `ROLE_SCOPES` — auth *helpers*, no middleware (#5211) |
 | [`music_assistant/controllers/webserver/helpers/ssl.py`](../../music_assistant/controllers/webserver/helpers/ssl.py) | SSL context creation and the `verify_ssl` action |
 | [`music_assistant/controllers/webserver/remote_access/`](../../music_assistant/controllers/webserver/remote_access/) | `RemoteAccessManager`, `WebRTCGateway`, `RemoteAccessInfo` |
 | [`music_assistant/helpers/webrtc_certificate.py`](../../music_assistant/helpers/webrtc_certificate.py) | Persistent DTLS keypair and the Remote ID derivation |

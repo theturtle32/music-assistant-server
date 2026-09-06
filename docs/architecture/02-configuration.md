@@ -47,7 +47,7 @@ Each mixin owns one config scope and declares `if TYPE_CHECKING:` stubs for the 
 
 ### JSON File I/O
 
-Settings are stored in `{storage_path}/settings.json`. The controller loads the file on `setup()` and writes it back with a **debounced save** — `save()` schedules a write after `DEFAULT_SAVE_DELAY` (5 seconds) using `call_later`. Calling `save(immediate=True)` bypasses the debounce for critical writes (a rotated auth token, a completed setup flow). On shutdown, `close()` flushes a pending save, and returns immediately when nothing is pending.
+Settings are stored in `{storage_path}/settings.json`. The controller loads the file on `setup()` and writes it back with a **debounced save** — `save()` schedules a write after `DEFAULT_SAVE_DELAY` (5 seconds) using `call_later`. Calling `save(immediate=True)` bypasses the debounce for critical writes (a rotated auth token, a completed setup flow). On shutdown, `close()` cancels the debounce timer and then writes only if `_save_written != _save_requested` (#5345, #5360) — meaning the latest change never reached disk, because its save is either still inside the debounce window or was cancelled on stop. Comparing the two counters rather than checking for a pending timer is what makes this correct for both cases, and it returns immediately when the file is already current.
 
 Writes go through `_save_to_disk` and are **atomic and backed up** (durable `fsync` of the temp file before rename — #5716; earlier atomic-write work also tracked under #4534):
 
@@ -74,9 +74,25 @@ The hierarchical key system means `self.get("providers/spotify_1/values/username
 
 ### Settings migrations
 
-`migrations.py` runs `migrate(data)` against the raw settings dict right after load, before anything is parsed into config objects, and triggers an immediate save when it changed something. There is no schema version counter: each transform is an independent, **idempotent** function gated on the shape of the data it repairs, tagged with a `TODO: remove after <release>` marker so the accumulated set can be pruned. Current transforms cover repairs (an orphaned provider stub with no `domain`, a self-referential protocol link), renames (`default_enqueue_option_radio` → `default_enqueue_option_live_sources`), and *moves* between scopes — most notably the per-player → per-queue relocation of crossfade and volume normalization, and the promotion of now-global settings to the `player_queues` core config.
+`migrations.py` runs `migrate(data)` against the raw settings dict right after load, before anything is parsed into config objects, and triggers an immediate save when it changed something. There is no schema version counter: each transform is an independent, **idempotent** function gated on the shape of the data it repairs, tagged with a `TODO: remove after <release>` marker so the accumulated set can be pruned. Current transforms cover repairs (an orphaned provider stub with no `domain`, a self-referential protocol link), renames (`default_enqueue_option_radio` → `default_enqueue_option_live_sources`), and *moves* between scopes — most notably the per-player → per-queue relocation of crossfade and volume normalization, and the promotion of now-global settings to the `player_queues` core config. Four more recent steps illustrate the "repair, then let the default reassert itself" pattern:
 
-One migration runs later, from `setup()` rather than `_load()`: `migrate_provider_setup_data()` moves each provider's setup-flow-owned keys out of `values` into `setup_data`. It needs the encryption callback so migrated string values are encrypted at rest, which is only available after `_init_encryption()`. The per-provider key lists live in `PROVIDER_SETUP_FLOW_KEYS`.
+| Step | What it repairs |
+|---|---|
+| `_migrate_player_icons` | Rewrites stored icons after the icon set changed (#5306) |
+| `_migrate_bluesound_http_profile` | Drops the stored HTTP profile of Bluesound players (#5408); the setting is no longer offered because BluOS only plays back correctly on the forced-content-length profile |
+| `_migrate_orphaned_disabled_protocol_configs` | Removes disabled protocol-player configs that lost their parent. Such a config is invisible in the UI, so there is no way to re-enable it — and while it lingers, the device it belongs to can never register again |
+| `_migrate_unrenamed_player_names` | Clears the stored name of players the user never actually renamed, so an improved default name is no longer shadowed by the auto-generated one saved at creation time |
+
+Some migrations run later, from `setup()` rather than `_load()`, because they need the encryption callback so migrated string values are encrypted at rest — and that is only available after `_init_encryption()`. The `migrate()` pass in `_load()` runs before encryption exists, so anything touching a secure value has to wait. Four run in this phase, in order:
+
+| Migration | Purpose |
+|---|---|
+| `migrate_provider_setup_data()` | Moves each provider's setup-flow-owned keys out of `values` into `setup_data`; the per-provider key lists live in `PROVIDER_SETUP_FLOW_KEYS` |
+| `migrate_nfs_subfolder_into_export_path()` | Folds a stored NFS subfolder into its export path (#5167). Runs *after* the above, so a legacy install's keys have already landed in `setup_data` |
+| `migrate_connected_player_plugins()` | Moves the connected-player plugins to the player-bound model (#6026): collapses `spotify_connect` / `airplay_receiver` instances and enforces the now-mandatory player on `ariacast_receiver` / `yandex_ynison` |
+| `migrate_hass_engine_selection()` | Hands the Home Assistant plugin's former single TTS/AI entity choice over to the providers that now select their own engine (#5253) — see [18-ai-and-mcp.md](18-ai-and-mcp.md#ai-and-tts-engines) |
+
+Each carries a `TODO` naming the release after which it can be dropped. The first three share one `save(immediate=True)` if any of them changed something; the engine-selection migration saves separately because its `ai_radio` selection lands in encrypted `setup_data`.
 
 ## Config Hierarchy
 
@@ -140,9 +156,9 @@ CONFIGURABLE_CORE_CONTROLLERS = (
 
 `translations`, `diagnostics` and `dashboard` are core controllers but not configurable settings modules — see [00-overview.md](00-overview.md) for that distinction.
 
-Each controller defines its own entries via `get_config_entries()`, an async method that takes **no arguments**. The config controller appends `DEFAULT_CORE_CONFIG_ENTRIES` (`log_level` and `max_concurrent_tasks`) to whatever the controller returns, so every core module gets those two for free.
+Each controller defines its own entries via `get_config_entries()`, an async method that takes **no arguments**. The config controller appends `DEFAULT_CORE_CONFIG_ENTRIES` to whatever the controller returns, which is now just `(CONF_ENTRY_LOG_LEVEL,)` (#5317) — so every core module gets a log-level entry for free. `CONF_ENTRY_MAX_CONCURRENT_TASKS` still exists as a reusable entry but is no longer appended automatically: only some controllers have concurrent work to cap, and offering the setting on the rest was surfacing a knob that did nothing.
 
-`ConfigEntryType.ACTION` entries are one-shot buttons rather than stored values. Pressing one calls `config/core/invoke_action`, which routes to the controller's `handle_config_action(action)` and returns the freshly rendered entry list (PR #5035). The `cache` controller is the canonical example: it declares a `clear_cache` action and, on press, clears the cache and appends a `LABEL` entry reporting the result.
+`ConfigEntryType.ACTION` entries are one-shot buttons rather than stored values. Pressing one calls `config/core/invoke_action`, which routes to the controller's `handle_config_action(action)` (PR #5035). The return type is `list[ConfigEntry] | ConfigActionResult` (#5402), which encodes three outcomes rather than always re-rendering entries: a `ConfigActionResult` reports an outcome to show the user, an **empty list** means the action ran with nothing to report, and a non-empty list holds re-rendered entries. `config/players/invoke_action` behaves the same way (#5298). The `cache` controller is the canonical example: it declares a `clear_cache` action and, on press, clears the cache and appends a `LABEL` entry reporting the result.
 
 A handful of entries need runtime data that would be too expensive to compute on the value-read path. `_resolve_core_config_entries()` handles those when serving entries to the UI — currently populating the global autoplay-playlist dropdown for the `player_queues` domain from the library.
 
@@ -183,7 +199,9 @@ Per-player settings. Fields beyond `Config`:
 | `player_type` | `PlayerType` enum (player, stereo_pair, group, protocol) |
 | `setup_data` | Setup-flow data (e.g. AirPlay pairing credentials), encrypted at rest and never serialized |
 
-Player config values are grouped into categories for the UI: `"generic"` (icon, visibility, expose-to-HA, play-media preference), `"announcements"` (TTS pre-announce, chime URL, announce volume strategy and limits), `"player_controls"` (power/volume/mute control sources, min/max volume, auto-play), `"protocol_generic"` (codec, sample rates, flow mode, output channels, HTTP profile, ICY metadata), `"protocol_general"` (the preferred-output-protocol selector), and one `protocol_{domain}` category per linked output protocol. Volume normalization and crossfade used to live here under a `"playback"` category; both are now per-queue settings (see below).
+Player config values are grouped into categories for the UI: `"generic"` (icon, visibility, expose-to-HA, play-media preference), `"announcements"` (TTS pre-announce, chime URL, announce volume strategy and limits), `"player_controls"` (power/volume/mute control sources, min/max volume, auto-play), `"protocol_generic"` (codec, sample rates, flow mode, output channels, HTTP profile, ICY metadata), `"protocol_general"` (the preferred-output-protocol selector), `"plugins"`, and one `protocol_{domain}` category per linked output protocol. Volume normalization and crossfade used to live here under a `"playback"` category; both are now per-queue settings (see below).
+
+**The `"plugins"` category is injected per player** (#6026). `_create_plugin_provider_config_entries` walks the loaded `PluginProvider`s and emits one boolean toggle for each that binds its `AudioSource`s to individual players — detected by `get_player_audio_sources(player_id)` returning a list rather than `None`. The toggle's value reflects whether this player is in that plugin's `CONF_CONNECTED_PLAYERS`, so "is Spotify Connect enabled on this speaker?" is answered and set from the player's own settings page instead of the plugin's. Only players whose type is in `PLAYBACK_TARGET_TYPES` get the entries. Because the key is dynamic (`{instance_id}||plugin||enabled`), it pins a static `translation_key` of `plugin_enable` with the provider name as a parameter — a dynamic key would have no catalog entry to resolve against.
 
 Protocol-linked players are a special case: entries belonging to a linked protocol player are injected into the parent player's config surface with a `{protocol_player_id}||protocol||{key}` prefix, so a client can configure a whole device from one endpoint. Those virtual entries are never persisted on the parent — the protocol player's own config remains the canonical store. See [05-protocol-linking.md](05-protocol-linking.md).
 
@@ -198,7 +216,7 @@ Every configurable setting is described by a `ConfigEntry` (from `music_assistan
 | Field | Type | Purpose |
 |---|---|---|
 | `key` | `str` | Identifier, and the default localization slug |
-| `type` | `ConfigEntryType` | `BOOLEAN`, `STRING`, `SECURE_STRING`, `INTEGER`, `FLOAT`, `LABEL`, `SPLITTED_STRING`, `DIVIDER`, `ACTION`, `ICON`, `ALERT`, `IMAGE`, `URL` |
+| `type` | `ConfigEntryType` | `BOOLEAN`, `STRING`, `SECURE_STRING`, `INTEGER`, `FLOAT`, `LABEL`, `SPLITTED_STRING`, `DIVIDER`, `ACTION`, `ICON`, `ALERT`, `IMAGE`, `URL`, `PAIRING_CODE` (#6028), plus the `UNKNOWN` fallback |
 | `default_value` | `ConfigValueType` | Default when no value is stored |
 | `options` | `list[ConfigValueOption]` | Dropdown/select options; an option can be `disabled` (shown but unselectable) with a localized reason |
 | `range` | `tuple[int, int] \| None` | Min/max for numeric entries |
@@ -275,6 +293,7 @@ Per-player DSP is stored separately from `PlayerConfig`, under `player_dsp/{play
 | `config/players/dsp/save` | Validate and persist a config; clears `preset_id` (this is a manual edit) |
 | `config/players/dsp/apply_preset` | Copy a stored preset onto the player and record its `preset_id` |
 | `config/dsp_presets/get` / `save` / `remove` | Manage the shared, user-defined presets under `player_dsp_presets` |
+| `config/dsp_irs/list` / `upload` / `remove` | Manage the impulse-response WAV files the `CONVOLUTION` filter's `ir_id` refers to (#4947). A change dispatches `EventType.DSP_IRS_UPDATED` |
 
 Presets are a shallow link: a player stores a *copy* of the preset's config plus the `preset_id` it came from. Editing a preset therefore clears the `preset_id` on every player that used it (`_clear_dsp_preset_assignments`) without changing their audio, and manually editing a player's DSP clears its own `preset_id`. Persisting a config emits `EventType.PLAYER_DSP_CONFIG_UPDATED`; preset changes emit `EventType.DSP_PRESETS_UPDATED`.
 

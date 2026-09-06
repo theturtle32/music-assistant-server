@@ -12,7 +12,7 @@ This document owns the model. [12-webserver-api.md](12-webserver-api.md) owns th
 
 ### `Scope`
 
-`Scope` is a `StrEnum` in `music_assistant_models.auth`. Nineteen real scopes plus two special members — 21 in total:
+`Scope` is a `StrEnum` in `music_assistant_models.auth`. Twenty real scopes plus two special members — 22 in total:
 
 | Scope | Value |
 |---|---|
@@ -24,7 +24,7 @@ This document owns the model. [12-webserver-api.md](12-webserver-api.md) owns th
 | `CONFIG_PLAYERS_READ` / `CONFIG_PLAYERS_WRITE` | `config.players.read` / `config.players.write` |
 | `CONFIG_PROVIDERS_READ` / `CONFIG_PROVIDERS_WRITE` | `config.providers.read` / `config.providers.write` |
 | `CONFIG_CORE_READ` / `CONFIG_CORE_WRITE` | `config.core.read` / `config.core.write` |
-| `USERS_MANAGE` / `USERS_IMPERSONATE` / `USERS_INVITE` | `users.manage` / `users.impersonate` / `users.invite` |
+| `USERS_READ` / `USERS_MANAGE` / `USERS_IMPERSONATE` / `USERS_INVITE` | `users.read` / `users.manage` / `users.impersonate` / `users.invite` |
 | `SYSTEM_READ` / `SYSTEM_MANAGE` | `system.read` / `system.manage` |
 | `UNKNOWN` | `unknown` — **grants no access** |
 
@@ -39,13 +39,15 @@ This document owns the model. [12-webserver-api.md](12-webserver-api.md) owns th
 | `ADMIN` | `{Scope.ALL}` |
 | `USER` | the guest set, plus `LIBRARY_WRITE`, `CONFIG_PROVIDERS_READ`, `CONFIG_CORE_READ`, `USERS_INVITE`, `SYSTEM_READ` |
 | `GUEST` | `LIBRARY_READ`, `PLAYERS_READ`, `PLAYERS_CONTROL`, `QUEUES_READ`, `QUEUES_CONTROL`, `PROVIDERS_READ`, `CONFIG_PLAYERS_READ` |
-| `SERVICE` | the user set, plus `CONFIG_PLAYERS_WRITE` and `USERS_IMPERSONATE` |
+| `SERVICE` | the user set, plus `CONFIG_PLAYERS_WRITE`, `USERS_READ` and `USERS_IMPERSONATE` |
 
 Two design decisions in that table are worth drawing out.
 
 **`GUEST` can control playback.** A guest gets `PLAYERS_CONTROL` and `QUEUES_CONTROL`, because the guest experiences MA supports — Party, Music Quiz, the dashboard viewer — are all about letting someone at the party actually change the music. What a guest cannot do is write to the library, read or write configuration beyond player config, or manage users.
 
-**`SERVICE` exists for the Home Assistant integration.** It is a regular user plus exactly two things: player-config write (so HA can adjust player settings) and `USERS_IMPERSONATE` (so a single integration token can act on behalf of whichever HA user triggered an automation). Pre-existing installs had this account on the plain `user` role; `_migrate_system_user_role()` moves it on startup.
+**`SERVICE` exists for the Home Assistant integration.** It is a regular user plus exactly three things: player-config write (so HA can adjust player settings), `USERS_IMPERSONATE` (so a single integration token can act on behalf of whichever HA user triggered an automation) and `USERS_READ` (#5410 — impersonating a user is not useful without being able to *enumerate* them, which is what lets HA map its own users onto MA accounts). Pre-existing installs had this account on the plain `user` role; `_migrate_system_user_role()` moves it on startup.
+
+**`USERS_READ` is separate from `USERS_MANAGE` for that reason.** Reading the user list is a far weaker capability than creating, editing or deleting accounts, so `auth/user` and `auth/users` gate on `USERS_READ` rather than forcing every caller that needs to *see* users to hold full user management.
 
 `User.role` is typed as a plain `str`, not the `UserRole` enum, explicitly to leave room for custom roles. The consequence is fail-closed: a role id absent from `ROLE_SCOPES` resolves to an empty frozenset and therefore grants nothing.
 
@@ -99,7 +101,7 @@ if handler.allow_impersonation and msg.args:
 
 Several details make this safe and ergonomic:
 
-- **`resolve_impersonated_user` accepts a user id or a username**, trying id first.
+- **`resolve_impersonated_user(mass, provider_type, provider_user_id, required=True)` resolves per auth provider** (#5417). A *builtin* user is looked up by user id or username, while a user belonging to another auth provider is resolved through their **provider link** — so an HA account can be named by its HA user id without MA having to mirror it as a local username. The command's `user` argument may therefore be a dict (`{provider, user_id, required}`) rather than a bare string, and `required=False` resolves to `None` instead of raising when the user cannot be found.
 - **Self-impersonation is always allowed**; targeting *another* user requires `Scope.USERS_IMPERSONATE`, which only `ADMIN` (via `ALL`) and `SERVICE` hold. Failure raises `InsufficientPermissions`.
 - **Empty values mean "no impersonation".** `None` and `""` are both treated as absent, because optional fields in HA automations and scripts commonly template to an empty string, and a blank template must not become an error.
 - **`APICommandHandler.parse` refuses to register** a command that both allows impersonation and declares its own `user`/`username` parameter, since the dispatch would silently swallow the handler's argument. That is a `RuntimeError` at startup, not a runtime surprise.
@@ -215,7 +217,11 @@ The `exp` mismatch on short-lived tokens is deliberate and worth understanding: 
 
 ### Revocation and disconnect
 
-`auth/token/revoke` deletes the row; a user may revoke their own tokens, and `USERS_MANAGE` is needed for anyone else's. Revocation is not just a database change — `webserver.disconnect_websockets_for_token(token_id)` walks live WebSocket clients and drops any whose `_token_id` matches, so an open session cannot outlive its credential. Disabling a user has the same effect on their sessions.
+`auth/token/revoke` deletes the row; a user may revoke their own tokens, and `USERS_MANAGE` is needed for anyone else's. Revocation is not just a database change — `webserver.disconnect_websockets_for_token(token_id)` walks live WebSocket clients and drops any whose `_token_id` matches, so an open session cannot outlive its credential.
+
+Revoking a whole *user's* access is a separate path (#6133, #6134, #6135), because deleting or disabling an account has to close every session it holds rather than one token at a time. `AuthenticationManager.subscribe_user_access_revoked(callback)` is the notification hook, and `webserver.disconnect_websockets_for_user(user_id)` performs the disconnect — covering bulk revoke, disable and delete through one mechanism instead of each reimplementing the walk. A live change to a user's `player_filter` is applied to open connections without requiring a reconnect (#5785).
+
+`auth/tokens` lists a user's tokens newest-first, capped at `TOKEN_LIST_LIMIT` (100).
 
 `POST /auth/logout` is the self-service form: it hashes the bearer token from the request and deletes the matching row.
 
@@ -243,7 +249,7 @@ The charset drops the four glyphs people confuse when reading a code off a scree
 
 `auth/join_code/exchange` is `authenticated=False` by necessity — a joining guest has no credential yet. It is protected instead by:
 
-- a **rate limiter** (`_join_code_rate_limiter`, the same `LoginRateLimiter` class) keyed on the single global `join_code_exchange` key, since no source IP is available at that layer
+- a **rate limiter** (`_join_code_rate_limiter`, the same `LoginRateLimiter` class) whose bucket is chosen by `_join_code_rate_limit_key()` (#5243): the WebSocket `client_id` when there is one, else `peer:{address}` from [`current_peer_address`](#context-variables), else a shared anonymous key. The function returns a second value saying whether the key identifies **one caller exclusively**, because a shared key must never be cleared by one client's successful exchange — otherwise a single legitimate guest would reset the budget an attacker is burning. A separate global ceiling still bounds total failures
 - an **exchange lock**, so concurrent attempts cannot all pass the rate-limit check before any failure is recorded
 - **expiry and use count** — `max_uses` of 0 means unlimited, and exhausted or expired codes are swept daily
 
@@ -296,7 +302,7 @@ The problem it solves: providers like Spotify, Google, and Microsoft only accept
 
 ## Context variables
 
-Authentication state reaches deep call chains through `contextvars.ContextVar` rather than being threaded as parameters. Five vars, each with a getter and setter in `auth_middleware.py`:
+Authentication state reaches deep call chains through `contextvars.ContextVar` rather than being threaded as parameters. Six vars, each with a getter and setter in `auth_middleware.py`:
 
 | Variable | Getter | Carries |
 |---|---|---|
@@ -305,10 +311,13 @@ Authentication state reaches deep call chains through `contextvars.ContextVar` r
 | `impersonated_user` | `get_impersonated_user()` | The user this call is acting as, if any |
 | `sendspin_player_id` | `get_sendspin_player_id()` | The Sendspin player bound to this connection |
 | `current_client_id` | `get_current_client_id()` | The WebSocket connection id — `None` outside a WebSocket command |
+| `current_peer_address` | `get_current_peer_address()` | The network address a stateless API request came from |
 
 `get_current_user()` deliberately returns the **impersonated** user when one is set, and only falls back to `current_user.get()` otherwise. This is the single point that makes impersonation transparent: a handler asking "who is the current user?" gets the effective answer without knowing impersonation exists. Code that specifically needs the *authenticated* identity — as `resolve_impersonated_user` does when checking whether the caller may impersonate — reads `current_user` directly.
 
 `current_client_id` is what lets a command know which WebSocket connection invoked it, used by the dashboard controller to tie a registration to a connection so it can be dropped when that connection closes.
+
+`current_peer_address` is set by the webserver from `request.remote` and exists for rate limiting stateless requests. Its docstring is careful about how much it is worth: a reverse proxy or Home Assistant Ingress presents *its own* address for every client behind it, so it identifies a caller far less precisely than a client id does — which is why the join-code limiter prefers `client_id` and only falls back to the peer address.
 
 ---
 
@@ -351,7 +360,7 @@ Keeping this separate from `library.db` means a library restore or wipe does not
 |---|---|
 | `music_assistant_models.auth` | `Scope`, `UserRole`, `User`, `AuthToken`, `UserAuthProvider`, `AuthProviderType` |
 | [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — users, tokens, join codes, the `auth/*` command surface, token refresh and rotation |
-| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | `ROLE_SCOPES`, `has_scope`, impersonation resolution, `ImpersonatedUser`, the context vars, ingress detection, `get_authenticated_user` (plus unused `auth_middleware` / `require_authentication` helpers) |
+| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | `ROLE_SCOPES`, `has_scope`, impersonation resolution, `ImpersonatedUser`, the context vars, ingress detection, `get_authenticated_user`. The `auth_middleware` / `require_authentication` functions the module is named after were deleted in #5211 |
 | [`music_assistant/controllers/webserver/helpers/auth_providers.py`](../../music_assistant/controllers/webserver/helpers/auth_providers.py) | `BuiltinLoginProvider`, `HomeAssistantOAuthProvider`, `LoginRateLimiter`, `get_ha_user_role`, `get_ha_user_details` |
 | [`music_assistant/helpers/jwt_auth.py`](../../music_assistant/helpers/jwt_auth.py) | `JWTHelper` — HS256 encode/decode, claim layout, token-id extraction |
 | [`music_assistant/helpers/guest_access.py`](../../music_assistant/helpers/guest_access.py) | Shared guest user, join code, join URL, and revocation helpers |
