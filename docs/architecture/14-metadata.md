@@ -88,7 +88,9 @@ Audiobooks and podcasts replace `metadata.images` outright with the first provid
 
 ### Refresh Gating
 
-Every enrichment method checks whether the item's `metadata.last_refresh` is older than `REFRESH_INTERVAL` (90 days) and returns immediately when the item is fresh and `force_refresh` is not set. This is what keeps load on the free online services low. `schedule_update_metadata(item)` applies the same check before creating a deterministic background task (task ID from `uuid5(NAMESPACE_URL, uri)`), so repeated UI access to a fresh item schedules nothing.
+Every enrichment method checks whether the item's `metadata.last_refresh` is older than `REFRESH_INTERVAL` (90 days) and returns immediately when the item is fresh and `force_refresh` is not set. This is what keeps load on the free online services low.
+
+`force_refresh` also opens `cache.handle_refresh(force_refresh)` around the whole call, which sets the `BYPASS_CACHE` context variable. Without that, a forced refresh would re-run enrichment only to be served the same stale answers out of the `@use_cache` layer wrapping each provider's calls — the refresh gate and the cache have to be bypassed together for "refresh" to mean anything. `schedule_update_metadata(item)` applies the same check before creating a deterministic background task (task ID from `uuid5(NAMESPACE_URL, uri)`), so repeated UI access to a fresh item schedules nothing.
 
 ---
 
@@ -484,15 +486,18 @@ Step 5 is what `has_derived_genre_mappings()` later reports on, so propagated ge
 
 ## Maintenance Tasks
 
-Registered in `_register_maintenance_tasks()`. All three run **daily at a randomized UTC time** rather than a fixed local 4:00 AM (#4126): one `random.randint(0, 24 * 60 - 1)` minute-of-day is drawn per process and shared by the three tasks, so independent installations don't all hit the shared MusicBrainz mirror at the same moment.
+Registered in `_register_maintenance_tasks()`. The three **daily** tasks run at a randomized UTC time rather than a fixed local 4:00 AM (#4126): one `random.randint(0, 24 * 60 - 1)` minute-of-day is drawn per process and shared by them, so independent installations don't all hit the shared MusicBrainz mirror at the same moment.
 
-| Task | Handler | Behavior |
-|---|---|---|
-| Missing artist metadata scan | `_scan_missing_artist_metadata` | Finds artists missing images **or** description that have never been refreshed; processes a batch of 5 (`METADATA_SCAN_BATCH_SIZE`, #3595) |
-| Playlist metadata refresh | `_refresh_playlist_metadata_batch` | Finds non-dynamic playlists (`is_dynamic = 0`) whose `last_refresh` is absent or older than 90 days; processes a batch of 5 |
-| Thumbnail cache cleanup | `_cleanup_thumb_cache` | Deletes oldest-first from `{cache_path}/thumbnails/` until the total is under `CONF_THUMB_CACHE_MAX_SIZE` |
+| Task | Handler | Cadence | Behavior |
+|---|---|---|---|
+| Missing artist metadata scan | `_scan_missing_artist_metadata` | Daily | Finds artists missing images **or** description that have never been refreshed; processes a batch of 5 (`METADATA_SCAN_BATCH_SIZE`, #3595) |
+| Playlist metadata refresh | `_refresh_playlist_metadata_batch` | Daily | Finds non-dynamic playlists (`is_dynamic = 0`) whose `last_refresh` is absent or older than 90 days; processes a batch of 5 |
+| Thumbnail cache cleanup | `_cleanup_thumb_cache` | Daily | Deletes oldest-first from `{cache_path}/thumbnails/` until the total is under `CONF_THUMB_CACHE_MAX_SIZE` |
+| Duplicate album reconciliation | `_reconcile_duplicate_albums` | **Hourly** | Re-enriches albums that are sparse (`album_type = 'unknown'`) or look like duplicates of a sibling, then re-runs `albums.match_providers()` so genuine duplicates fold together |
 
 Excluding dynamic playlists matters because their contents are regenerated on every play — refreshing metadata for them would be churn with no stable result to show.
+
+Album reconciliation is the metadata-side half of the duplicate cleanup whose track counterpart lives in the music controller ([08-media-library.md](08-media-library.md#initialization)). Enrichment comes first for a reason: an album stored with `album_type = unknown` and thin metadata often *is* a duplicate, but cannot be proven one until it has enough fields to compare, so the task fills those in and only then asks the [evidence-based matcher](08-media-library.md#album-evidence--compare_album_evidence) to merge. Candidates are gated on `last_refresh` being absent or older than `REFRESH_INTERVAL`, so a transient provider outage retries at the normal cadence instead of burning the item's only attempt.
 
 ### Corrupt metadata tolerance
 

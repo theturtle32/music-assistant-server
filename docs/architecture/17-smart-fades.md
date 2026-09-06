@@ -57,7 +57,7 @@ StreamsAudio.get_queue_item_stream_with_smartfade / get_queue_flow_stream
 
 Reading it as a sentence: **plan in seconds, render into filters, apply to bytes.** The planner touches no audio at all; the renderer is the first place bytes re-enter, reconciling the plan's second-based sizing against the actual buffer lengths; `apply()` runs the resulting chain through FFmpeg.
 
-`apply()` feeds FFmpeg from **two** inputs rather than one. The outgoing tail goes in through its own `pipe:<fd>` — FFmpeg accepts any number of them, so no temporary file ever touches disk — while the incoming head arrives on stdin. Both are fed concurrently because either can exceed the kernel pipe buffer, and the incoming side may be an async generator (a still-open stream handed over by the [crossfade handover](10-streaming-pipeline.md#get_queue_item_stream_with_smartfade-crossfade-streaming)) rather than a finished `bytes`.
+`apply()` feeds FFmpeg from **two** inputs rather than one. The outgoing tail goes in through its own `pipe:<fd>` — FFmpeg accepts any number of them, so no temporary file ever touches disk — while the incoming head arrives on stdin. Both are fed concurrently because either can exceed the kernel pipe buffer, and the incoming side may be an async generator (a still-open stream handed over by the [crossfade handover](10-streaming-pipeline.md#get_queue_item_stream_with_smartfade--crossfade-streaming)) rather than a finished `bytes`.
 
 ## Degradation chain
 
@@ -192,7 +192,7 @@ A related fix worth knowing about: an energy-drop transition could previously st
 | `ShelfFilter` | Low/high shelf EQ for the band handover |
 | `PeakFilter` | Peaking EQ with a bandwidth in octaves, for the mid/vocal handover |
 
-`CrossfadeTimingInfo` breaks the output into `PRE | CF | POST` — pre-crossfade, crossfade, and post-crossfade durations plus any fade-in trim. The streaming layer needs this to account for the mix correctly across the request boundary it is handed over on (`CrossfadeHandover`, see [10-streaming-pipeline.md](10-streaming-pipeline.md#get_queue_item_stream_with_smartfade-crossfade-streaming)), and lyrics sync reads it too.
+`CrossfadeTimingInfo` breaks the output into `PRE | CF | POST` — pre-crossfade, crossfade, and post-crossfade durations plus any fade-in trim. The streaming layer needs this to account for the mix correctly across the request boundary it is handed over on (`CrossfadeHandover`, see [10-streaming-pipeline.md](10-streaming-pipeline.md#get_queue_item_stream_with_smartfade--crossfade-streaming)), and lyrics sync reads it too.
 
 `StandardCrossFade` shares the same `SmartFade` interface but needs none of the planner: `build()` clamps the overlap to fit the shorter input, quantizes it to a whole number of PCM frames, and emits a single `CrossfadeFilter`. The frame quantization is load-bearing rather than cosmetic — `apply()` slices buffers on frame boundaries, so a fractional overlap would leave the rendered buffer a fraction of a sample short of the `acrossfade` duration, and FFmpeg then silently produces **no output at all**.
 

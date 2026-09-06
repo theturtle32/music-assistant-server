@@ -64,7 +64,15 @@ self._database: DatabaseConnection | None = None
 self._sync_lock = asyncio.Lock()
 ```
 
-`setup()` initializes the database first (via the mixin) and then finishes any pending provider removals recorded under the hidden `deleted_providers` core config value — so a `cleanup_provider` interrupted by a restart resumes. `post_setup()` registers the recurring maintenance tasks: a nightly database cleanup (`music_database_cleanup`, 05:00 local), a provider-mapping correction pass every 30 days (`music_provider_mapping_correction`), and the genre mapping scan.
+`setup()` initializes the database first (via the mixin) and then finishes any pending provider removals recorded under the hidden `deleted_providers` core config value — so a `cleanup_provider` interrupted by a restart resumes. `post_setup()` registers the recurring maintenance tasks: a nightly database cleanup (`music_database_cleanup`, 05:00 local), a provider-mapping correction pass every 30 days (`music_provider_mapping_correction`), the genre mapping scan, and an **hourly duplicate-track reconciliation** (`_reconcile_duplicate_tracks`, #5792/#5840).
+
+Reconciliation merges library tracks that ended up stored twice across providers, and it is deliberately incremental and cautious:
+
+- It **skips entirely while a sync is active** (`active_sync_tasks`), because a sync is still filling in albums and mappings, and judging duplicates against a half-populated library would merge things that only look identical.
+- It walks the library through a persisted cursor (`_track_reconciliation_cursor`) a batch at a time. A `None` cursor means the library has been walked end to end with nothing synced since, so the query is skipped rather than run for a guaranteed miss.
+- Merges go through [`merge_library_items`](#match-and-store-pattern).
+
+The metadata controller runs the album counterpart hourly; see [14-metadata.md](14-metadata.md#maintenance-tasks).
 
 `get_controller(media_type)` maps a `MediaType` enum value to the corresponding sub-controller (including `PODCAST_EPISODE` → `podcasts`). `get_controller_for_collection(item_id)` derives the media type from a collection item id and returns its controller — currently only audiobooks support collections.
 
@@ -182,7 +190,7 @@ Many of the public methods are marked `@final`, so subclass customization happen
 | `update_item_in_library()` | Update a library row, invalidate cached artwork for its images, emit `MEDIA_ITEM_UPDATED`, then write the change back to each music provider via `on_item_updated()` |
 | `remove_item_from_library()` | Delete from the entity table, `provider_mappings`, `external_id_lookup`, `playlog`, `audio_analysis` and genre exclusions; subclasses extend for junction tables |
 | `set_favorite()` | Set the favorite flag (no-op if unchanged), emit `MEDIA_ITEM_UPDATED` |
-| `library_items()` | Paginated listing with search, sort, and filters (favorite, provider, genre, `played_only`, `collapse_collections`); returns summary items by default |
+| `library_items()` | Paginated listing with search, sort, and filters (favorite, provider, genre, `played_only`, `reachable_via`, `collapse_collections`); returns summary items by default |
 | `iter_library_items()` | Async generator paging the whole library 500 rows at a time |
 | `get_collection()` | Resolve one collection (by collection item id) into a `MediaCollection` of hydrated items |
 | `search()` | For `"library"`, a fully-hydrated `library_items(search=...)`; for any other provider id, a live `MusicProvider.search()` narrowed to this media type |
@@ -201,6 +209,14 @@ The mechanics:
 - `_summary_base_columns()` deliberately selects the `search_name` / `search_sort_name` / `play_count` / `last_played` / timestamp columns, because `SORT_KEYS` orders on them and they must be resolvable from the result set.
 - `_parse_summary_row()` is the parse hook, with `_parse_summary_metadata` keeping only the first `THUMB` image and `_parse_summary_artist_mappings` hydrating slim `ItemMappingSummary` artists from an aggregated JSON subquery.
 - `_summary_available()` recomputes the availability flag from the provider mappings against the `available_providers` global cache value, matching `MediaItem.available` semantics that a summary item cannot inherit.
+
+### `reachable_via`
+
+`library_items(reachable_via=[instance_id, ...])` (#5768) restricts results to items that have an **available** mapping to at least one of the given provider instances (OR semantics). An explicit empty list therefore returns nothing, while `None` applies no filter at all — a distinction callers must respect, since the two mean "restrict to no providers" and "do not restrict".
+
+It exists because "in my library" and "playable from here" are different questions. A library assembled from several services still lists items that a particular service cannot play, which is wrong for a Discover row scoped to one provider, and wrong for a user whose admin restricted them to a subset. The [library recommendation rows](#library-rows) are its main consumer, alongside user-scoped browsing. It composes with `_ensure_provider_filter`, which applies the user's own restrictions independently.
+
+`library_count` applies the user's provider filter the same way (#5165), so a count never disagrees with the list it labels.
 
 ### Collections
 
@@ -221,14 +237,31 @@ The `_db_add_lock` (per media type) serializes inserts to prevent race condition
 
 Adding provider mappings to an existing item can also **merge** two library items: if a mapping being added already belongs to a different library item, that other item is removed and its mapping folded into the target.
 
+That implicit merge grew into an explicit, reusable one. `merge_library_items(target_item_id, source_item_id)` (#5769) transfers all state — provider mappings, external ids, relations, genres, playlog — from the source into the target and then deletes the source row, under `_db_add_lock` and batched. The design decision is that **the explicit target is the deterministic winner**: its current values stay authoritative wherever the normal non-overwrite update model would keep them, and the source is applied as if it were an incoming update. Merging an item into itself, or across media types, raises `InvalidDataError`. Both the mapping-conflict path and the duplicate-reconciliation tasks below go through it, so there is one audited way for two library items to become one.
+
 ### The external ID lookup table
 
 External-ID matching used to mean a `LIKE` scan over an `external_ids` JSON column, which no index could serve. It now goes through a dedicated, indexed `external_id_lookup` table `(media_type, external_id_type, external_id, item_id)` — first as an accelerator (#4628), then as the single source of truth with the JSON column dropped (#4645, schema v51).
 
-- `set_external_ids()` rewrites an item's rows (delete-then-upsert).
+- `set_external_ids()` rewrites an item's rows (delete-then-upsert), but an **empty set is a no-op** and never clears stored ids (#5548). This mirrors the provider-mapping policy: a sync that happens to return nothing must not leave an item stripped of the identity evidence everything else matches on.
 - `get_library_item_by_external_id()` / `get_library_item_by_external_ids()` resolve through an `IN (SELECT ...)` subquery, optionally constrained to one `ExternalID` type.
+- `music/{type}s/get_by_external_id` is registered on every type controller, so an external id is addressable straight from the API.
 - `_external_ids_query()` re-aggregates the rows back into the JSON array shape that `MediaItem.external_ids` expects, so consumers see no difference.
 - The `external_id` column is `COLLATE NOCASE`, and the table's unique index is ordered `(media_type, external_id, external_id_type, item_id)` specifically so both typed and untyped lookups are served by it.
+
+#### Canonicalization — `helpers/external_ids.py`
+
+An indexed lookup only works if both sides agree on spelling, and providers do not: the same barcode arrives as a UPC-12, an EAN-13 or a GTIN-14, ISRCs turn up hyphenated, and MBIDs come wrapped in braces. `helpers/external_ids.py` (#5770) centralizes that normalization so the write path and the read path cannot drift apart:
+
+| Function | Role |
+|---|---|
+| `normalize_external_id` / `normalize_external_ids` | Canonical form per type — barcode to GTIN-14, ISRC without separators, MBID unwrapped |
+| `external_id_lookup_values` / `..._untyped` | Every index-compatible variant a stored value could match, so a legacy row written before normalization is still found |
+| `is_valid_isrc` / `is_valid_barcode` | Validation, including the GTIN check digit (`_gtin_check_digit`) — Qobuz omits it, so a barcode missing its check digit is completed rather than rejected |
+| `barcode_to_upc` | The reverse conversion, for providers that only accept UPC |
+| `external_id_sort_key` | Stable ordering when an item carries several ids |
+
+Both `compare_external_ids` in the comparison layer and `set_external_ids` on the write path route through it.
 
 ### Event suppression during bulk work
 
@@ -244,7 +277,11 @@ Two call sites set it: the provider sync handler (subscribers refresh once on `M
 
 ### Comparison Logic
 
-`compare_media_item` (`helpers/compare.py`) dispatches to type-specific comparisons. For tracks, the matching checks (in priority order):
+`helpers/compare.py` holds three related comparison APIs. The boolean one answers "are these the same item?", and two newer graded ones answer "how confident are we, and would more data help?" — a distinction that matters because the boolean form has to guess when metadata is thin, while a caller that can fetch a tracklist would rather be told the question is still open.
+
+#### Boolean comparison — `compare_media_item`
+
+Dispatches to type-specific comparisons and is still what `TracksController.match_providers` uses for cross-provider library linking. For tracks, the checks in priority order:
 
 1. Same provider + item ID (or overlapping mappings)
 2. **Primary** external IDs — MusicBrainz recording/track, AcoustID. These are definitive: a match confirms, a mismatch rejects.
@@ -252,7 +289,37 @@ Two call sites set it: the provider sync handler (subscribers refresh once on `M
 4. Sequential text filters: title match → artist match → version match → explicit flag → album/disc/track number alignment. Each can reject early.
 5. Duration fallback within tolerance (2-3 seconds depending on context)
 
-`compare_strings` supports both strict equality and fuzzy matching via `SequenceMatcher`. `create_safe_string` normalizes Unicode (via unidecode), strips punctuation, and handles special artist name cases.
+`compare_strings` supports both strict equality and fuzzy matching via `SequenceMatcher`. `create_safe_string` (from `music_assistant_models.helpers`) normalizes Unicode (via unidecode), strips punctuation, and handles special artist name cases.
+
+#### Album evidence — `compare_album_evidence`
+
+Albums are the hard case: two providers' copies of the same record routinely differ only by an edition or a retail suffix, and the album's own fields cannot settle it. `compare_album_evidence` therefore returns a **tri-state** rather than a bool:
+
+| `AlbumMatchEvidence` | Meaning |
+|---|---|
+| `MATCH` | Same album |
+| `NO_MATCH` | Confidently different |
+| `INSUFFICIENT` | The album's own metadata cannot decide |
+
+`INSUFFICIENT` is the whole point. `AlbumsController` escalates it rather than guessing: it fetches **ordered tracklists** for both sides and re-runs the comparison with them, so a fingerprint resolves the ambiguity — and a conflicting fingerprint *overrides* an otherwise nominally-matching album (identical title, version and year but a different number of tracks). Only if that is still inconclusive does it fall back to MusicBrainz. A mapping is accepted solely on `MATCH`. The candidate tracklist is fetched from the **exact** provider instance the album was matched on, so a same-domain fallback can never fingerprint against a different account or server; if it is unavailable, it is treated as absent rather than as a mismatch.
+
+Two supporting refinements (#5771, #5776, #5809):
+
+- **Retail suffixes are stripped.** Some providers (notably Apple Music) append `- EP` or `- Single` to a title. `_ALBUM_RETAIL_SUFFIXES` drives both the Python comparison and a SQL match (`ALBUM_RETAIL_SUFFIX_KEYS`), so the query side agrees with the compare side.
+- **A shared barcode or ASIN identifies the same retail product**, which resolves an edition difference outright.
+
+#### Track confidence — `compare_track_evidence`
+
+A separate graded API exists for finding a track *on another provider*, where the caller needs to decide how good a substitute is acceptable:
+
+| `TrackMatchConfidence` | Evidence |
+|---|---|
+| `EXACT` (3) | Shared provider item identity, or a matching MusicBrainz **track** id — release-level evidence |
+| `LIKELY` (2) | Recording-level evidence (MB recording, AcoustID) |
+| `LOOSE` (1) | Metadata agreement only |
+| `NO_MATCH` (0) | A conflicting authoritative id, or conflicting version/explicit flags |
+
+`TracksController.find_provider_match(..., minimum_confidence=…)` returns the best candidate at or above a floor, and can report `ambiguous` when several tie. The consumer is **playlist migration**: `PlaylistMatchPolicy` maps user intent onto a floor via `match_policy_minimum_confidence` — `EXACT` → `EXACT`, `SAME_RECORDING` → `LIKELY`, `BEST_EFFORT` → `LOOSE` — and the migration report labels each track with the confidence it was matched at.
 
 ## MusicProvider ABC
 
@@ -284,6 +351,8 @@ The `is_streaming_provider` property (default `True`) distinguishes two provider
 ### Capability Flags
 
 `ProviderFeature` flags declare what a provider supports: `SEARCH`, `BROWSE`, `LIBRARY_ARTISTS`, `LIBRARY_ARTISTS_EDIT`, `FAVORITE_ARTISTS_EDIT`, `ARTIST_ALBUMS`, `ARTIST_TOPTRACKS`, `SIMILAR_TRACKS`, `RECOMMENDATIONS`, `SOUND_EFFECTS`, `PLAYLIST_TRACKS_EDIT`, `PLAYLIST_CREATE`, etc. `MusicController` checks them through `library_supported`, `library_edit_supported`, `library_favorites_edit_supported` and `library_sync_back_enabled`, which combine the flag with the relevant per-provider config value.
+
+**`supported_media_types` is the separate question of what a provider can *serve*** (#5815). It defaults to the media types the provider declares library support for, but a provider that can search and stream a type it cannot *list* — a search-only catalog — overrides it, which makes it eligible for search-based lookups such as cross-provider matching and `versions()`. Gating those paths on `library_supported` instead would have excluded exactly the providers most useful for filling a gap.
 
 Three of these flags are **not** exclusive to music providers, which is why several controller methods accept a wider provider type than `MusicProvider`: `SEARCH` and `AUDIO_SOURCE` bring plugin providers into search and browse, and `RECOMMENDATIONS` is declared by music, metadata and plugin providers alike.
 
@@ -367,7 +436,7 @@ The eight media item tables are enumerated as `MEDIA_ITEM_DB_TABLES` in `music_a
 | `albums` | Albums | `version`, `album_type`, `year` |
 | `tracks` | Tracks | `version`, `duration` |
 | `playlists` | Playlists | `owner`, `is_editable`, `is_dynamic` (v36), `supported_mediatypes` (JSON), `translation_key` + `translation_params` (v43) |
-| `radios` | Radio stations | — |
+| `radios` | Radio stations | `is_dynamic` (schema 58) |
 | `audiobooks` | Audiobooks | `version`, `publisher`, `authors` / `narrators` (JSON, string fallbacks), `duration` |
 | `podcasts` | Podcasts | `version`, `publisher`, `total_episodes` |
 | `genres` | Genres | `translation_key`, `description`, `genre_aliases` (JSON), `is_excluded`, `is_default`, `content_type` (v44) |
@@ -422,7 +491,16 @@ Each media item table gets indexes on `favorite`, `name`, `search_name`, `sort_n
 
 `migrate_database()` refuses anything older than schema 15 (`MusicAssistantError`), and `_setup_database()` copies `library.db` to `library.db.backup` before migrating. If a migration raises, the database file is deleted, recreated empty, the cache cleared and a full rescan triggered — the user always ends up with a working library, with the backup left in place. On a fresh install the default genres are seeded. Startup finishes with a conditional `VACUUM`, skipped unless at least `VACUUM_MIN_RECLAIM_RATIO` (20%) of the file is reclaimable. The `reset_db` advanced core config action does the same reset on demand.
 
-Notable content migration: schema ≤53 runs a one-shot normalization of stored synced lyrics (strip LRC ID tags, expand multi-timestamp lines) via `normalize_lrc_lyrics()` — see [14-metadata.md](14-metadata.md) for the on-demand path that continues to apply the same helper.
+Notable content migrations:
+
+| Step | What it does |
+|---|---|
+| `≤53` | One-shot normalization of stored synced lyrics (strip LRC ID tags, expand multi-timestamp lines) via `normalize_lrc_lyrics()` — see [14-metadata.md](14-metadata.md) for the on-demand path that continues to apply the same helper |
+| `≤55` | Strips the `sound_effect` media type out of stored playlists' `supported_mediatypes`. Clients that do not know the type yet refuse to parse a playlist advertising it, so rewriting the rows here makes *upgrading* sufficient instead of waiting for the next library sync |
+| `≤56` | Re-adds `playlists.translation_key`, `playlists.translation_params` and `playlog.playback_speed` (#5515, #5518) |
+| `≤57` | Adds `radios.is_dynamic` (#5628) |
+
+**The `≤56` step is a leapfrog guard, not a new column.** The `stable` branch numbers its schema versions independently of `dev`, so a database coming from stable can report a version that skips steps this branch added at `≤41` and `≤42`. The migration therefore re-runs those `ALTER`s for every pre-57 database, wrapped so a `duplicate column` error is swallowed and anything else re-raised — it is a no-op wherever the column already exists. The in-tree [music README](../../music_assistant/controllers/music/README.md) documents the stable-vs-dev numbering that makes this necessary.
 
 The `provider_mappings` table is the central join that connects canonical library items to their source providers. Each entity query aggregates mappings as a JSON array via subselect, so every returned item carries its full `provider_mappings` set; `external_id_lookup` rows are re-aggregated the same way into `external_ids`.
 
@@ -453,12 +531,24 @@ Authors and narrators became first-class artists rather than plain strings (#357
 - Collections (#3569) are audiobook series: `collapse_collections` groups books sharing a `metadata.collections` entry, and a collection sorts on `SUM(duration)` when ordering by duration.
 - `get_author_audiobooks()` / `get_narrator_audiobooks()` on the provider interface back the author and narrator detail views.
 
+### RadioController
+
+Radio stations gained the same "generated rather than fixed" concept playlists have: a **dynamic station** (`radios.is_dynamic`, schema 58, #5628) is one whose content the provider produces on demand instead of pointing at a fixed stream URL. `dynamic_tracks(radio)` delegates to `get_dynamic_radio_tracks` on the owning music or plugin provider; `radio_tracks(item_id, provider)` is the addressed form.
+
+Being dynamic **disables name-based linking**, in two places:
+
+- `versions()` returns an empty list — "a dynamic station is its provider's own, so a same-named station is a different one".
+- `match_providers()` returns early — matching by name "would link an unrelated radio stream to it".
+
+That is the whole point of the flag. Two providers offering a station called "Chill" are offering the same *stream* when it is a real broadcast, and two entirely different generators when it is dynamic, so the ordinary cross-provider merge would produce a station that plays the wrong thing.
+
 ### PlaylistController
 
 - Dynamic playlists are ordinary library playlists with `is_dynamic = True`. Nothing else in the system needs to know they are generated — see [Dynamic playlists as library rows](#dynamic-playlists-as-library-rows).
 - `supported_mediatypes` records which media types a playlist can hold, so `add_playlist_tracks` can reject an unsupported type.
 - `translation_key` / `translation_params` let a provider-supplied playlist name be localized and parameterized (Spotify's per-account "Liked Songs", builtin playlists) and survive the library round-trip. Updates adopt the synced item's key and params as a unit rather than mixing an old key with new params.
 - Empty localized searches retry through `_localized_search_fallback`, so a playlist is findable by the localized name the user actually sees.
+- **Playlist migration** (`music/playlists/migrate_playlist`, #5989) copies a playlist into MA's own managed storage or onto another streaming provider, matching each track through the [confidence-based comparison](#comparison-logic) and producing a Markdown report of what matched, what was approximated and what could not be found. A dynamic playlist is refused — there is nothing fixed to migrate.
 
 ### GenreController
 
@@ -472,7 +562,7 @@ The largest sub-controller, and the only one with an editable taxonomy of its ow
 
 ## Recommendations
 
-`controllers/music/recommendations/` is a small sub-controller that owns the whole recommendations API. It exposes two commands, both requiring `Scope.LIBRARY_READ`:
+`controllers/music/recommendations/` is a small sub-controller that owns the recommendations **API** — it aggregates over providers and no longer produces any rows itself. It exposes two commands, both requiring `Scope.LIBRARY_READ`:
 
 | Command | Returns |
 |---|---|
@@ -481,7 +571,9 @@ The largest sub-controller, and the only one with an editable taxonomy of its ow
 
 Splitting rows from items is the point (#4487): the listing must be cheap enough to render a Discover page immediately, and each row's contents are fetched on demand as it scrolls into view.
 
-**Row sources.** `get_recommendations()` combines the built-in library rows with the rows offered by every provider declaring `ProviderFeature.RECOMMENDATIONS` — which can be a music provider, a metadata provider or a plugin provider — after passing them through the user provider filter. Sources are interleaved with `zip_longest`, one folder per source per pass, so no single provider monopolizes the top of the page.
+**Row sources.** `get_recommendations()` has exactly **one** kind of source: it gathers rows from every provider declaring `ProviderFeature.RECOMMENDATIONS` — which can be a music provider, a metadata provider or a plugin provider — after passing them through the user provider filter. Sources are interleaved with `zip_longest`, one folder per source per pass, so no single provider monopolizes the top of the page.
+
+The library rows are no exception, because **they are a provider too** (#3890). `recommendations/library.py` is gone; the built-in rows now come from `providers/recommendations/`, a builtin plugin provider (`domain="recommendations"`, `builtin: true`, `allow_disable: false`) whose only declared feature is `RECOMMENDATIONS`. The controller has no special-cased library branch left — it is purely an aggregator. Moving the rows out means they compose through the ordinary provider machinery (feature declaration, user filter, timeout isolation) rather than needing a parallel path, and it lets the rows be reordered or extended without touching the music controller.
 
 **Timeouts and isolation.** Per-provider row fetches are bounded by `RECOMMENDATIONS_ROWS_TIMEOUT` (5 s — rows are contractually cheap, with no live backend calls), and item fetches by `RECOMMENDATIONS_ITEMS_TIMEOUT` (30 s). A timeout or exception in either logs a warning and yields an empty list, so one misbehaving provider degrades to a missing row rather than a failed page.
 
@@ -489,20 +581,27 @@ Splitting rows from items is the point (#4487): the listing must be cheap enough
 
 ### Library rows
 
-`recommendations/library.py` defines the built-in rows, keyed by the `LibraryRowID` enum, each carrying a `translation_key`, an icon, and an `enabled_by_default` flag:
+`providers/recommendations/__init__.py` defines the built-in rows, keyed by the `LibraryRowID` enum, each carrying a `translation_key`, an icon, and an `enabled_by_default` flag. There are **sixteen**:
 
-| Row | Backed by |
-|---|---|
-| In progress | `music.in_progress_items()` — partially played audiobooks and podcast episodes |
-| Recently played | `recently_played()` over albums, tracks, playlists, artists and genres, user-initiated only, with podcasts and audiobooks always included |
-| Recently added tracks / albums | `library_items(order_by="timestamp_added_desc")` |
-| Random artists / albums | `library_items(order_by="random_play_count")` — off by default |
-| Recently favorited tracks | `library_items(favorite=True, order_by="timestamp_modified_desc")` |
-| Favorite playlists | `library_items(favorite=True, order_by="random")` |
-| Favorite radio stations | `library_items(favorite=True, order_by="play_count_desc")` |
-| Recent artists / tracks | `recently_played()` for that single media type, not restricted to user-initiated — off by default |
+| Row | Backed by | Default |
+|---|---|---|
+| In progress | `music.in_progress_items()` — partially played audiobooks and podcast episodes | On |
+| Recently played | `recently_played()` over albums, tracks, playlists, artists and genres, user-initiated only, with podcasts and audiobooks always included | On |
+| Recently added tracks / albums | `library_items(order_by="timestamp_added_desc")` | On |
+| Recently favorited tracks | `library_items(favorite=True, order_by="timestamp_modified_desc")` | On |
+| Favorite playlists | `library_items(favorite=True, order_by="random")` | On |
+| Favorite radio stations | `library_items(favorite=True, order_by="play_count_desc")` | On |
+| Random artists / albums | `library_items(order_by="random_play_count")` | Off |
+| Recent artists / tracks | `recently_played()` for that single media type, not restricted to user-initiated | Off |
+| Forgotten tracks / albums / artists | Played once but not for a long time | Off |
+| Most played tracks | Highest play count | Off |
+| Never / rarely played | Tracks the library has but the user has not listened to | Off |
+
+The five newest rows (`forgotten_*`, `most_played_tracks`, `never_played_tracks`) all ship **off by default**, which is the pattern for rows that are interesting to some libraries and noise in others.
 
 `recently_played()` reads the `playlog`, scoped to the current user unless a `userid` is passed, and honors `fully_played_only`, `user_initiated_only` (with an `always_include_media_types` escape hatch for podcasts and audiobooks, which have no user-initiated container row), `queue_id` and `played_after_timestamp`. Rows for unavailable or filtered-out providers are dropped.
+
+**Library rows support the provider filter.** Each folder sets `supports_provider_filter=True`, and `get_recommendation_items(item_id, providers=…)` honours it via the [`reachable_via`](#reachable_via) library filter — an explicit empty list returns nothing, `None` applies no filter. This is what lets a user browsing Discover restrict "recently added" to a single streaming service, which a provider's own rows cannot offer.
 
 ### `RecommendationPayloadMixin`
 
@@ -584,7 +683,9 @@ The set of providers feeding the library keeps growing; classification matters m
 | [`controllers/music/constants.py`](../../music_assistant/controllers/music/constants.py) | `DB_SCHEMA_VERSION`, search timeouts and cache expirations, task ids |
 | [`controllers/music/helpers.py`](../../music_assistant/controllers/music/helpers.py) | `search_name_match_clause` (FTS), `sort_search_result`, `filter_search_results` |
 | [`controllers/music/recency.py`](../../music_assistant/controllers/music/recency.py) | `RecencyEngine` / `RecencySnapshot` / `RecencyWindows` |
-| [`controllers/music/recommendations/`](../../music_assistant/controllers/music/recommendations/) | `RecommendationsController` and the built-in library rows |
+| [`controllers/music/recommendations/`](../../music_assistant/controllers/music/recommendations/) | `RecommendationsController` — the aggregating API only; it no longer owns any rows |
+| [`providers/recommendations/`](../../music_assistant/providers/recommendations/) | `LibraryRecommendationsProvider` — the builtin plugin supplying the sixteen library rows |
+| [`helpers/external_ids.py`](../../music_assistant/helpers/external_ids.py) | GTIN/ISRC/MBID canonicalization, lookup variants, validation |
 | [`controllers/music/media/base.py`](../../music_assistant/controllers/music/media/base.py) | MediaControllerBase — shared library interaction pattern, summary mode, `SUPPRESS_MEDIA_ITEM_UPDATES` |
 | [`controllers/music/media/tracks.py`](../../music_assistant/controllers/music/media/tracks.py) | TracksController — track-specific library logic |
 | [`controllers/music/media/artists.py`](../../music_assistant/controllers/music/media/artists.py) | ArtistsController — artist-specific library logic |

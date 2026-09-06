@@ -529,13 +529,13 @@ Weight presets are deliberately non-uniform, tuned per feature-group informative
 
 #### AI Radio
 
-`ai_radio` (#3407, stage `alpha`) generates AI-moderated radio programs: an LLM writes spoken host segments, a TTS backend renders them, and the result is interleaved with a source playlist either as a generated playlist or by batch-feeding a live queue. `SUPPORTED_FEATURES` is empty — it is a pure consumer of other plugins' `AI_QUERY` and `TTS` hooks. Fully covered in [18-ai-and-mcp.md](18-ai-and-mcp.md#ai-radio-the-orchestrator).
+`ai_radio` (#3407, stage `alpha`) generates AI-moderated radio programs: an LLM writes spoken host segments, a TTS backend renders them, and the result is interleaved with a source playlist either as a generated playlist or by batch-feeding a live queue. `SUPPORTED_FEATURES` is empty — it is a pure consumer of other plugins' `AI_QUERY` and `TTS` hooks. Fully covered in [18-ai-and-mcp.md](18-ai-and-mcp.md#ai-radio--the-orchestrator).
 
 ### Server extension plugins
 
 #### MCP Server
 
-`fastmcp_server` (#3858, stage `experimental`) exposes MA's library, queue, playback, player, metadata, debug, and config surfaces as Model Context Protocol tools for external LLM clients, mounted into MA's own aiohttp webserver at `/mcp/v1` through an ASGI bridge. It declares no `ProviderFeature`s — it is the inverse of the AI consumers, publishing MA as the tool provider rather than calling out. See [18-ai-and-mcp.md](18-ai-and-mcp.md#the-fastmcp-server-ma-as-the-tool-provider).
+`fastmcp_server` (#3858, stage `experimental`) exposes MA's library, queue, playback, player, metadata, debug, and config surfaces as Model Context Protocol tools for external LLM clients, mounted into MA's own aiohttp webserver at `/mcp/v1` through an ASGI bridge. It declares no `ProviderFeature`s — it is the inverse of the AI consumers, publishing MA as the tool provider rather than calling out. See [18-ai-and-mcp.md](18-ai-and-mcp.md#the-fastmcp-server--ma-as-the-tool-provider).
 
 #### Hue Lights Sync
 

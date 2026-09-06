@@ -212,7 +212,7 @@ Adds the full media browsing/search/library API surface. Distinguishes between "
 ### `PlayerProvider` (`music_assistant/models/player_provider.py`)
 
 Adds player discovery and management:
-- `discover_players()` — called after the shared mDNS/UPnP discovery phase completes on every provider load, and again (debounced, 5s) when a player is enabled via config. The base implementation is a no-op, so a purely mDNS-driven provider never needs it. See [13-discovery.md](13-discovery.md#discover_players-provider-specific-discovery) for the full matrix of what providers actually do here
+- `discover_players()` — called after the shared mDNS/UPnP discovery phase completes on every provider load, and again (debounced, 5s) when a player is enabled via config. The base implementation is a no-op, so a purely mDNS-driven provider never needs it. See [13-discovery.md](13-discovery.md#discover_players--provider-specific-discovery) for the full matrix of what providers actually do here
 - `on_player_enabled()` / `on_player_disabled()` — config manager callbacks
 - `players` property — returns all players belonging to this provider
 - Group player management: `create_group_player()`, `remove_group_player()`
@@ -481,7 +481,7 @@ Existing configs are handled separately, because most installs never actually us
 - **Evidence found:** everything is kept, the tombstone loads, and the user sees the INCOMPATIBLE banner pointing at the add-on.
 - **Cleanup itself fails:** nothing is deleted and it retries on the next boot.
 
-A one-shot flag (`CONF_RETIRED_LOCAL_AUDIO_CLEANED`) keeps it from re-running. It needs the library and cache databases, so it cannot run with the settings migrations — see the [startup sequence](00-overview.md#startup-flow) for where it lands.
+A one-shot flag (`CONF_RETIRED_LOCAL_AUDIO_CLEANED`) keeps it from re-running. It needs the library and cache databases, so it cannot run with the settings migrations — see the [startup sequence](00-overview.md#startup-lifecycle) for where it lands.
 
 Neither `sendspin_source` nor `helpers/pulse_capture.py` is a replacement for `local_audio`: the former exposes a Sendspin client's *line-in* as an `AudioSource`, and the latter is PulseAudio *capture* plumbing for Spotify Soloist.
 

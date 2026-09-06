@@ -464,7 +464,7 @@ The URL itself embeds a **guest join code**: a `dashboard_viewer` guest account 
 
 ### MCP
 
-The FastMCP server plugin mounts a Model Context Protocol endpoint at `/mcp/v1` (configurable) as a **dynamic route**, bridging Starlette ASGI to aiohttp, plus a `/.well-known/oauth-protected-resource` route and a Connect Wizard under `<mount>/connect`. It reuses this server's port, auth subsystem, and origin allowlist rather than standing up its own. See [18-ai-and-mcp.md](18-ai-and-mcp.md#the-fastmcp-server-ma-as-the-tool-provider).
+The FastMCP server plugin mounts a Model Context Protocol endpoint at `/mcp/v1` (configurable) as a **dynamic route**, bridging Starlette ASGI to aiohttp, plus a `/.well-known/oauth-protected-resource` route and a Connect Wizard under `<mount>/connect`. It reuses this server's port, auth subsystem, and origin allowlist rather than standing up its own. See [18-ai-and-mcp.md](18-ai-and-mcp.md#the-fastmcp-server--ma-as-the-tool-provider).
 
 ---
 

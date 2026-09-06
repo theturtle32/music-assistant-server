@@ -9,6 +9,7 @@ This package provides a centralized caching layer backed by SQLite. All data sto
 - Support expiration, checksums, and persistent entries that survive cache clears.
 - Provide a `base_class` parameter on `get()` to automatically reconstruct model objects from cached dicts using `from_dict()`.
 - Provide a `use_cache` decorator for transparently caching provider/controller method results with automatic serialization and deserialization based on type annotations.
+- Provide `get_all()` for bulk reads: every non-expired entry for a provider/category as a `key -> data` mapping.
 - Run scheduled cleanup of expired entries.
 - Warn when the cache database exceeds the recommended maximum size on startup.
 
@@ -28,4 +29,5 @@ This package provides a centralized caching layer backed by SQLite. All data sto
 - The `@use_cache` decorator accepts `allow_expired_cache=True` to enable stale-while-revalidate: an expired entry is returned immediately and a background refresh updates the cache for the next request. The `BYPASS_CACHE` context variable still forces a synchronous re-fetch.
 - On a cache miss, `@use_cache` shares one execution of the wrapped method between concurrent callers on the same key, so a burst of identical requests costs a single provider call. Each caller gets its own copy of the result, because callers do adjust results in place (per-user podcast resume state, for one); the fetched objects themselves stay behind with the shared fetch, so the stored entry is written from data no caller has touched. A result that cannot be copied is shared instead, logged as a warning. A stale entry served under `allow_expired_cache` is likewise refreshed by a single background call, and a caller that bypasses the cache fetches on its own rather than joining or publishing a shared fetch.
 - The `BYPASS_CACHE` context variable, managed through `handle_refresh()`, forces cache misses for the duration of a context — useful for refresh operations.
+- `get_all(provider, category, base_class)` exists for callers that need to check a large number of keys at once (scanning a whole library, for instance). It issues one query and one deserialization batch instead of one of each per key, which is a different cost profile from a loop of `get()` calls rather than just a convenience wrapper.
 - A daily cleanup task removes expired entries (unless `allow_expired_cache=True`). Databases that exceed the recommended max size (2GB) are logged with a warning at startup but kept in place.
