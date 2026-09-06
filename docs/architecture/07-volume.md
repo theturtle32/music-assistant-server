@@ -2,7 +2,7 @@
 
 Volume control in Music Assistant spans individual players, group players, and live audio sources from plugins. Individual volume routes through a configurable control chain (native, fake, delegated). Group volume uses interpolation-based scaling that preserves relative balance between speakers and reaches full silence/full volume at the extremes. Plugin-provided `AudioSource` items are notified of volume changes via an inline callback so an upstream service can keep its own slider in sync. This document covers all three paths, per-player volume limits, the mute lock mechanism, announcement volume, and known architectural limitations.
 
-The three control modes — `NATIVE`, `FAKE`, and `NONE` — apply identically to volume and mute. **NATIVE** means the player (or its active protocol) handles the command in hardware or firmware. **FAKE** means MA simulates the control in software: for volume, the level is stored in `extra_data` and used in DSP calculations; for mute, the current volume is saved, set to 0, and restored on unmute. **NONE** means the control is disabled — volume/mute commands raise `UnsupportedFeaturedException`. Beyond these three, the config can specify a specific player ID (delegating to a protocol player like Chromecast), a `PlayerControl` ID (delegating to an external Home Assistant entity), or the [`follow_protocol` sentinel](#the-follow_protocol-sentinel) that defers to automatic resolution. The **mute lock** is a group-specific safeguard: when a user deliberately mutes a player within a group, a lock flag prevents subsequent group volume adjustments from auto-unmuting it. For how these modes are resolved from config, see [03-player-model.md](03-player-model.md#resolution-chains).
+The three control modes — `NATIVE`, `FAKE`, and `NONE` — apply identically to volume and mute. **NATIVE** means the player (or its active protocol) handles the command in hardware or firmware. **FAKE** means MA simulates the control in software: for volume, the level is stored in `extra_data` and used in DSP calculations; for mute, the current volume is saved, set to 0, and restored on unmute. **NONE** means the control is disabled — volume/mute commands raise `UnsupportedFeaturedException`. Beyond these three, the config can specify a specific player ID (delegating to a protocol player like Chromecast), a `PlayerControl` ID (delegating to an external Home Assistant entity), or the [`follow_protocol` sentinel](#the-follow_protocol-sentinel) that defers to automatic resolution. The **mute lock** is a group-specific safeguard: when a user deliberately mutes a player within a group, a lock flag records that intent so a subsequent group volume adjustment cannot undo it. For how these modes are resolved from config, see [03-player-model.md](03-player-model.md#resolution-chains).
 
 ## Individual Volume Routing
 
@@ -12,14 +12,12 @@ All volume commands enter through `cmd_volume_set(player_id, volume_level)` in t
 flowchart TD
     A["_handle_cmd_volume_set(player_id, level)"] --> B{Player is GROUP type?}
     B -- Yes --> C[Redirect to cmd_group_volume]
-    B -- No --> D{Has mute lock?}
-    D -- No --> E{Muted and not fake mute?}
-    E -- Yes --> F[Auto-unmute first]
-    E -- No --> G[Reset fake mute flag]
-    D -- Yes --> G
-    F --> G
-    G --> H["scale_volume_to_device(logical→device range)"]
-    H --> O{"Active AudioSource and<br/>this player owns its queue?"}
+    B -- No --> D{"_stays_silent_on_volume_change?<br/>(mute lock + FAKE mute + fake-mute flag)"}
+    D -- Yes --> F["Force level to 0 and<br/>record it as the target"]
+    D -- No --> G["Clear the fake mute flag"]
+    F --> H["scale_volume_to_device(logical→device range)"]
+    G --> H
+    H --> O{"Live AudioSource session<br/>on this player?"}
     O -- Yes --> P["await plugin_prov.on_volume_change(item_id, volume_level)"]
     O -- No --> J{volume_control type?}
     P --> J
@@ -29,7 +27,7 @@ flowchart TD
     J -- "player_id / control_id" --> N["Delegate to that entity<br/>(forwarding device_volume)"]
 ```
 
-Before `_handle_cmd_volume_set` dispatches to the native/fake/delegate routing, if the player owns the queue playing an active `AudioSource`, it `await`s `on_volume_change` synchronously. This guarantees the plugin sees the commanded value before any hardware confirmation can echo back. `set_group_volume` follows the inverse pattern at the group level: it fires the callback *after* all child volumes have been applied (since the group volume itself isn't a hardware command — only the children's volumes are).
+Before `_handle_cmd_volume_set` dispatches to the native/fake/delegate routing, if the player has a live [`AudioSourceSession`](04-player-controller.md#live-audiosource-sessions), it `await`s `on_volume_change` synchronously. This guarantees the plugin sees the commanded value before any hardware confirmation can echo back. Note the lookup is by **player**, not by queue: a live source is owned by the player, so it no longer matters which queue (if any) is involved. `set_group_volume` follows the inverse pattern at the group level: it fires the callback *after* all child volumes have been applied (since the group volume itself isn't a hardware command — only the children's volumes are).
 
 ### Volume Control Resolution
 
@@ -48,15 +46,23 @@ The `volume_control` cached property on `Player` resolves in this order:
 
 The option is offered for `CONF_VOLUME_CONTROL` and `CONF_MUTE_CONTROL` only when the player has no native control of its own but a linked protocol player does, and it becomes the entry default in that case. Since entry defaults pick the first non-disabled option, `NATIVE` still wins wherever the player supports it. Chromecast and DLNA protocol players are additionally offered as *explicit* targets, because they can accept volume commands even when they are not the active output protocol.
 
-### Auto-Unmute on Volume Change
+### A muted player stays muted
 
-Before setting volume, the handler checks:
+Setting the volume on a muted player used to unmute it first. That is **no longer the case** (#5706): mute and volume are independent, and only an explicit unmute lifts a mute. Adjusting the volume of a muted player therefore changes the level it *will* play at once it is unmuted, and produces no sound in the meantime.
 
-1. If the player has `ATTR_MUTE_LOCK` in `extra_data`, skip auto-unmute (the user deliberately muted this player)
-2. If the player is muted and the mute control is not `NONE` or `FAKE`, unmute first
-3. Always reset fake mute state (`ATTR_FAKE_MUTE`)
+The one exception is **fake** mute, because it is simulated with the volume itself — there is no separate mute state to leave alone. `_stays_silent_on_volume_change(player)` is true only when all three hold:
 
-This ensures that adjusting volume on a muted player restores audio, unless the user explicitly muted it within a group context.
+1. The player has an active mute lock (`ATTR_MUTE_LOCK`),
+2. its `mute_control` is `FAKE`, and
+3. `ATTR_FAKE_MUTE` is set.
+
+In that case the commanded level is forced to **0** so the player stays silent, and the level the caller asked for is recorded as the target to restore on unmute. Otherwise the fake-mute flag is simply cleared and the requested level is applied.
+
+`record_target` matters here: the mute lock can be earned *after* the caller recorded the level it asked for, so the level the player actually lands on is not the one the caller logged. Forcing 0 re-records the real value.
+
+### Volume nudges step from the commanded level
+
+`cmd_volume_up` / `cmd_volume_down` do **not** step from the level the player currently reports, because a device confirms a change asynchronously — two quick presses would both step from the same stale reading and lose one. Instead `_volume_nudge_base(player)` prefers `extra_data[ATTR_VOLUME_TARGET]`, the level most recently commanded, falling back to `player.state.volume_level` only when no recent target exists. The target carries a timestamp and expires after `VOLUME_TARGET_EXPIRY`, so an external change eventually becomes authoritative again. The step size itself is configurable per player via `CONF_VOLUME_STEP`.
 
 ## Volume Limits
 
@@ -88,19 +94,16 @@ async def on_volume_change(self, source_id: str, volume: int) -> None:
 
 The hook is optional; plugins override it to sync the upstream device's volume slider with MA (Spotify Connect updating the Spotify app's display, Yandex Ynison forwarding the level back to the Yandex device). `source_id` is the `AudioSource.item_id`, and `volume` is the logical 0–100 level that was just commanded.
 
-**Resolution** (`_get_active_audio_source(player)`) returns the `(AudioSource, PluginProvider)` pair for the player's active queue, or `None`. It requires all of:
+**Resolution** goes through the [live source session](04-player-controller.md#live-audiosource-sessions), not through the queue. `_notify_source_volume_change(player, volume_level)` looks up `get_audio_source_session(player.player_id)`, resolves the session's `provider_instance_id`, checks it is still a loaded `PluginProvider`, and awaits `on_volume_change(session.source_id, volume_level)`. If the player has no session — or the plugin is gone — it returns without doing anything.
 
-- the player has an active queue with a current item,
-- the item's `media_item` really is an `AudioSource` **instance** — an `isinstance` check, not just `media_type == AUDIO_SOURCE`, so a mutated or wrongly constructed item cannot slip through and crash downstream,
-- the owning provider is loaded and is a `PluginProvider`,
-- that provider still declares `ProviderFeature.AUDIO_SOURCE`. This last guard is belt-and-suspenders: a queue item carrying `AUDIO_SOURCE` can only have come from a provider that declared the feature, but a flag flipped off at runtime (provider reload, config change) would otherwise leave `on_volume_change` raising `NotImplementedError` out of a volume command.
+**The gate is that the source is actually playing on *this* player.** A player that merely hears its group's or sync leader's audio has no session of its own, so it never notifies. That is what prevents the feedback loop: an ownership test based on `active_source` would fire the callback once per group child, each with a different level, and a bidirectional plugin would receive a burst of contradictory volumes. With per-player sessions exactly one callback fires — from the standalone player, or once at the group level with the commanded group volume. The cost is unchanged: individual member adjustments within a group are not surfaced upstream.
 
-**The gate is queue ownership**, not source ownership. Both call sites check `active_queue.queue_id == player.player_id`:
+The two call sites:
 
-- In `_handle_cmd_volume_set`: after the auto-unmute check and `scale_volume_to_device`, **before** the volume_control routing branches. Notifying the plugin first lets bidirectional plugins record the commanded value before the hardware roundtrip can produce an echo.
-- In `set_group_volume`: after `asyncio.gather` completes on all child volume sets, the same check runs against the *group* player. The group has no hardware to write to, so there is no "before-routing" placement to choose.
+- In `_handle_cmd_volume_set`: after `scale_volume_to_device`, **before** the volume_control routing branches. Notifying the plugin first lets bidirectional plugins record the commanded value before the hardware roundtrip can produce an echo.
+- In `set_group_volume`: after `asyncio.gather` completes on all child volume sets, against the *group* player. The group has no hardware to write to, so there is no "before-routing" placement to choose.
 
-Queue ownership is what prevents feedback loops. A group member inherits `active_source` from its parent group, so an ownership test based on the source would fire the callback once per child, each with a different level, and a bidirectional plugin would receive a burst of contradictory volumes. Requiring the player to be the *direct* owner of the queue means exactly one callback fires: from the standalone player, or once at the group level with the commanded group volume. The cost is that individual member adjustments within a group are not surfaced upstream.
+A related helper, `_get_active_audio_source(player)`, answers the *transport* question rather than the volume one: it resolves through `_audio_source_owner(player)` first, so a group member asking "what source am I playing?" gets its leader's source. Volume deliberately does not do this — hence the two separate paths.
 
 The callback always receives the commanded `volume_level` (not a derived average), which is the value that was just applied.
 
@@ -118,7 +121,13 @@ Before the algorithm runs, `cmd_group_volume` performs routing:
 - **Synced to another player** → redirect to `set_group_volume` on the sync leader
 - **Neither** → fall back to `cmd_volume_set` (treat as individual volume)
 
-Note the asymmetry: `cmd_group_volume_mute` does **not** redirect to the sync leader. It only handles GROUP-type players and players with group_members. Calling group mute on a sync follower is a no-op.
+`cmd_group_volume_mute` follows the same three-way shape (#5374), so group mute and group volume behave symmetrically:
+
+- **GROUP type or has group_members** → `_mute_group_members(player, muted)`
+- **Synced to another player** → resolve the sync leader and `_mute_group_members(sync_leader, muted)`
+- **Neither** → fall back to `cmd_volume_mute` (treat as individual mute)
+
+Muting the group therefore works from any member, not just the leader.
 
 ### The Algorithm
 
@@ -242,7 +251,7 @@ Note that `cmd_volume_mute` guards on `volume_control == NONE` (not `mute_contro
 
 ## The Mute Lock Mechanism
 
-The mute lock (`ATTR_MUTE_LOCK` in `extra_data`) prevents auto-unmute during group volume changes. Without it, adjusting group volume would unmute players the user had deliberately muted.
+The mute lock (`ATTR_MUTE_LOCK` in `extra_data`) marks a player the user muted **deliberately, inside a group**. Now that a muted player [stays muted on a volume change](#a-muted-player-stays-muted), the lock's remaining job is narrower but still necessary: it is what keeps a *fake*-muted player silent when a group volume change writes a new level to it, since fake mute is simulated with the volume itself and would otherwise be undone by the write.
 
 ### How It Works
 
@@ -259,25 +268,28 @@ elif not muted:
 - **Muting a grouped player** → sets lock
 - **Unmuting any player** → clears lock
 
-In `_handle_cmd_volume_set`, the lock is checked on **both** the player itself and its protocol parent before auto-unmute:
+`_has_active_mute_lock(player)` reads it back, and requires **two** things:
 
 ```python
-has_mute_lock = player.extra_data.get(ATTR_MUTE_LOCK, False)
-if not has_mute_lock and player.protocol_parent_id:
-    if parent := self.get_player(player.protocol_parent_id):
-        has_mute_lock = parent.extra_data.get(ATTR_MUTE_LOCK, False)
-if not has_mute_lock and player.state.volume_muted:
-    await self.cmd_volume_mute(player_id, False)  # auto-unmute
+if player.extra_data.get(ATTR_MUTE_LOCK) and self._is_in_group(player.state):
+    return True
+# cmd_volume_mute stores the lock on the parent player, while the volume command
+# may arrive with the protocol player ID (e.g. during group volume changes)
+if player.protocol_parent_id and (parent := self.get_player(player.protocol_parent_id)):
+    return bool(parent.extra_data.get(ATTR_MUTE_LOCK)) and self._is_in_group(parent.state)
+return False
 ```
 
-The protocol-parent fallback is needed because `cmd_volume_mute` records the lock on the visible parent, while a group volume change may invoke `_handle_cmd_volume_set` with the *protocol player's* ID (PR #3655). Without the fallback, the deliberate mute on the parent would not be respected when group volume reroutes through the protocol child.
+**A lock cannot outlive the group it was earned in.** Because a lock is only ever set inside a group, `_is_in_group` is re-checked on every read — so a player that leaves its group stops being treated as deliberately muted, rather than carrying a stale lock around forever. `_is_in_group` covers all three shapes: `synced_to`, `active_group`, or a non-empty `group_members` (a sync leader has neither of the first two but does lead its own members).
+
+The protocol-parent fallback is needed because `cmd_volume_mute` records the lock on the visible parent, while a group volume change may arrive carrying the *protocol player's* ID (#3655). Without it, the deliberate mute on the parent would not be respected when group volume reroutes through the protocol child.
 
 ### Practical Scenario
 
 1. User mutes Kitchen speaker (in a group) → lock set
 2. User raises group volume → `set_group_volume` calls `_handle_cmd_volume_set` on Kitchen
-3. Kitchen has mute lock → volume level changes in data but player remains muted
-4. User explicitly unmutes Kitchen → lock cleared, full volume restored
+3. Kitchen holds the lock and is fake-muted → `_stays_silent_on_volume_change` forces the level to 0, so it stays silent while the level it will return to is recorded
+4. User explicitly unmutes Kitchen → lock cleared, recorded level restored
 
 ## Volume During Announcements
 
@@ -333,13 +345,14 @@ flowchart TD
     SGV --> PV2["Inline: await on_volume_change if queue owner (after gather)"]
 ```
 
-The `AudioSource` volume callback fires inline from both `set_group_volume` (after all child volumes have been gathered) and `_handle_cmd_volume_set` (*before* the routing branch dispatch), gated on `active_queue.queue_id == player.player_id`. See [AudioSource Volume Callbacks](#audiosource-volume-callbacks).
+The `AudioSource` volume callback fires inline from both `set_group_volume` (after all child volumes have been gathered) and `_handle_cmd_volume_set` (*before* the routing branch dispatch), gated on the player having its own live source session. See [AudioSource Volume Callbacks](#audiosource-volume-callbacks).
 
 ## Key Files
 
 | File | Role |
 |---|---|
-| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `cmd_volume_set`, `cmd_volume_up/down`, `cmd_group_volume`, `cmd_group_volume_up/down`, `cmd_group_volume_mute`, `cmd_volume_mute`, `set_group_volume`, `_handle_cmd_volume_set`, `_get_active_audio_source`, `_get_volume_limits`, `scale_volume_to_device`, `scale_volume_from_device`, `_enforce_volume_limits`, `_invalidate_group_volume_snapshot`, `get_announcement_volume` |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `cmd_volume_set`, `cmd_volume_up/down`, `cmd_group_volume`, `cmd_group_volume_up/down`, `cmd_group_volume_mute`, `cmd_volume_mute`, `set_group_volume`, `_mute_group_members`, `_handle_cmd_volume_set`, `_stays_silent_on_volume_change`, `_notify_source_volume_change`, `_volume_nudge_base`, `_record_volume_target`, `_get_volume_limits`, `scale_volume_to_device`, `scale_volume_from_device`, `_enforce_volume_limits`, `_invalidate_group_volume_snapshot`, `get_announcement_volume` |
+| [`music_assistant/controllers/players/audio_sources.py`](../../music_assistant/controllers/players/audio_sources.py) | `AudioSourceMixin.get_audio_source_session` — the per-player session the volume callback is gated on |
 | [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | `group_volume`, `group_volume_muted` (computed properties), `volume_control`, `mute_control`, `__final_volume_level`, `__final_volume_muted_state` |
 | [`music_assistant/models/plugin.py`](../../music_assistant/models/plugin.py) | `PluginProvider.on_volume_change` — the `AudioSource` volume hook |
 | [`music_assistant/constants.py`](../../music_assistant/constants.py) | `PLAYER_CONTROL_PROTOCOL`, `ATTR_FAKE_VOLUME`, `ATTR_FAKE_MUTE`, `ATTR_MUTE_LOCK`, `ATTR_PREVIOUS_VOLUME`, `ATTR_GROUP_VOLUME_SNAPSHOT` |

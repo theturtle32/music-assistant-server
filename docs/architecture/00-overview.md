@@ -106,11 +106,12 @@ flowchart TD
     K --> L["10. _register_api_commands() — scan @api_command decorators"]
     L --> M["11. WebserverController.setup() — sequential, after commands are registered"]
     M --> N["12. DiscoveryController.setup()"]
-    N --> O["13. _load_builtin_providers() — awaited TaskGroup; load_provider swallows failures"]
+    N --> N2["13. cleanup_retired_local_audio() — one-shot, needs the databases"]
+    N2 --> O["14. _load_builtin_providers() — awaited TaskGroup; load_provider swallows failures"]
     O --> P{"safe_mode?"}
-    P -- No --> Q["14. _load_providers() — bounded concurrency, failure = non-fatal"]
+    P -- No --> Q["15. _load_providers() — bounded concurrency, failure = non-fatal"]
     P -- Yes --> R["Skip regular providers"]
-    Q --> S["15. CoreState.RUNNING"]
+    Q --> S["16. CoreState.RUNNING"]
     R --> S
 ```
 
@@ -124,8 +125,9 @@ flowchart TD
 - **Step 8**: Nine controllers (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`, `diagnostics`, `dashboard`) are set up in parallel inside an `asyncio.TaskGroup`. Each is handed its `CoreConfig`, which is also stored on the controller as `self.config` so internal code can read values without rebuilding the entries.
 - **Step 9**: `post_setup()` runs for only the original seven (`cache`, `tasks`, `streams`, `music`, `metadata`, `players`, `player_queues`) — not for `translations`, `diagnostics` or `dashboard`.
 - **Steps 10–11**: API command registration happens **before** the webserver is set up, so every `@api_command` handler exists by the time the first request can arrive.
-- **Step 13**: Builtin providers (like `sync_group`, `universal_player`, `sendspin`, `theaudiodb`) are loaded via `TaskGroup` and fully awaited so they finish before regular providers start — but each task calls `load_provider(..., allow_retry=True)`, which **catches** load failures, records `last_error`, and schedules a 120s retry for `MusicAssistantError` subclasses. A failed builtin therefore does **not** abort startup.
-- **Step 14**: Regular providers load concurrently under `TaskManager(self, PROVIDER_LOAD_CONCURRENCY)` (8 at a time). Failures are likewise non-fatal and trigger the same auto-retry path.
+- **Step 13**: A one-shot cleanup for the retired `local_audio` provider (#6029). It sits here rather than with the settings migrations because it has to query the library and cache databases to tell whether the install ever actually played through a local soundcard, and it must precede the provider load so the tombstone never briefly flashes a banner on an install that is about to be cleaned. Carries a `TODO` to be removed after the 2.11 release; see [15-provider-lifecycle.md](15-provider-lifecycle.md#retired-providers).
+- **Step 14**: Builtin providers (like `sync_group`, `universal_player`, `sendspin`, `theaudiodb`) are loaded via `TaskGroup` and fully awaited so they finish before regular providers start — but each task calls `load_provider(..., allow_retry=True)`, which **catches** load failures, records `last_error`, and schedules a retry on the `PROVIDER_RETRY_DELAYS` backoff for `MusicAssistantError` subclasses. A failed builtin therefore does **not** abort startup.
+- **Step 15**: Regular providers load concurrently under `TaskManager(self, PROVIDER_LOAD_CONCURRENCY)` (8 at a time). Failures are likewise non-fatal and trigger the same auto-retry path.
 
 ## Shutdown Lifecycle
 

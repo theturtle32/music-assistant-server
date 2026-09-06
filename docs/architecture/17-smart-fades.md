@@ -41,8 +41,11 @@ StreamsAudio.get_queue_item_stream_with_smartfade / get_queue_flow_stream
   │    │          │    ├─ CandidateFactory.build() → Candidate[]     planner/candidates.py
   │    │          │    ├─ CandidateSelector.select(default_policies()) planner/selection.py
   │    │          │    │                                             planner/policies.py
-  │    │          │    ├─ RescueAnchorGenerator  (if all rejected)   planner/candidates.py
+  │    │          │    ├─ rescue pass (if all rejected):            planner/candidates.py
+  │    │          │    │    TrimClosingAnchorGenerator(min_gap=0)
+  │    │          │    │    + RescueAnchorGenerator
   │    │          │    └─ PlanAssembler.finalize() → TransitionPlan  planner/assembly.py
+  │    │          │       or FallbackCrossfadeFactory.build()        planner/assembly.py
   │    │          │       or EmergencyHandoffFactory.build()         planner/assembly.py
   │    │          └─ TransitionRenderer.render(plan) → Filter[]      renderer.py
   │    │                                                            + CrossfadeTimingInfo
@@ -54,6 +57,8 @@ StreamsAudio.get_queue_item_stream_with_smartfade / get_queue_flow_stream
 
 Reading it as a sentence: **plan in seconds, render into filters, apply to bytes.** The planner touches no audio at all; the renderer is the first place bytes re-enter, reconciling the plan's second-based sizing against the actual buffer lengths; `apply()` runs the resulting chain through FFmpeg.
 
+`apply()` feeds FFmpeg from **two** inputs rather than one. The outgoing tail goes in through its own `pipe:<fd>` — FFmpeg accepts any number of them, so no temporary file ever touches disk — while the incoming head arrives on stdin. Both are fed concurrently because either can exceed the kernel pipe buffer, and the incoming side may be an async generator (a still-open stream handed over by the [crossfade handover](10-streaming-pipeline.md#get_queue_item_stream_with_smartfade-crossfade-streaming)) rather than a finished `bytes`.
+
 ## Degradation chain
 
 Nothing here is allowed to break playback, so every stage has a fallback and the last one cannot fail.
@@ -63,10 +68,17 @@ SMART_CROSSFADE requested
   └─ both tracks have bpm + beats?           no → StandardCrossFade
        └─ any feasible candidate built?      no → SmartFadeNotApplicable → StandardCrossFade
             └─ any candidate survives policy rejection?
-                 no → RescueAnchorGenerator: a modest, late-anchored rung
-                      └─ still nothing? → EmergencyHandoffFactory: click-free equal-power handoff
                  yes → PlanAssembler.finalize(winner)
+                 no  → rescue pass: ungated audible-end ladder
+                       (TrimClosingAnchorGenerator, min_gap=0)
+                       plus a modest late-anchored RescueAnchorGenerator rung
+                        └─ a rescue candidate survives? → PlanAssembler.finalize(winner)
+                        └─ no → FallbackCrossfadeFactory: plain equal-power volume crossfade
+                             └─ vocal collision too severe? → EmergencyHandoffFactory:
+                                                              click-free handoff
 ```
+
+The rescue pass and the plain fallback are two distinct rungs, and the ordering is a listening judgement rather than a technical one: a plain volume crossfade reads far less abrupt than the click-free handoff, so it ships whenever its own vocal collision is tolerable. Only when even that collides badly does the handoff — which cannot fail, and cannot sound good either — take over.
 
 `SmartFadeNotApplicable` is the planner's way of saying "these two tracks cannot yield this transition, fall back" — distinct from an error. `_build_smart_crossfade` catches it at debug level and any other build failure at warning level, returning `None` so the mixer builds a standard crossfade instead.
 
@@ -91,7 +103,7 @@ Two value types, and the distinction between them carries weight:
 
 `CandidateFactory.build(spec)` produces **timed** candidates only: anchor, overlap timing, tempo ramp, trims, metrics. EQ is deliberately absent, because scoring never needs it — so the expensive EQ assembly runs once, for the winner, rather than for every candidate. Each `build()` derives its anchored tail fresh from the context.
 
-`default_generators()` supplies the anchor and candidate generators; `RescueAnchorGenerator` is held back for the all-rejected path.
+`default_generators()` supplies the anchor and candidate generators. `TrimClosingAnchorGenerator(min_gap=0.0)` and `RescueAnchorGenerator` are held back for the all-rejected rescue pass.
 
 ### `policies.py` and `selection.py` — scoring
 
@@ -101,7 +113,7 @@ Each `Policy` independently judges one built candidate against the shared contex
 
 ### `assembly.py` — EQ for the winner, and the last resort
 
-`PlanAssembler.finalize(candidate)` computes the bass/mid/high handover EQ exactly once, for the winner. `EmergencyHandoffFactory.build()` produces the click-free equal-power fallback used when every phrased candidate still collides with the incoming vocal.
+`PlanAssembler.finalize(candidate)` computes the bass/mid/high handover EQ exactly once, for the winner. Two factories cover the last resorts: `FallbackCrossfadeFactory.build()` produces a plain equal-power volume crossfade, and `EmergencyHandoffFactory.build()` the click-free handoff used when even that still collides with the incoming vocal. The fallback returns `None` to signal "too severe, escalate"; the emergency handoff always returns a plan.
 
 ### Supporting signal modules
 
@@ -180,7 +192,7 @@ A related fix worth knowing about: an energy-drop transition could previously st
 | `ShelfFilter` | Low/high shelf EQ for the band handover |
 | `PeakFilter` | Peaking EQ with a bandwidth in octaves, for the mid/vocal handover |
 
-`CrossfadeTimingInfo` breaks the output into `PRE | CF | POST` — pre-crossfade, crossfade, and post-crossfade durations plus any fade-in trim. The streaming layer needs this to split the mixer output correctly between the current response and the stored `CrossfadeData` for the next request, and lyrics sync reads it too.
+`CrossfadeTimingInfo` breaks the output into `PRE | CF | POST` — pre-crossfade, crossfade, and post-crossfade durations plus any fade-in trim. The streaming layer needs this to account for the mix correctly across the request boundary it is handed over on (`CrossfadeHandover`, see [10-streaming-pipeline.md](10-streaming-pipeline.md#get_queue_item_stream_with_smartfade-crossfade-streaming)), and lyrics sync reads it too.
 
 `StandardCrossFade` shares the same `SmartFade` interface but needs none of the planner: `build()` clamps the overlap to fit the shorter input, quantizes it to a whole number of PCM frames, and emits a single `CrossfadeFilter`. The frame quantization is load-bearing rather than cosmetic — `apply()` slices buffers on frame boundaries, so a fractional overlap would leave the rendered buffer a fraction of a sample short of the `acrossfade` duration, and FFmpeg then silently produces **no output at all**.
 
@@ -196,7 +208,7 @@ A related fix worth knowing about: an energy-drop transition could previously st
 | [`planner/candidates.py`](../../music_assistant/controllers/streams/smart_fades/planner/candidates.py) | `CandidateSpec`, `Candidate`, `CandidateFactory`, generators |
 | [`planner/policies.py`](../../music_assistant/controllers/streams/smart_fades/planner/policies.py) | `Policy`, `Verdict`, `default_policies()` |
 | [`planner/selection.py`](../../music_assistant/controllers/streams/smart_fades/planner/selection.py) | `CandidateSelector`, `ScoredCandidate` |
-| [`planner/assembly.py`](../../music_assistant/controllers/streams/smart_fades/planner/assembly.py) | `PlanAssembler`, `EmergencyHandoffFactory` |
+| [`planner/assembly.py`](../../music_assistant/controllers/streams/smart_fades/planner/assembly.py) | `PlanAssembler`, `FallbackCrossfadeFactory`, `EmergencyHandoffFactory` |
 | [`renderer.py`](../../music_assistant/controllers/streams/smart_fades/renderer.py) | `TransitionRenderer` |
 | [`filters.py`](../../music_assistant/controllers/streams/smart_fades/filters.py) | Composable PCM filters |
 | [`bands.py`](../../music_assistant/controllers/streams/smart_fades/bands.py) | Bar-level band-power statistics |

@@ -8,6 +8,7 @@ This document provides an overview of the Music Assistant Player Controller arch
 - [Player vs PlayerState](#player-vs-playerstate)
 - [Core Components](#core-components)
 - [Player Types](#player-types)
+- [Protocol-Backed Players](#protocol-backed-players)
 - [Multi-Protocol Player System](#multi-protocol-player-system)
 - [Universal Player](#universal-player)
 - [Protocol Linking](#protocol-linking)
@@ -81,6 +82,12 @@ The main orchestrator that manages:
 - Handles announcements and TTS playback
 - Coordinates sync groups and grouped playback
 
+The controller is assembled from three mixins, so each large concern lives in its own module:
+
+```python
+class PlayerController(AnnouncementsMixin, AudioSourceMixin, ProtocolLinkingMixin, CoreController):
+```
+
 ### 2. ProtocolLinkingMixin ([protocol_linking.py](protocol_linking.py))
 
 Mixin class containing all protocol linking logic:
@@ -88,12 +95,31 @@ Mixin class containing all protocol linking logic:
 - Creating and managing Universal Players
 - Protocol link lifecycle (add, remove, cleanup)
 - Output protocol selection for playback
+- Exclusive ownership (`_evict_protocol_from_other_parents`) and teardown of a parent's children
 
-### 3. Helper Utilities ([helpers.py](helpers.py))
+### 3. AudioSourceMixin ([audio_sources.py](audio_sources.py))
+
+Owns the live external sources playing on players. An `AudioSourceSession` is held per player in
+`_source_sessions`, independent of that player's queue — selecting Spotify Connect no longer
+rewrites the queue:
+- `get_audio_source_session` / `get_player_audio_source` — read the live session
+- `claim_audio_source_session` — commit a stream request, evicting whichever other player held
+  the source (first request for a selection only)
+- `update_source_metadata` / `update_source_options` / `refresh_source` — the plugin push surface
+- `release_provider_sources` — drop every session of a provider being unloaded
+
+### 4. AnnouncementsMixin ([announcements.py](announcements.py))
+
+Owns `play_announcement`: accepts either a `url` or a `message` to speak (rendered up front through
+a TTS engine so a group fan-out plays audio rather than re-speaking), the pre-announce chime, and
+saving and restoring player state around the interruption.
+
+### 5. Helper Utilities ([helpers.py](helpers.py))
 
 Contains standalone helper functions and decorators:
 - `handle_player_command` decorator for command validation
 - `AnnounceData` type definition
+- `wait_for_power_on`
 
 ## Player Types
 
@@ -122,6 +148,31 @@ A group player that represents (synchronized) playback across multiple physical 
 ### PlayerType.STEREO_PAIR
 
 A dedicated stereo pair of two speakers acting as one player.
+
+### Non-speaker types
+
+Four further types describe devices that participate in playback without being speakers. They
+mainly affect presentation (notably the default icon picked by
+[`helpers/player.py`](../../helpers/player.py)):
+
+- `PlayerType.DISPLAY` — a screen rather than a speaker
+- `PlayerType.LIGHT` — a light that participates in playback (Hue Entertainment)
+- `PlayerType.SOURCE` — an input rather than an output, e.g. a capture-only Sendspin client
+- `PlayerType.VISUALIZER` — a visualizer sink, e.g. the Milkdrop plugin
+
+`SOURCE` and `UNKNOWN` are excluded from group-target expansion, since neither is something audio
+can be grouped onto.
+
+## Protocol-Backed Players
+
+A player with no playback capability of its own, whose commands are routed to a linked protocol
+player, should subclass [`ProtocolBackedPlayer`](../../models/protocol_backed_player.py) rather
+than reimplement the delegation. It provides availability from the backing protocols, setup
+passthrough, delegated state and transport, and surfacing of an external source playing on a
+linked protocol (`EXTERNAL_SOURCE_PROTOCOLS` / `FORWARDED_FEATURES`). A subclass supplies only
+`_backing_protocol_player_ids()`.
+
+In-tree subclasses: `UniversalPlayer` (universal_player) and `LinkPlayPlayer` (wiim).
 
 ## Multi-Protocol Player System
 
@@ -178,7 +229,7 @@ When playing media, the controller selects the best output protocol:
 1. **Grouped protocol** - If a protocol is actively grouped/synced, use it
 2. **User preference** - Honor user's configured preferred protocol
 3. **Native playback** - Use native PLAY_MEDIA if available
-4. **Best available** - Select by protocol priority (AirPlay > Chromecast > DLNA)
+4. **Best available** - Select by `PROTOCOL_PRIORITY` (lower wins): AirPlay (10) > Squeezelite (20) > Chromecast (30) > Sendspin (40) > DLNA (50)
 
 ## Universal Player
 

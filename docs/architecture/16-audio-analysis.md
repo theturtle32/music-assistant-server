@@ -292,7 +292,7 @@ Located at [`music_assistant/providers/loudness_analysis/`](../../music_assistan
 
 ## Optional: Smart Fades
 
-Located at [`music_assistant/providers/smart_fades/`](../../music_assistant/providers/smart_fades/). `SmartFadesProvider(AudioAnalysisProvider)`, `analysis_version = 3`, `has_unloadable_models = True`, capped at 1800 s. Not builtin; requires `beat-this==1.1.0`, `nnAudio==0.3.3` and `kaldi-native-fbank==1.22.3` (#3636) — check the manifest for current pins.
+Located at [`music_assistant/providers/smart_fades/`](../../music_assistant/providers/smart_fades/). `SmartFadesProvider(AudioAnalysisProvider)`, `analysis_version = 3`, `has_unloadable_models = True`, capped at 1800 s. Not builtin; requires `beat-this==1.1.0`, `nnAudio==0.3.4` and `kaldi-native-fbank==1.22.3` (#3636) — check the manifest for current pins.
 
 - **Algorithms**: Beat This! transformer (CPJKU, ISMIR 2024) for beats and downbeats; S-KEY for musical key detection; per-block RMS energy and spectral centroid in parallel.
 - **Streaming-friendly adaptation** of an offline-first model:

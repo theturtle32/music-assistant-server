@@ -298,7 +298,7 @@ The same token guards the long-lived generators. VBAN, AriaCast, and Yandex Ynis
 
 ### Volume ownership
 
-Volume goes to the direct queue owner exactly once. `_handle_cmd_volume_set` and `set_group_volume` both resolve the active `AudioSource` and then gate on `active_queue.queue_id == player.player_id`. A group member inherits `active_source` from its parent, so a source-based ownership test would fire one callback per child, each with a different level, and a bidirectional plugin would receive a burst of contradictory volumes. Requiring *direct* queue ownership means either the standalone player fires once, or the group fires once with the commanded group volume. The cost is that per-member adjustments inside a group are never surfaced upstream. See [07-volume.md](07-volume.md#audiosource-volume-callbacks).
+Volume goes to the player the source actually plays on, exactly once. `_handle_cmd_volume_set` and `set_group_volume` both resolve the player's own [live session](04-player-controller.md#live-audiosource-sessions) via `get_audio_source_session(player_id)`. A group member that merely *hears* the source has no session of its own, so it never notifies — where a test based on the inherited `active_source` would fire one callback per child, each with a different level, handing a bidirectional plugin a burst of contradictory volumes. Either the standalone player fires once, or the group fires once with the commanded group volume. The cost is that per-member adjustments inside a group are never surfaced upstream. See [07-volume.md](07-volume.md#audiosource-volume-callbacks).
 
 ---
 
@@ -352,7 +352,7 @@ Some player providers consume `AudioSource` queue items without going through `s
 
 ### Spotify Connect
 
-`providers/spotify_connect/` is the most complete receiver and the reference implementation. It was rewritten around **go-librespot** in #4384; the in-tree [`ARCHITECTURE.md`](../../music_assistant/providers/spotify_connect/ARCHITECTURE.md) is the authoritative deep dive, including the binary provisioning story and the known limitations. What matters at the plugin-system level:
+`providers/spotify_connect/` is the most complete receiver and the reference implementation. It now supports two interchangeable playback engines behind one backend-agnostic provider: **Soloist** (Spotify's official headless client, the recommended default, #5810) and **go-librespot** (the community client it was originally rewritten around in #4384). The in-tree [`README.md`](../../music_assistant/providers/spotify_connect/README.md) covers the module layout and the backend contract, with the deep dives — binary provisioning, known limitations — in [`soloist/README.md`](../../music_assistant/providers/spotify_connect/soloist/README.md) and [`go_librespot/README.md`](../../music_assistant/providers/spotify_connect/go_librespot/README.md). What matters at the plugin-system level:
 
 **No Spotify Web API, no Spotify music provider.** The old model shelled out to `librespot` with an `--onevent` callback script that POSTed to a provider webservice, and needed a configured Spotify *music* provider for Web API transport control. Both are gone. The provider now drives one go-librespot subprocess per instance entirely over its loopback HTTP + WebSocket API through `GoLibrespotClient` (`client.py`): REST `POST /player/{resume,pause,next,prev,seek,volume,play}` outbound, and a `/events` WebSocket inbound.
 
@@ -568,8 +568,8 @@ The in-tree [`README.md`](../../music_assistant/providers/hue_entertainment/READ
 | [`music_assistant/helpers/shared_playback.py`](../../music_assistant/helpers/shared_playback.py) | `SharedPlaybackSession` and `SharedPlaybackMode` — venue/remote guest listening |
 | [`music_assistant/helpers/scrobbler.py`](../../music_assistant/helpers/scrobbler.py) | `ScrobblerHelper` and `ScrobblerConfig` |
 | [`music_assistant/providers/_demo_plugin_provider/`](../../music_assistant/providers/_demo_plugin_provider/) | Annotated template covering the full `AudioSource` contract |
-| [`music_assistant/providers/spotify_connect/`](../../music_assistant/providers/spotify_connect/) | Reference receiver: go-librespot, `GoLibrespotClient`, bidirectional volume. See its [`ARCHITECTURE.md`](../../music_assistant/providers/spotify_connect/ARCHITECTURE.md) |
-| [`music_assistant/providers/airplay_receiver/`](../../music_assistant/providers/airplay_receiver/) | The only `NAMED_PIPE` receiver, via shairport-sync |
+| [`music_assistant/providers/spotify_connect/`](../../music_assistant/providers/spotify_connect/) | Reference receiver: pluggable Soloist / go-librespot backends, bidirectional volume. See its [`README.md`](../../music_assistant/providers/spotify_connect/README.md) |
+| [`music_assistant/providers/airplay_receiver/`](../../music_assistant/providers/airplay_receiver/) | `NAMED_PIPE` receiver, via shairport-sync |
 | [`music_assistant/providers/ariacast_receiver/`](../../music_assistant/providers/ariacast_receiver/) | Native Python AriaCast protocol server |
 | [`music_assistant/providers/vban_receiver/`](../../music_assistant/providers/vban_receiver/) | VBAN UDP receiver; the only `can_initiate=True` receiver |
 | [`music_assistant/providers/yandex_ynison/`](../../music_assistant/providers/yandex_ynison/) | Multi-track receiver bridging the Ynison protocol |

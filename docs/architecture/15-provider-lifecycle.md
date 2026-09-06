@@ -325,15 +325,15 @@ Because the options entries need a live instance, the `config/providers/get_entr
 | `manifest.builtin` | `True` | `False` |
 | Loading | `_load_builtin_providers()` — via `asyncio.TaskGroup`, fully awaited before regular providers | `_load_providers()` — via `TaskManager`, bounded concurrency |
 | Failure impact | Non-fatal — `load_provider` swallows the exception so the TaskGroup completes; error logged on the config | Non-fatal — error logged, auto-retry scheduled |
-| Auto-retry | Yes (via `allow_retry=True`) — after 120 seconds for `MusicAssistantError` subclasses | Yes — after 120 seconds for `MusicAssistantError` subclasses |
+| Auto-retry | Yes (via `allow_retry=True`) — on the shared `PROVIDER_RETRY_DELAYS` backoff | Yes — on the same backoff |
 | Safe mode | Loaded | Skipped |
-| Examples | `sync_group`, `universal_player`, `sendspin`, `local_audio`, `builtin`, `theaudiodb`, `musicbrainz`, `loudness_analysis` | `spotify`, `chromecast`, `airplay`, `filesystem_local`, all user-configured providers |
+| Examples | `sync_group`, `universal_player`, `sendspin`, `sendspin_source`, `recommendations`, `builtin`, `theaudiodb`, `musicbrainz`, `loudness_analysis` | `spotify`, `chromecast`, `airplay`, `filesystem_local`, all user-configured providers |
 
 ### Builtin Provider Setup
 
 Before loading, `_load_builtin_providers()` calls `config.create_builtin_provider_config(domain)` for each builtin manifest — this ensures a config entry exists in `settings.json` even if the user never explicitly configured the provider. Manifests of type `ProviderType.CORE` are skipped: core controllers carry a manifest but are not loadable providers.
 
-A builtin provider is then loaded if its config is enabled **or** its manifest sets `allow_disable=False`, so a provider the system genuinely cannot run without (`sync_group`, `universal_player`, `sendspin`, `musicbrainz`, `builtin`) loads regardless of what is stored in config.
+A builtin provider is then loaded if its config is enabled **or** its manifest sets `allow_disable=False`, so a provider the system genuinely cannot run without loads regardless of what is stored in config. Nine builtins are undisableable today: `builtin`, `sync_group`, `universal_player`, `sendspin`, `musicbrainz`, `playlist_metadata`, `loudness_analysis`, `radio_playlist`, and `recommendations` — the last of these supplies the library recommendation rows that used to live in the music controller (#3890, see [08-media-library.md](08-media-library.md#recommendations)).
 
 ### Load Concurrency
 
@@ -448,6 +448,42 @@ A successful load clears `last_error` again, so a provider that recovers on retr
 ### Runtime Errors
 
 `unload_provider_with_error(instance_id, error)` handles a provider that hits a problem needing user intervention after it was already running (e.g. an expired OAuth token). It accepts either an exception — preferred, so a `LoginFailed` still surfaces as `AUTH_REQUIRED` with a localized message — or a plain string, which becomes a generic `error_code=999` error. Providers reach it through `Provider.unload_with_error()`, which defers the call by a second so the failing code path can unwind first.
+
+## Retired Providers
+
+A provider can be removed from the tree outright, but that makes it *silently disappear* from an install that was using it — its config lingers with nothing to explain what happened. The alternative is a **tombstone**: the manifest and strings stay, the implementation does not.
+
+`ProviderStage.DEPRECATED` is the manifest-level marker. `flows.py` refuses to start a *new* setup for such a provider, aborting with the `provider_retired` reason, so the retirement cannot be undone by adding another instance:
+
+```python
+if manifest.stage == ProviderStage.DEPRECATED:
+    # a retired provider can never be set up again; its own strings explain
+    # what to use instead
+    return self._synthesized_step(FlowStepType.ABORT, owner, reason="provider_retired")
+```
+
+**`local_audio` is the worked example** (#5965). Playing out of the server's own soundcards moved *outside* the server, to a Sendspin add-on (the official Local Audio App) that connects back as an ordinary external Sendspin client. What remains in-tree is `__init__.py`, `manifest.json`, `strings.json` and an icon; `setup()` does nothing but raise:
+
+```python
+raise UnsupportedSystemError(
+    "The local audio provider within Music Assistant has been retired in favor of "
+    "running a sendspin add-on such as the official Local Audio App.",
+    translation_key="provider_retired",
+    translation_owner="provider.local_audio",
+)
+```
+
+`UnsupportedSystemError` maps to `ProviderStatus.INCOMPATIBLE`, which is never retried and which the frontend renders with a **Remove** button — so the user gets an explanation plus a one-click resolution instead of a provider that vanished. Three manifest keys are deliberately *absent*: `builtin` (which would recreate the config the cleanup below just removed), `depends_on` (which would park it in `LOADING` instead of surfacing the error), and any `requirements`.
+
+Existing configs are handled separately, because most installs never actually used the provider. `cleanup_retired_local_audio()` (`controllers/config/retired_local_audio.py`) runs once at startup and looks for evidence of real use — a playlog row or a saved queue for any `local_audio` player:
+
+- **No evidence:** the provider config, its player configs, DSP and queue settings, saved queues, and any orphaned Sendspin bridge players are all deleted. The install ends up as if the provider had never existed.
+- **Evidence found:** everything is kept, the tombstone loads, and the user sees the INCOMPATIBLE banner pointing at the add-on.
+- **Cleanup itself fails:** nothing is deleted and it retries on the next boot.
+
+A one-shot flag (`CONF_RETIRED_LOCAL_AUDIO_CLEANED`) keeps it from re-running. It needs the library and cache databases, so it cannot run with the settings migrations — see the [startup sequence](00-overview.md#startup-flow) for where it lands.
+
+Neither `sendspin_source` nor `helpers/pulse_capture.py` is a replacement for `local_audio`: the former exposes a Sendspin client's *line-in* as an `AudioSource`, and the latter is PulseAudio *capture* plumbing for Spotify Soloist.
 
 ## `ProviderFeature` Flags
 

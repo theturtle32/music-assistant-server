@@ -194,9 +194,19 @@ A replacement or merge changes which `player_id` the user's device lives under, 
 
 If any player-config value moved, `_reapply_player_config()` reloads the stored config onto the already-registered native player and signals `PLAYER_CONFIG_UPDATED` — the native player's config was loaded *before* the carry-over, so a migrated custom name would otherwise not take effect until restart.
 
-**`_repoint_group_memberships(old_id, new_id)`** rewrites `CONF_GROUP_MEMBERS` and `CONF_ALLOWED_MEMBERS` on every other player's config, replacing the removed ID with its successor and de-duplicating. A registered player's in-memory config copy is patched too, so the change is visible without a reload. Without this, a sync group containing the device would silently lose that member.
+**`_update_group_memberships(old_id, new_id)`** rewrites `CONF_GROUP_MEMBERS` and `CONF_ALLOWED_MEMBERS` on every other player's config, replacing the removed ID with its successor and de-duplicating. A registered player's in-memory config copy is patched too, so the change is visible without a reload. Without this, a sync group containing the device would silently lose that member.
 
 Finally `_stop_and_unregister()` stops playback before the permanent removal. While the obsolete wrapper is not idle, its protocol child keeps playing the dead queue's stream until the buffer drains. Queue ownership is deliberately *not* transferred.
+
+### Exclusive Ownership and Teardown
+
+Three helpers keep the topology consistent when players change role or disappear:
+
+**`_evict_protocol_from_other_parents(protocol_player_id, parent_id)`** (#5801) enforces that a protocol has exactly one owner. When a protocol player gets a new parent, any *other* parent still holding an **active** entry for it is out of date, so its stored ownership is dropped too. Parents that had already given up the active entry keep theirs, so they can still offer the protocol for re-enabling later — the distinction is between a stale claim and a remembered option.
+
+**`_cleanup_player_type_transition(existing, becomes_protocol=…)`** (#5546) releases the topology a player owned before its type changed — a device that was a native parent and is now a protocol endpoint, or vice versa. When a player *leaves* the protocol role it falls back to the **persisted** parent id if the live link is already gone, since a provider may announce the new type with the link dropped and would otherwise leave an unreachable parent behind.
+
+**`_detach_protocol_children(parent_id)`** (#5787) covers removal paths where the parent is not unregistered first — its provider being unloaded, for instance — so there is no parent object left to enumerate its own children. It scans for PROTOCOL players pointing at that parent, falling back to the cached parent id for a protocol player that was still waiting for a parent that never registered. The result is that removing a parent re-evaluates its children rather than silently wrapping them.
 
 The same startup path exists in the provider: `UniversalPlayerProvider._restore_player()` detects a stored wrapper whose protocols are claimed by a native player's config, re-points those protocols with `_reparent_protocols_to_native()`, and — when the wrapper is not currently registered — runs the same config migration and membership re-pointing before deleting the wrapper's config, so it does not linger as a permanently unavailable entry in the settings UI.
 
@@ -213,7 +223,7 @@ The same startup path exists in the provider: `UniversalPlayerProvider._restore_
 
 Identifier matching answers "are these two endpoints the same device?". It cannot answer "is this endpoint a *second, bridged* path through an endpoint I already have?" — and that is exactly what a **Sendspin bridge** is (#4596).
 
-A bridge exposes a player of another protocol as an external Sendspin client, so a device that speaks only AirPlay or Chromecast can still take part in Sendspin's synchronized playback. The bridge is not an independent route to the hardware: it *runs inside* the AirPlay or Chromecast session it rides on, and can only exist while that base player exists and is enabled. Local soundcards work the same way — `local_audio` has no player implementation of its own and exposes each soundcard as a Sendspin bridge player.
+A bridge exposes a player of another protocol as an external Sendspin client, so a device that speaks only AirPlay or Chromecast can still take part in Sendspin's synchronized playback. The bridge is not an independent route to the hardware: it *runs inside* the AirPlay or Chromecast session it rides on, and can only exist while that base player exists and is enabled.
 
 ### `underlying_player_id` and `derived_from`
 
@@ -229,7 +239,7 @@ On the parent side, the resulting `OutputProtocol` entry carries **`derived_from
 
 ### Bridge Lifecycle
 
-`SendspinBridgeManagerBase` (`providers/sendspin/bridge_manager.py`) reconciles bridge existence in one place; providers subclass it and supply only policy (`_should_have_bridge`) and a factory (`_create_bridge`). Participating providers today are `airplay`, `chromecast`, `local_audio`, and `msx_bridge`.
+`SendspinBridgeManagerBase` (`providers/sendspin/bridge_manager.py`) reconciles bridge existence in one place; providers subclass it and supply only policy (`_should_have_bridge`) and a factory (`_create_bridge`). Participating providers today are `airplay`, `chromecast`, and `msx_bridge`.
 
 `evaluate_bridge(player)` is idempotent and converges on a desired state: a bridge exists if and only if provider policy wants one *and* the lifecycle allows it — the Sendspin server is available, the player is the currently registered instance, the base player is enabled, and the bridge client itself is enabled. The manager subscribes to `PLAYER_CONFIG_UPDATED` and `PROVIDERS_UPDATED`, so disabling the base player tears the bridge down and re-enabling it rebuilds one. A bridge bound to a replaced Sendspin server (after a provider reload) is detected as stale and rebuilt.
 
@@ -369,7 +379,7 @@ Which providers take part, and in what role:
 | Role | Providers |
 |---|---|
 | **Protocol endpoints** (register `PlayerType.PROTOCOL`) | `airplay`, `dlna`, `squeezelite`, `sendspin`; `chromecast` chooses per device between `PLAYER`, `PROTOCOL`, `GROUP`, and `STEREO_PAIR` |
-| **Derived transports** (Sendspin bridges) | `airplay`, `chromecast`, `local_audio`, `msx_bridge` |
+| **Derived transports** (Sendspin bridges) | `airplay`, `chromecast`, `msx_bridge` |
 | **The wrapper** | `universal_player` |
 
 `sendspin` is unusual in that it plays three roles at once: it hosts the bridge lifecycle machinery all bridges share, it registers protocol players for real Sendspin devices, and it provides the built-in web player.
@@ -378,13 +388,13 @@ Which providers take part, and in what role:
 
 The AirPlay provider was rearchitected around a unified `cliairplay` binary that handles native AirPlay 2, PTP, and MediaRemote (#4879). The former `protocols/` package — with its `_protocol.py` / `airplay2.py` / `raop.py` split behind a protocol abstraction — is gone. The current shape is `player.py` plus `control_player.py`, `stream.py` / `stream_session.py`, `sendspin_bridge.py`, and `pairing.py` for the interactive pairing flow. Nothing in the linking contract changed: AirPlay still registers `PlayerType.PROTOCOL` players with `AIRPLAY_ID` and MAC identifiers, and still commonly reports a locally administered MAC, which is why [MAC normalization](#normalization-for-matching) exists.
 
-### local_audio
+### local_audio (retired)
 
-`local_audio` has no player implementation at all. It enumerates local soundcards (ALSA / PulseAudio) and registers each as a **Sendspin bridge** player, so a server's own audio outputs participate in synchronized playback like any other device. Its manifest declares `depends_on: sendspin`.
+`local_audio` used to enumerate the server's own soundcards and register each as a Sendspin bridge player. It was **retired** in #5965: playing out of the server's own audio hardware now runs *outside* the server, as a Sendspin add-on (the official Local Audio App), which reaches MA as an ordinary external Sendspin client and therefore needs no bridge at all. Only a tombstone package remains — see [15-provider-lifecycle.md](15-provider-lifecycle.md#retired-providers). Neither `sendspin_source` nor `helpers/pulse_capture.py` is its replacement; they serve line-in capture and Spotify Soloist respectively.
 
 ### Newer native providers
 
-Several native player providers have been added since this document's baseline: `amplipi`, `bose_soundtouch`, `samsung_wam`, `yandex_station`, and `msx_bridge`. They matter to protocol linking only through the identifiers they populate — a native provider that reports a MAC, serial, or UUID lets its device's AirPlay and Chromecast endpoints attach to it as protocols instead of being wrapped in a Universal Player. `msx_bridge` additionally registers a Sendspin bridge. [13-discovery.md](13-discovery.md) owns the discovery matrix.
+Several native player providers have been added since this document's baseline: `amplipi`, `bose_soundtouch`, `samsung_wam`, `yandex_station`, `msx_bridge`, and `wiim`. They matter to protocol linking only through the identifiers they populate — a native provider that reports a MAC, serial, or UUID lets its device's AirPlay and Chromecast endpoints attach to it as protocols instead of being wrapped in a Universal Player. `msx_bridge` additionally registers a Sendspin bridge, and `wiim`'s `LinkPlayPlayer` is a [`ProtocolBackedPlayer`](03-player-model.md#protocol-backed-players) (#5729). [13-discovery.md](13-discovery.md) owns the discovery matrix.
 
 ## Persistence
 

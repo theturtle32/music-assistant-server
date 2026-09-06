@@ -1,11 +1,17 @@
 # The PlayerController
 
-The `PlayerController` (`music_assistant/controllers/players/controller.py`, ~4200 lines) is the command routing hub between API consumers and player implementations. It handles player registration, command dispatch with two-tier routing (public API → private handler), protocol-aware redirection, power/volume/group management, polling, announcements, sleep timers, and concurrency control. It composes protocol linking functionality via the `ProtocolLinkingMixin`.
+The `PlayerController` (`music_assistant/controllers/players/controller.py`, ~4900 lines) is the command routing hub between API consumers and player implementations. It handles player registration, command dispatch with two-tier routing (public API → private handler), protocol-aware redirection, power/volume/group management, polling, sleep timers, and concurrency control. It is assembled from three mixins, each owning one large concern that would otherwise swamp the controller module:
 
 ```python
-class PlayerController(ProtocolLinkingMixin, CoreController):
+class PlayerController(AnnouncementsMixin, AudioSourceMixin, ProtocolLinkingMixin, CoreController):
     domain = "players"
 ```
+
+| Mixin | Module | Owns |
+|---|---|---|
+| `AnnouncementsMixin` | `players/announcements.py` | `play_announcement`, TTS rendering, pre-announce chime, volume/state save and restore |
+| `AudioSourceMixin` | `players/audio_sources.py` | [Live `AudioSource` sessions](#live-audiosource-sessions) — the per-player record of an external source playing on a player |
+| `ProtocolLinkingMixin` | `players/protocol_linking.py` | Matching, attaching and detaching protocol players; see [05-protocol-linking.md](05-protocol-linking.md) |
 
 The [Player Controller README](../../music_assistant/controllers/players/README.md) is the in-tree companion, owning the module inventory and the provider-facing development guide.
 
@@ -145,8 +151,14 @@ Scope enforcement happens in the API layer, not in these methods; see [19-authen
 | `players/cmd/seek` | `cmd_seek` | AudioSource → `on_source_control(SEEK, position)` / queue → `queue.seek` / else → `player.seek` |
 | `players/cmd/next` | `cmd_next_track` | AudioSource → `on_source_control(NEXT)` / queue → `queue.next` / else → `player.next_track` |
 | `players/cmd/previous` | `cmd_previous_track` | AudioSource → `on_source_control(PREVIOUS)` / queue → `queue.previous` / else → `player.previous_track` |
+| `players/cmd/shuffle` | `cmd_shuffle` | External source → `on_source_control(SHUFFLE)` / queue → `queue.set_shuffle` / else → `player.set_shuffle` |
+| `players/cmd/repeat` | `cmd_repeat` | External source → `on_source_control(REPEAT)` / queue → `queue.set_repeat` / else → `player.set_repeat` |
 
-**AudioSource proxying:** when the active queue item is a `MediaType.AUDIO_SOURCE` item — a Spotify Connect session, an AirPlay receiver, a Yandex Ynison session — transport commands are proxied to the owning plugin provider rather than executed on the player, because the *upstream* service owns the transport. `_get_active_audio_source(player)` resolves the `(AudioSource, PluginProvider)` pair for the player's active queue, returning `None` unless the item really is an `AudioSource` instance whose provider is a loaded `PluginProvider` still advertising `ProviderFeature.AUDIO_SOURCE`. Each command additionally honors the per-source capability flag (`can_seek`, `can_next_previous`, `can_play_pause`) and falls through to the normal path when the source cannot do it. See [11-plugin-system.md](11-plugin-system.md) for the `AudioSource` model.
+**Shuffle and repeat are ordering commands that follow whatever is playing** (#5901, #5993). All three destinations are real: a live external source reorders within its own session, a source the *device* runs itself (its own Spotify Connect, a physical input) reorders its own content via `Player.set_shuffle` / `set_repeat`, and MA's queue reorders its own items. A player with nothing playing raises `PlayerCommandFailed` rather than silently doing nothing. `RepeatMode.UNKNOWN` is rejected with `InvalidCommand` — it is what a source *reports* when it cannot say, never a mode to set.
+
+Both commands accept an optional **`source_id`** naming the source the caller aimed at. `_resolve_command_target` refuses the command if that source is no longer the one playing, so a command issued against a stale UI state can never land on whatever took the player over since. The same targeting applies to the transport commands.
+
+**AudioSource proxying:** when an external source is playing on a player — a Spotify Connect session, an AirPlay receiver, a Yandex Ynison session — transport commands are proxied to the owning plugin provider rather than executed on the player, because the *upstream* service owns the transport. The source is resolved from the player's [live session](#live-audiosource-sessions), not from a queue item: `_get_active_audio_source(player)` calls `get_player_audio_source(_audio_source_owner(player).player_id)`, so a group member asking about its own transport resolves to the source playing on its leader. It returns `None` when no session exists or the owning plugin is gone. Each command additionally honors the per-source capability flag (`can_seek`, `can_next_previous`, `can_play_pause`, and now `can_shuffle` / `can_repeat`) and falls through to the normal path when the source cannot do it. See [11-plugin-system.md](11-plugin-system.md) for the `AudioSource` model.
 
 `_handle_cmd_pause` benefits most from this (#4401). Its fallback chain is now: proxy `on_source_control(PAUSE)` to the AudioSource → delegate `pause()` to an active protocol player → call `player.pause()` directly when the player supports `PAUSE` and the active source reports `can_play_pause` → only then fall back to `_handle_cmd_stop`. Previously a pause on an external source always dropped through to stop, which tore the session down instead of holding it. `_handle_cmd_play` mirrors the chain for the unpause direction.
 
@@ -216,7 +228,7 @@ Power is a unifying abstraction that the controller normalizes across diverse ha
 `_handle_cmd_power(player_id, powered, skip_auto_play=False)` resolves the power command through the `power_control` config chain:
 
 1. **No-op** — if `player.state.powered == powered`, returns.
-2. **Power off path** — for a `PlayerType.PLAYER` that is captured or is itself a sync leader, `cmd_ungroup` first. Then, for a standalone player that was playing or paused, `_handle_cmd_stop` (awaiting a state update so the stop cannot race the power-off); or, for a sync leader, power off all its powered children in parallel.
+2. **Power off path** — for a player in `UNGROUP_ON_POWER_OFF_TYPES` (`PLAYER`, `STEREO_PAIR`) that is captured or is itself a sync leader, `cmd_ungroup` first. Powering off always stops the queue. Then, for a standalone player that was playing or paused, `_handle_cmd_stop` (awaiting a state update so the stop cannot race the power-off); or, for a sync leader, power off all its powered children in parallel.
 3. **`PLAYER_CONTROL_NONE`** — returns (power not supported/disabled).
 4. **`PLAYER_CONTROL_NATIVE`** — `await player.power(powered)`, then `wait_for_power_on()` when powering on.
 5. **`PLAYER_CONTROL_FAKE`** — stores state in `extra_data[ATTR_FAKE_POWER]`. For a **GROUP** player it also awaits `player.power(powered)`, because the group must actually form or dissolve its session — without that call the toggle would only change cosmetic state while never capturing or releasing members. Persists to the cache controller for everything except GROUP players (see [Registration](#registration-flow)).
@@ -232,28 +244,25 @@ Power is a unifying abstraction that the controller normalizes across diverse ha
 
 ## Volume Routing
 
-Volume and mute follow the same control-chain pattern as power: the per-player `volume_control` and `mute_control` configs select which mechanism handles commands. The key behavioral difference from power is that volume changes interact with mute state — adjusting volume on a muted player auto-unmutes it (unless the mute lock is set, which protects deliberately-muted players in groups). Fake mute works by saving the current volume, setting it to 0, and restoring on unmute — this is transparent to the user but means fake-muted players still receive volume change commands internally. See [07-volume.md](07-volume.md) for the full algorithm, group volume delta mechanics, and the mute lock mechanism.
+Volume and mute follow the same control-chain pattern as power: the per-player `volume_control` and `mute_control` configs select which mechanism handles commands. Unlike power, volume and mute are **independent** — a muted player stays muted when its volume is changed (#5706), and the new level is simply what it will play at once it is explicitly unmuted. Fake mute is the exception, because it is simulated with the volume itself: there is no separate mute state to preserve, so a locked fake-muted player has its command forced to 0 to keep it silent. See [07-volume.md](07-volume.md) for the full algorithm, group volume delta mechanics, and the mute lock mechanism.
 
 `_handle_cmd_volume_set(player_id, volume_level)` resolves through the `volume_control` config:
 
 1. **GROUP type** — redirects to `cmd_group_volume`.
-2. **Unmute on volume change** — if muted with a real mute control, calls `cmd_volume_mute(False)` first. The mute-lock check is extended to handle protocol players:
-    - It checks `extra_data[ATTR_MUTE_LOCK]` on both the player's own `extra_data` *and* the protocol parent's lock (when `protocol_parent_id` is set).
-    - This is necessary because `cmd_volume_mute` records the lock on the parent, while group volume changes may route through the child protocol player.
-    - Without this fallback, group volume changes on a Sonos-like player would incorrectly auto-unmute the parent (#3655).
-    - See [07-volume.md](07-volume.md#the-mute-lock-mechanism) for more details.
-3. **Clear fake mute** — `extra_data[ATTR_FAKE_MUTE]` is always popped, since controlling volume ends a fake mute by definition.
-4. **Scale to device range** — `scale_volume_to_device(player_id, volume_level)` maps logical 0–100 onto the configured min/max.
-5. **AudioSource notification** — see below. Note this happens *before* the routing branch, not after it.
-6. **`NATIVE`** — `player.volume_set(device_volume)`.
-7. **`FAKE`** — stores the **logical** (unscaled) value in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
-8. **`NONE`** — raises `UnsupportedFeaturedException`.
-9. **External `PlayerControl`** — `control.volume_set(device_volume)`.
-10. **Protocol player** — recursively calls `_handle_cmd_volume_set(protocol_player, device_volume)`.
+2. **Stay-silent check** — `_stays_silent_on_volume_change(player)` is true only for a player that holds an active mute lock, has `mute_control == FAKE`, *and* is currently fake-muted. In that case the level is forced to **0** and re-recorded as the volume target, since the lock may have been earned after the caller logged the level it asked for. Otherwise `extra_data[ATTR_FAKE_MUTE]` is popped.
+3. **Scale to device range** — `scale_volume_to_device(player_id, volume_level)` maps logical 0–100 onto the configured min/max.
+4. **AudioSource notification** — see below. Note this happens *before* the routing branch, not after it.
+5. **`NATIVE`** — `player.volume_set(device_volume)`.
+6. **`FAKE`** — stores the **logical** (unscaled) value in `extra_data[ATTR_FAKE_VOLUME]`, triggers `update_state()`.
+7. **`NONE`** — raises `UnsupportedFeaturedException`.
+8. **External `PlayerControl`** — `control.volume_set(device_volume)`.
+9. **Protocol player** — `await protocol_player.volume_set(device_volume)` directly (#5697). This used to recurse back into `_handle_cmd_volume_set` for the protocol player; calling the protocol player's own setter avoids re-running the whole resolution chain (limits, mute lock, source notification) against a player none of it is configured on.
 
 **Passing `device_volume` on redirect (#4461)** is deliberate for both delegating branches. The min/max limits are configured on the *user-facing* player; the external control and the protocol player have no limits of their own, so their own scaling is an identity pass-through. Forwarding the logical value instead would silently discard the configured range.
 
-**AudioSource volume notification.** Since the plugin-source refactor (#3938) the notification goes to the plugin provider that owns the active `AudioSource`, not to a `PluginSource` object: `_get_active_audio_source(player)` resolves the `(AudioSource, PluginProvider)` pair and the controller awaits `plugin_prov.on_volume_change(audio_source.item_id, volume_level)`. The gate is **queue ownership** — `active_queue.queue_id == player.player_id` — so the callback fires only when the player is the direct owner of its queue, never when it merely inherits `active_source` from a parent group. Group volume changes fire the callback once at the group level instead, which is what prevents a feedback loop from per-child callbacks reporting different values upstream. [11-plugin-system.md](11-plugin-system.md) owns the `AudioSource` model; [07-volume.md](07-volume.md#audiosource-volume-callbacks) covers the callback contract.
+**AudioSource volume notification.** The notification goes to the plugin provider that owns the source playing on this player, resolved from its [live session](#live-audiosource-sessions) rather than from a queue item: `_notify_source_volume_change` looks up `get_audio_source_session(player.player_id)` and awaits `provider.on_volume_change(session.source_id, volume_level)`. Because sessions are per-player, a group member that merely *hears* the source has no session and therefore never notifies — which is what prevents a feedback loop of per-child callbacks reporting different values upstream. Group volume changes fire the callback once at the group level instead. [11-plugin-system.md](11-plugin-system.md) owns the `AudioSource` model; [07-volume.md](07-volume.md#audiosource-volume-callbacks) covers the callback contract.
+
+**The mute lock cannot outlive its group.** `_has_active_mute_lock` requires both the `ATTR_MUTE_LOCK` flag *and* that the player is still grouped, since a lock is only ever earned inside a group. It also checks the protocol parent, because `cmd_volume_mute` stores the lock on the user-facing player while a volume command may arrive carrying the protocol player's ID (as happens during group volume changes).
 
 **Group volume**: `set_group_volume()` applies snapshot-based interpolation. On the first adjustment it caches each powered child's current volume on the group player's `extra_data[ATTR_GROUP_VOLUME_SNAPSHOT]` as a reference; subsequent adjustments interpolate each child from its snapshot value toward 100 (when scaling up) or toward 0 (when scaling down). The snapshot is invalidated by `_invalidate_group_volume_snapshot` when a child's individual volume changes or when group membership changes. After all children are set, it fires the single group-level `on_volume_change` described above. See [07-volume.md](07-volume.md) for the full algorithm.
 
@@ -281,7 +290,7 @@ On expiry the controller clears the stored value and calls `cmd_stop`. Every tra
 
 ## Announcement Handling
 
-`play_announcement(player_id, url, pre_announce, volume_level, pre_announce_url)` orchestrates the complex flow of interrupting playback, playing an announcement, and restoring state:
+Announcements live in `AnnouncementsMixin` (`players/announcements.py`). `play_announcement(player_id, url=None, pre_announce=None, volume_level=None, pre_announce_url=None, message=None, tts_engine=None, language=None)` orchestrates the complex flow of interrupting playback, playing an announcement, and restoring state:
 
 1. Sets `ATTR_ANNOUNCEMENT_IN_PROGRESS` (cleared in `finally`).
 2. Resolves pre-announce chime URL from config or defaults.
@@ -289,7 +298,11 @@ On expiry the controller clears the stored value and calls `cmd_stop`. Every tra
 4. **Native path**: finds a control target with `PLAY_ANNOUNCEMENT` support, resolves announcement volume from config, calls `player.play_announcement()`.
 5. **Fallback path** (`_play_announcement`): saves current sync/group/source/media state → ungroups if needed → stops playback → adjusts volume on members → plays announcement via `play_media` with streaming URL → waits for play/idle/duration → restores volume → restores sync/group/source or resumes.
 
-**Announcements take a URL, not text.** `play_announcement` rejects anything that does not start with `http`, and it never calls `PluginProvider.get_tts_message` — synthesis has already happened upstream (typically by Home Assistant's own TTS integration, whose proxy URL an automation passes in). MA re-hosts the audio on its own stream server via `streams.get_announcement_url` so the pre-announce chime can be prepended and players that dislike HTTPS still work. The only link to the TTS *feature* is a heuristic: when `pre_announce` is not specified, it is enabled if the substring `"tts"` appears in the URL, which recognises an HA `tts_proxy` URL without chiming for arbitrary announcement audio. `ProviderFeature.TTS` is a separate path with one in-tree consumer — see [18-ai-and-mcp.md](18-ai-and-mcp.md#what-providerfeaturetts-is-not).
+**Announcements take a URL *or* text.** Since #5621/#5630, MA speaks announcements itself: pass `message` (optionally with `tts_engine` and `language`) instead of `url`, and the controller renders it through a TTS engine before anything else happens. The two are mutually exclusive — supplying both, or a `tts_engine`/`language` without a `message`, raises `PlayerCommandFailed` — and a `url` must still start with `http`.
+
+**A spoken message is rendered once, up front.** `_render_announcement_message` resolves the engine (falling back to the one configured on the player controller via `CONF_ANNOUNCE_TTS_ENGINE`) and produces a URL, so everything downstream — including every member of a group fan-out — plays the resulting *audio* rather than re-speaking the text. Engine resolution goes through the shared `helpers/plugin_engines.py` selection layer; see [18-ai-and-mcp.md](18-ai-and-mcp.md#ai-and-tts-engines).
+
+MA re-hosts announcement audio on its own stream server via `streams.get_announcement_url` so the pre-announce chime can be prepended and players that dislike HTTPS still work. When `pre_announce` is not specified it defaults from player config for a spoken message, or — for a URL — on the heuristic that the substring `"tts"` appears in it, which recognises an HA `tts_proxy` URL without chiming for arbitrary announcement audio. The render itself is shared across players announcing the same audio; see [10-streaming-pipeline.md](10-streaming-pipeline.md#announcements).
 
 ## Source Selection
 
@@ -305,6 +318,34 @@ On expiry the controller clears the stored value and calls `cmd_stop`. Every tra
 
 `AudioSource` internals are covered in [11-plugin-system.md](11-plugin-system.md); queue management in [09-player-queues.md](09-player-queues.md).
 
+## Live AudioSource Sessions
+
+An external source playing on a player used to be modelled as a `MediaType.AUDIO_SOURCE` **queue item**, which meant selecting one had to clear and rewrite the player's queue. That was the wrong shape: switching to Spotify Connect and back destroyed whatever the user had queued up, and every question about the live source ("what is it playing?", "can it seek?") had to be answered by inspecting a queue item. `AudioSourceMixin` (`players/audio_sources.py`, #5913/#5914) replaced it with a per-player session held in `_source_sessions`, keyed by `player_id`. **The queue is left completely intact.**
+
+`AudioSourceSession` carries what the source is, who owns it, and what it reports about itself:
+
+| Field | Meaning |
+|---|---|
+| `source`, `provider_instance_id` | The `AudioSource` and the plugin instance that owns it |
+| `playback_session_id` | Identifies the *current selection* through pauses and stream reconnects; refreshed only on an explicit reselect |
+| `stream_session_id` | Token of the stream request currently holding the claim; `None` until the first request, which makes it the record of whether this selection was ever streamed |
+| `streamdetails`, `active_source_audio` | Resolved on the first stream request, and deliberately **not** cleared when a stream ends |
+| `stream_metadata`, `stream_metadata_reported` | What the source says about itself. An adopted placeholder stays replaceable by a later one; something the source actually *reported* does not |
+| `shuffle_enabled`, `repeat_mode` | The ordering the source reports for its own session; `None` means it has not said |
+
+Two identifiers matter and are easy to confuse. `source_id` is `AudioSource.item_id` and is only **provider-scoped** — plugins freely reuse ids like `"main"` or a player id across instances — so anywhere a server-wide unique value is needed (notably a player's `active_source`) uses `source_uri` instead.
+
+**Streamdetails outliving the stream is deliberate.** A paused external source keeps the player while its stream is torn down, so clearing them on stream end would lose the session's identity across an ordinary pause.
+
+### Claiming and takeover
+
+A source plays on **one player at a time**: two players both reporting it would let a command sent to the one that lost it drive the one that has it. `claim_audio_source_session(session, playback_session_id, stream_session_id)` is where that commits, and it runs only once the owning plugin has accepted the stream request:
+
+- It returns `False` when the session is no longer the live one on its player (or its `playback_session_id` has moved on), and the caller must then not serve the stream.
+- Eviction of the *previous* holder happens only on the **first** request for a selection (`stream_session_id is None`). A takeover that never gets a stream request therefore leaves the source untouched on the player that still has it, and a mere reconnect on the player already streaming does not steal the source from a player it is being handed to before that one has had its chance to start.
+
+The rest of the mixin is the update surface plugins push through: `update_source_metadata`, `update_source_options` (shuffle/repeat), and `refresh_source`. `is_live_audio_source(source)` answers whether a given active-source string is a live session at all, and `release_provider_sources` drops every session belonging to a provider being unloaded.
+
 ## Concurrency Controls
 
 | Mechanism | Scope | Purpose |
@@ -316,13 +357,16 @@ On expiry the controller clears the stored value and calls `cmd_stop`. Every tra
 
 ### Per-Player Locking
 
-Player commands that must not race acquire a lock via the `get_player_lock(player_id, purpose=...)` async context manager. There are two purposes, defined in `players/constants.py`:
+Player commands that must not race acquire a lock via the `get_player_lock(player_id, purpose=...)` async context manager. There are three purposes, defined in `players/constants.py`:
 
 ```python
 class PlayerLockPurpose(StrEnum):
     PLAYBACK = "playback"
     VOLUME = "volume"
+    GROUP_VOLUME = "group_volume"
 ```
+
+`GROUP_VOLUME` is separate from `VOLUME` because a group volume change fans out into a `volume_set` on every member (#5692). Sharing one purpose would mean the group-level operation held the same lock its own children need, so `cmd_group_volume`, `cmd_group_volume_up` and `cmd_group_volume_down` take `GROUP_VOLUME` on the *group* player while each child independently takes `VOLUME` on itself.
 
 The lock is **purpose-scoped**: commands with different purposes can run concurrently on the same player (a volume change alongside a power change), but two commands with the same purpose serialize. Lock keys are `f"{purpose.value}_{player_id}"`.
 
@@ -332,7 +376,7 @@ Three ways a command ends up under a lock:
 |---|---|
 | `@handle_player_command(lock=PlayerLockPurpose.PLAYBACK)` | `cmd_stop`, `cmd_resume`, `cmd_power`, `play_announcement`, `enqueue_next_media` |
 | `@handle_player_command(lock=PlayerLockPurpose.VOLUME)` | `cmd_volume_set`, `cmd_volume_mute` |
-| Acquired internally in the method body | `play_media` (decorated without a lock) and `cmd_set_members` (not decorated at all) |
+| Acquired internally in the method body | `play_media` (decorated without a lock), `cmd_set_members` (not decorated at all), and the `cmd_group_volume*` family (`GROUP_VOLUME` on the group player) |
 
 `cmd_power` is deliberately serialized on `PLAYBACK` rather than getting a purpose of its own: powering a sync or group player on *forms* the group and powering it off dissolves it, so it must not race with `play_media`, `cmd_resume`, or `cmd_set_members` on the same player. `cmd_set_members` acquires `get_player_lock(parent_player, PlayerLockPurpose.PLAYBACK)` around `_handle_set_members` for the same reason — a protocol switch must not interleave with a concurrent playback command.
 
@@ -406,7 +450,7 @@ When the change set reduces to those keys, `signal_player_state_update` returns 
 `_handle_membership_cleanup_on_state_change` detaches a player from its groups when a state change makes it uncontrollable, and is only entered when `available`, `enabled`, or `powered` actually changed:
 
 - **Became unavailable or disabled** → `_cleanup_player_memberships` drops it from its parent group or leader directly, since it can no longer be commanded.
-- **Powered off externally** (#4463) → an explicit `True → False` transition on a `PlayerType.PLAYER` that is synced, grouped, or is itself a sync leader triggers `cmd_ungroup`. This covers a linked power control being switched off outside of MA: the player is still reachable, so routing through `cmd_ungroup` also transfers leadership when it was the leader. Players without power control (`powered is None`) are left alone.
+- **Powered off externally** (#4463) → an explicit `True → False` transition on a player whose type is in `UNGROUP_ON_POWER_OFF_TYPES` (`PLAYER` and `STEREO_PAIR`, #6074) and that is synced, grouped, or is itself a sync leader triggers `cmd_ungroup`. This covers a linked power control being switched off outside of MA: the player is still reachable, so routing through `cmd_ungroup` also transfers leadership when it was the leader. Players without power control (`powered is None`) are left alone. An external power-off additionally ends the player's queue after a short delay, so a device switched off at the wall does not leave a queue sitting mid-playback.
 
 ### State Update Fan-Out
 
@@ -426,10 +470,14 @@ Finally, when `group_members`, `synced_to`, or `available` changed, the controll
 
 | File | Description |
 |---|---|
-| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `PlayerController` — registration, command routing, polling, announcements, sleep timers (~4200 lines) |
+| [`music_assistant/controllers/players/controller.py`](../../music_assistant/controllers/players/controller.py) | `PlayerController` — registration, command routing, polling, power/volume, sleep timers (~4900 lines) |
+| [`music_assistant/controllers/players/audio_sources.py`](../../music_assistant/controllers/players/audio_sources.py) | `AudioSourceMixin`, `AudioSourceSession` — [live source sessions](#live-audiosource-sessions), claiming and takeover |
+| [`music_assistant/controllers/players/announcements.py`](../../music_assistant/controllers/players/announcements.py) | `AnnouncementsMixin` — `play_announcement`, TTS rendering, chime, save/restore |
 | [`music_assistant/controllers/players/helpers.py`](../../music_assistant/controllers/players/helpers.py) | `handle_player_command` decorator, `AnnounceData` TypedDict, `wait_for_power_on` |
-| [`music_assistant/controllers/players/constants.py`](../../music_assistant/controllers/players/constants.py) | `PlayerLockPurpose` |
+| [`music_assistant/controllers/players/constants.py`](../../music_assistant/controllers/players/constants.py) | `PlayerLockPurpose` (`PLAYBACK`, `VOLUME`, `GROUP_VOLUME`) |
 | [`music_assistant/controllers/players/protocol_linking.py`](../../music_assistant/controllers/players/protocol_linking.py) | `ProtocolLinkingMixin` — protocol linking logic and `_get_control_target`. See [05-protocol-linking.md](05-protocol-linking.md) |
 | [`music_assistant/controllers/players/README.md`](../../music_assistant/controllers/players/README.md) | In-tree companion: module inventory, protocol-linking developer guide |
 | [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | `Player` class — the model the controller manages. See [03-player-model.md](03-player-model.md) |
+| [`music_assistant/models/protocol_backed_player.py`](../../music_assistant/models/protocol_backed_player.py) | `ProtocolBackedPlayer` — shared base for players that delegate to linked protocols. See [03-player-model.md](03-player-model.md#protocol-backed-players) |
 | [`music_assistant/models/player_provider.py`](../../music_assistant/models/player_provider.py) | `PlayerProvider` base class that providers implement |
+| [`music_assistant/helpers/player.py`](../../music_assistant/helpers/player.py) | `get_default_player_icon` — default icon per player type, provider and model |

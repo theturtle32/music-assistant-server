@@ -126,7 +126,10 @@ All nine in-tree controller READMEs. These own module inventories and config-key
 
 | Document | Description |
 |----------|-------------|
-| [`spotify_connect/ARCHITECTURE.md`](../../music_assistant/providers/spotify_connect/ARCHITECTURE.md) | Spotify Connect: go-librespot integration, HTTP + WebSocket API, event flow, audio transport |
+| [`spotify_connect/README.md`](../../music_assistant/providers/spotify_connect/README.md) | Spotify Connect: module layout and the backend-agnostic provider surface |
+| [`spotify_connect/soloist/README.md`](../../music_assistant/providers/spotify_connect/soloist/README.md) | Soloist backend (recommended): Spotify's official headless client, managed binary, PulseAudio capture |
+| [`spotify_connect/go_librespot/README.md`](../../music_assistant/providers/spotify_connect/go_librespot/README.md) | go-librespot backend: community client, HTTP + WebSocket API, event flow |
+| [`sendspin_source/README.md`](../../music_assistant/providers/sendspin_source/README.md) | Sendspin source plugin: line-in/turntable/microphone inputs as AudioSources |
 | [`sync_group/README.md`](../../music_assistant/providers/sync_group/README.md) | Sync group player: sync leader delegation, formation/dissolution |
 | [`universal_player/README.md`](../../music_assistant/providers/universal_player/README.md) | Universal player: protocol merging, virtual player lifecycle |
 | [`sendspin/README.md`](../../music_assistant/providers/sendspin/README.md) | Sendspin protocol: native MA playback, synchronized audio |

@@ -355,7 +355,7 @@ Provider *removal* is a separate path: `cleanup_provider()` walks the controller
 
 ## SQLite Database Schema
 
-`DB_SCHEMA_VERSION` is **55**, defined in `controllers/music/constants.py`. Tables, indexes and triggers are created by `controllers/music/database.py`; the version-by-version upgrade steps live in `controllers/music/migrations.py`.
+`DB_SCHEMA_VERSION` is **58**, defined in `controllers/music/constants.py`. Tables, indexes and triggers are created by `controllers/music/database.py`; the version-by-version upgrade steps live in `controllers/music/migrations.py`.
 
 ### Entity Tables
 

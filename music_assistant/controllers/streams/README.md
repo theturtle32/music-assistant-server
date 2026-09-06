@@ -128,7 +128,7 @@ Supporting modules in `helpers/`:
 
 `StreamsAudio` is the audio processing sub-controller, initialized as `self.audio` on the StreamsController. It handles all audio-related logic that needs access to the MusicAssistant instance:
 
-- **Stream acquisition**: `get_media_stream`, `get_stream_details`, radio/HTTP/file stream helpers
+- **Stream acquisition**: `get_stream_details`, `get_media_stream`, and `_resolve_media_stream_source` (the per-stream-type resolution that replaced the separate radio/HTTP/file helpers)
 - **Queue streaming**: `get_queue_item_stream`, `get_queue_item_stream_with_smartfade`, `get_queue_flow_stream`
 - **Format selection**: `get_output_format`, `select_pcm_format`, `select_flow_pcm_format`
 - **DSP and output plans**: `get_player_output_plan` (returns the executable filters plus the client-facing `AudioOutputDetails`)

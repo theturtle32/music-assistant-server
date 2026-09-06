@@ -90,7 +90,7 @@ The pairing mirrors how the Player Controller pairs a runtime `Player` with the 
 
 ### `PlayerQueue` — the wire model
 
-Verified field by field against `music-assistant-models` **1.1.173** (the version pinned in `pyproject.toml`). Re-check this table when that pin moves.
+Verified field by field against `music-assistant-models` **1.1.207** (the version pinned in `pyproject.toml`). Re-check this table when that pin moves.
 
 | Field | Type | Description |
 |---|---|---|

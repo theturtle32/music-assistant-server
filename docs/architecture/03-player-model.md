@@ -124,10 +124,12 @@ Returns `self._state` — the last snapshot produced by `update_state()`. The in
 Expensive derived properties use `@cached_property` from the `propcache` library, which stores computed values in `self._cache` (a plain dict). `update_state()` invalidates the cache at the top of every call so both the input probe and any recalculation read fresh values — but the invalidation is **selective**:
 
 ```python
-_CONFIG_CACHED_PROPS = frozenset({"icon", "hide_in_ui", "expose_to_ha"})
+_CONFIG_CACHED_PROPS = frozenset({"hide_in_ui", "expose_to_ha"})
 ```
 
-These three are derived purely from config, which only changes through `set_config()`. That method clears the cache *unconditionally* (config feeds many other cached values too) and marks the state dirty, so the config-derived entries stay correct while surviving the far more frequent per-update invalidation. Everything else — including cached properties defined by provider subclasses — is dropped on every `update_state()` call.
+These two are derived purely from config, which only changes through `set_config()`. That method clears the cache *unconditionally* (config feeds many other cached values too) and marks the state dirty, so the config-derived entries stay correct while surviving the far more frequent per-update invalidation. Everything else — including cached properties defined by provider subclasses — is dropped on every `update_state()` call.
+
+`icon` used to be in this set and no longer is (#5521). It now falls back to `default_icon`, which calls `get_default_player_icon(player_type, provider_domain, manufacturer, model)` in `helpers/player.py` — so the icon depends on live device attributes rather than on config alone, and must be recomputed like any other derived value. That helper resolves in order: group and stereo-pair types first, then a per-provider default (`airplay` → `airplay`, `sonos` → `sonos`, `wiim` → `wiim`, …), then a per-player-type default (`DISPLAY` → `monitor`, `LIGHT` → `sun`, `SOURCE` → `vinyl`, `VISUALIZER` → `monitor`), then substring matches against manufacturer and model (`homepod`, `apple tv`, `nest audio`, `voice pe`, `soundbar`, `carplay`, …).
 
 ## Change Detection
 
@@ -149,7 +151,7 @@ When a jump is detected, `update_state()` calls `mass.players.on_player_position
 
 ### `MEDIA_IDENTITY_KEYS`
 
-Changes to any of these fingerprint keys fire the debounced `_on_player_media_updated()` callback (1 second, deduplicated per player via `task_id`), which providers override to push now-playing information to a device display. The set is defined in `models/player.py` alongside `Player`, not in the shared `constants.py`:
+Changes to any of these fingerprint keys fire the debounced `on_player_media_updated()` callback (1 second, deduplicated per player via `task_id`), which providers override to push now-playing information to a device display. The set is defined in `models/player.py` alongside `Player`, not in the shared `constants.py`:
 
 ```python
 MEDIA_IDENTITY_KEYS = frozenset({
@@ -175,7 +177,7 @@ MEDIA_IDENTITY_KEYS = frozenset({
 3. **Input probe** — `__collect_input_snapshot()`. If the snapshot matches the last one, the state is not dirty, no own position anchor moved, and `force_update` is `False`, return immediately.
 4. **Record inputs** — clear the dirty flag, store the new snapshot and the current position anchors.
 5. **`__calculate_player_state()`** — build a new `PlayerState` and diff its fingerprint against the previous one. Returns `(changed_values, position_jumped, media_position_jumped)`.
-6. **Media change detection** — if any `MEDIA_IDENTITY_KEYS` key changed, schedule the debounced `_on_player_media_updated()`.
+6. **Media change detection** — if any `MEDIA_IDENTITY_KEYS` key changed, schedule the debounced `on_player_media_updated()`.
 7. **Config persistence** — if the provider-reported `default_name` or `player_type` changed, persist to config.
 8. **Position correction** — if `position_jumped` and `signal_event`, call `mass.players.on_player_position_jumped(self)`.
 9. **Early exit** — if nothing changed and not `force_update`, return.
@@ -224,7 +226,7 @@ flowchart TD
 
 **A note on power**: Power (`_attr_powered: bool | None`) is an abstraction that means different things depending on the player. For physical players with native support, it represents actual hardware on/off state. For always-on network speakers (Chromecast, AirPlay endpoints), "fake" power provides a UI toggle that gates playback without affecting hardware. For group players, power controls member activation — powering on a group captures its members, powering off releases and stops them — but group players only advertise `PlayerFeature.POWER` at all once the user has explicitly assigned fake power control, since the session lifecycle otherwise forms and dissolves the group on its own. A value of `None` means the power state is unknown or the player has no power concept (`power_control == NONE`). The `PlayerFeature.POWER` flag in `__final_supported_features` is dynamically added or removed based on the `power_control` config, so a player without native power support can still gain a power toggle through fake or delegated power. See [04-player-controller.md](04-player-controller.md#power-management) for command routing and [06-grouping.md](06-grouping.md#power-across-the-three-models) for how group players use power.
 
-**A note on volume and mute**: Volume (`volume_control` property) and mute (`mute_control` property) follow the same control-chain pattern as power. `NATIVE` means the player handles volume/mute in hardware or firmware. `FAKE` means MA simulates the control in software — for volume, the level is stored in `extra_data` and used for DSP-based software volume or group volume calculations; for mute, the current volume is saved, set to 0, and restored on unmute. `NONE` means the control is disabled. A player or control ID delegates to another entity (e.g., a Chromecast protocol player that can always adjust volume even when not actively streaming). The auto-select logic prefers native support, then falls back to a linked protocol player, then `NONE`. The `PlayerFeature.VOLUME_SET` and `PlayerFeature.VOLUME_MUTE` flags in `__final_supported_features` are dynamically added or removed based on this resolution. The **mute lock** mechanism (see [07-volume.md](07-volume.md#the-mute-lock-mechanism)) prevents group volume changes from auto-unmuting players the user deliberately muted. See [04-player-controller.md](04-player-controller.md#volume-routing) for command routing and [07-volume.md](07-volume.md) for the full volume architecture.
+**A note on volume and mute**: Volume (`volume_control` property) and mute (`mute_control` property) follow the same control-chain pattern as power. `NATIVE` means the player handles volume/mute in hardware or firmware. `FAKE` means MA simulates the control in software — for volume, the level is stored in `extra_data` and used for DSP-based software volume or group volume calculations; for mute, the current volume is saved, set to 0, and restored on unmute. `NONE` means the control is disabled. A player or control ID delegates to another entity (e.g., a Chromecast protocol player that can always adjust volume even when not actively streaming). The auto-select logic prefers native support, then falls back to a linked protocol player, then `NONE`. The `PlayerFeature.VOLUME_SET` and `PlayerFeature.VOLUME_MUTE` flags in `__final_supported_features` are dynamically added or removed based on this resolution. The **mute lock** mechanism (see [07-volume.md](07-volume.md#the-mute-lock-mechanism)) records that a player inside a group was muted deliberately, so a group volume change cannot silently undo it. See [04-player-controller.md](04-player-controller.md#volume-routing) for command routing and [07-volume.md](07-volume.md) for the full volume architecture.
 
 | Property | Returns | Resolution priority (highest → lowest) |
 |---|---|---|
@@ -234,7 +236,7 @@ flowchart TD
 | `__final_volume_muted_state` | `bool \| None` | `mute_control` config: FAKE → NATIVE → NONE → delegate player → delegate PlayerControl → **fallback: native** |
 | `__final_active_group` | `str \| None` | PROTOCOL type → None. Else: scan GROUP players that *capture* this player — see [Active Group Resolution](#active-group-resolution) |
 | `__final_current_media` | `PlayerMedia \| None` | Parent preference **`active_group or synced_to`** → protocol parent → active queue (stream metadata → media item → bare queue item) → native `_attr_current_media`. An active queue with no current item resolves to `None` rather than falling through |
-| `__final_source_list` | `list[PlayerSource]` | PROTOCOL → native only. Else: native sources plus a synthesized "Music Assistant Queue" source (id = `player_id`) when the player does not already list one |
+| `__final_source_list` | `list[PlayerSource]` | PROTOCOL → native only. Else: native sources, a synthesized "Music Assistant Queue" source (id = `player_id`) when the player does not already list one, the live source session if there is one, then standing entries for plugin sources bound to this player. See [below](#source-list-composition) |
 | `__final_group_members` | `list[str]` | If synced → empty. Else: native members (protocol IDs translated to visible parents), merged with active protocol's members. Non-GROUP with only self → empty |
 | `__final_synced_to` | `str \| None` | Native `synced_to` (mapped through protocol parent) → linked protocol's `synced_to` (resolved to visible parent) |
 | `__final_supported_features` | `set[PlayerFeature]` | Native features + `ACTIVE_PROTOCOL_FEATURES` from active protocol + `PROTOCOL_FEATURES` from all linked protocols ± power/volume/mute adjusted by control config; `PlayerFeature.SELECT_SOURCE` is auto-added when the final source list has at least two non-passive entries (#3789) |
@@ -245,9 +247,11 @@ The inverted parent order between `__final_current_media` (`active_group` first)
 
 ### The Upstream-Clock Override
 
-Whichever of the three branches supplies `__final_playback_state`, the resolved position is overridden when the active queue item is an `AudioSource` whose `streamdetails.stream_metadata` reports its own `elapsed_time` — a Spotify Connect, AirPlay, or Yandex Ynison session reporting the *source's* logical position.
+Whichever of the three branches supplies `__final_playback_state`, the resolved position is overridden when the player has its own [live `AudioSource` session](04-player-controller.md#live-audiosource-sessions) whose `stream_metadata` reports an `elapsed_time` — a Spotify Connect, AirPlay, or Yandex Ynison session reporting the *source's* logical position.
 
-The reason is that the position the protocol player or the player itself reports tracks **bytes consumed**, which is the wrong clock for a live plugin source: it loses upstream seeks and upstream pause/resume on the queue's `corrected_elapsed_time`, which both the player queues controller and several player providers consume. A GROUP player is checked twice — once against `__final_active_source`, once against its own `player_id` — because it outputs the `AudioSource` from its own queue, which `__final_active_source` may not resolve to.
+The reason is that the position the protocol player or the player itself reports tracks **bytes consumed**, which is the wrong clock for a live plugin source: it loses upstream seeks and upstream pause/resume on the queue's `corrected_elapsed_time`, which both the player queues controller and several player providers consume.
+
+The override is gated on the player *owning* the source rather than merely hearing it: it is skipped when the player is synced (`__final_synced_to`), captured by a group (`__final_active_group`), or is a PROTOCOL player with a parent. Those players mirror their owner's media, which the owner has already corrected — so applying the upstream clock again would fight the value they inherit. Looking the session up by `player_id` is what makes this a single check; it used to require inspecting the active queue item and testing a GROUP player twice.
 
 ### Active Group Resolution
 
@@ -260,6 +264,17 @@ The reason is that the position the protocol player or the player itself reports
 - Finally, this player must appear in the group's `state.group_members`.
 
 `is_active_session` is a property on `Player` that returns `False` by default; group implementations override it to report whether they are holding their members right now. A sync group returns `True` while a sync leader is set, while the idle grace timer is pending, or while a debounced re-form is pending; a universal group returns `True` while its multicast stream is live or its idle grace timer is pending. [06-grouping.md](06-grouping.md) owns the session lifecycle.
+
+### Source List Composition
+
+`__final_source_list` assembles up to four kinds of entry, in order, and the order encodes a precedence rule:
+
+1. **Native sources** the provider reports.
+2. **The Music Assistant Queue** — synthesized with `id = player_id` when the player does not already list it, with `can_seek` / `can_next_previous` reflecting whether the queue is actually running.
+3. **The live session**, if the player has one. Built from `session.source_uri` and carrying the source's capability flags (`can_play_pause`, `can_seek`, `can_next_previous`, `can_shuffle`, `can_repeat`) plus the `shuffle_enabled` / `repeat_mode` the *session* reports — so a client can render the current ordering without a queue to read it from. `passive` is the inverse of `can_initiate`.
+4. **Standing plugin entries** — every `AudioSource` a plugin has bound to this player via `PluginProvider.get_player_audio_sources(player_id)` (#6026, #6042, #6070). These exist so a player's own Spotify Connect or line-in is selectable from the source menu *before* any session is active.
+
+A URI already present is skipped, which is why the live session is added before the standing entries: both describe the same source, but only the session knows the live shuffle/repeat state, so it must win.
 
 Two additional computed properties are included in `PlayerState` but are not `__final_*` prefixed:
 
@@ -291,7 +306,7 @@ Two constant sets in `music_assistant/constants.py` control which features "flow
 
 ## PlayerType Taxonomy
 
-The `PlayerType` enum (from `music_assistant_models.enums`) defines four types with distinct behavior:
+The `PlayerType` enum (from `music_assistant_models.enums`) has nine members. The four that carry playback behaviour:
 
 | Type | Description | UI visibility | Protocol linking role |
 |---|---|---|---|
@@ -300,13 +315,25 @@ The `PlayerType` enum (from `music_assistant_models.enums`) defines four types w
 | `GROUP` | Multi-speaker sync group | Visible | **Excluded** from protocol linking |
 | `STEREO_PAIR` | Two speakers acting as one | Visible | **Excluded** from protocol linking |
 
+The rest describe devices that are not speakers, and exist so the UI can represent them sensibly (they mainly drive [default icon selection](#the-caching-mechanism)):
+
+| Type | Description |
+|---|---|
+| `DISPLAY` | A screen rather than a speaker |
+| `LIGHT` | A light that participates in playback (Hue Entertainment) |
+| `SOURCE` | An input rather than an output — a capture-only Sendspin client (#5889) |
+| `VISUALIZER` | A visualizer sink, such as the Milkdrop plugin |
+| `UNKNOWN` | Fallback |
+
+`SOURCE` and `UNKNOWN` are excluded from `_expand_can_group_with`: neither is something a user can group audio onto.
+
 **Code paths branching on type:**
 
 - **`synced_to`**: Returns `None` for GROUP (groups are not "synced to" in the leader/follower sense)
 - **`is_native_player`**: Excludes PROTOCOL, checks for `universal_player` domain and `PLAY_MEDIA` feature
 - **`__final_active_group`**: PROTOCOL → `None` (group membership follows the parent)
 - **`__final_current_media`**: PROTOCOL → uses parent's media
-- **`__final_source_list`**: PROTOCOL → returns only native sources (no MA queue injection)
+- **`__final_source_list`**: PROTOCOL → returns only native sources (no MA queue or plugin-source injection)
 - **`__final_group_members`**: PROTOCOL → no ID translation; GROUP → different self-inclusion rules
 - **`__final_can_group_with`**: PROTOCOL → simplified expanded set; others → protocol-to-parent translation
 - **`__final_active_source`**: PROTOCOL → uses parent's active source
@@ -350,7 +377,7 @@ The `Player` class defines abstract methods that provider implementations overri
 | `set_members(player_ids_to_add, player_ids_to_remove)` | `SET_MEMBERS` | Modify group membership |
 | `poll()` | *(when `needs_poll=True`)* | Periodic state refresh |
 
-Default (non-abstract) methods providers may override: `get_config_entries()` → `[]`, `handle_config_action(action)` (one-shot config buttons), `run_setup_flow(session)`, `on_config_updated()`, `on_unload()`, `group_with()` / `ungroup()` (delegate to `set_members`), `on_protocol_playback()`, `_on_player_media_updated()`, and `is_active_session` (group players only).
+Default (non-abstract) methods providers may override: `get_config_entries()` → `[]`, `handle_config_action(action)` (one-shot config buttons), `run_setup_flow(session)`, `on_config_updated()`, `on_unload()`, `group_with()` / `ungroup()` (delegate to `set_members`), `on_protocol_playback()`, `on_player_media_updated()`, and `is_active_session` (group players only).
 
 ## The Framework-Managed Surface
 
@@ -421,10 +448,15 @@ Four properties manage the relationship between a player and its linked protocol
 
 | Property | Setter | Description |
 |---|---|---|
-| `linked_output_protocols` | `set_linked_output_protocols()` | List of `OutputProtocol` entries (id, domain, priority) for protocols linked to this player |
+| `linked_output_protocols` | `set_linked_output_protocols()` | List of `LinkedOutputProtocol` entries for protocols linked to this player |
 | `protocol_parent_id` | `set_protocol_parent_id()` | For PROTOCOL players: the ID of the native/universal parent |
 | `active_output_protocol` | `set_active_output_protocol()` | Currently selected output: `None`, `"native"`, or a protocol player ID. Setting this triggers `update_state()` |
-| `output_protocols` | *(derived, `@cached_property`)* | API-facing list: optional native entry + all linked live protocols + cached disabled protocols from config, sorted by priority |
+| `output_protocols` | *(derived, `@cached_property`)* | API-facing list of `OutputProtocol`: optional native entry + all linked live protocols + cached disabled protocols from config, sorted by priority |
+| `playback_domains` | *(derived, `@cached_property`)* | The set of protocol domains this player can be reached on **right now** |
+
+Note the two types are distinct. **`LinkedOutputProtocol`** is the stored link and records only `output_protocol_id`, `protocol_domain`, `priority` and `derived_from` — deliberately nothing about current state. **`OutputProtocol`** is the API-facing view, resolved from the live protocol player on every read, which is what carries `available`, `name` and `is_native`. Keeping availability out of the stored link is what stops a stale reachability flag from being persisted.
+
+`playback_domains` filters `output_protocols` to those currently `available`, so a protocol whose player went offline drops out. A wrapper player contributes its linked protocols but never its own domain.
 
 The relationship: a **native/universal player** holds `linked_output_protocols` and `active_output_protocol`. Each **protocol player** holds `protocol_parent_id` pointing back. `output_protocols` is the merged view for the UI. See [05-protocol-linking.md](05-protocol-linking.md) for the full linking lifecycle.
 
@@ -442,11 +474,45 @@ The first entry depends on what the player itself can do:
 
 Every entry's `available` flag reflects `available_for_playback` on the backing player (cached disabled protocols are always `False`), so an unpaired receiver shows up in the UI as a known-but-unusable output instead of silently vanishing.
 
+## Protocol-Backed Players
+
+Some players have **no playback capability of their own** — they exist to represent a device, and every actual command is routed to one of their linked protocol players. The Universal Player was the original case; WiiM/LinkPlay is the second (#5729). Rather than duplicating the delegation logic, both now derive from `ProtocolBackedPlayer` (`models/protocol_backed_player.py`):
+
+```python
+class UniversalPlayer(ProtocolBackedPlayer): ...   # providers/universal_player/player.py
+class LinkPlayPlayer(ProtocolBackedPlayer): ...    # providers/wiim/linkplay_player.py
+```
+
+The base declares no `PLAY_MEDIA`; the player controller routes playback to a linked protocol. What it provides:
+
+- **Availability** — `available` is true when *any* backing protocol player is `available_for_playback`. A protocol-backed player is therefore only as available as its protocols.
+- **Setup passthrough** — `needs_setup` and `setup_reason` defer to a backing protocol that needs setup, so "your AirPlay endpoint needs pairing" surfaces on the player the user actually sees.
+- **Delegated state** — `playback_state`, `elapsed_time`, `elapsed_time_last_updated`, `current_media`, `active_source` and `source_list` all read through to the active output protocol.
+- **Delegated transport** — `stop`, `play`, `pause`, `next_track`, `previous_track`, `seek`, `set_shuffle`, `set_repeat`.
+- **External-source surfacing** — the interesting part, below.
+
+Subclasses supply only `_backing_protocol_player_ids()`, which is why `UniversalPlayer` is now a thin wrapper over its member id list.
+
+### External sources on a linked protocol
+
+Two module-level constants (moved here from the Universal Player, which used to own them) handle the case where something plays on a linked protocol *without going through Music Assistant* — someone casts to the device's Chromecast endpoint directly:
+
+```python
+EXTERNAL_SOURCE_PROTOCOLS = {"chromecast", "dlna"}
+FORWARDED_FEATURES = {PlayerFeature.PAUSE, PlayerFeature.SEEK, PlayerFeature.NEXT_PREVIOUS}
+```
+
+When `_get_protocol_player_with_external_source()` finds such a protocol playing, `supported_features` becomes the player's **own** native features *plus* the intersection of that protocol's features with `FORWARDED_FEATURES` — so the user can pause or skip the external stream from MA. Keeping the player's own features rather than replacing them matters because a subclass may add capabilities of its own (grouping, for instance) that have nothing to do with the external source.
+
+Volume and mute are deliberately **excluded** from `FORWARDED_FEATURES`: the base `Player` already resolves those to the protocol player through the ordinary [control resolution chain](#resolution-chains), so forwarding them here would double up.
+
 ## Key Files
 
 | File | Description |
 |---|---|
-| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | The `Player` class — `_attr_*` pattern, `__final_*` properties, abstract commands, `update_state()` (~3050 lines) |
+| [`music_assistant/models/player.py`](../../music_assistant/models/player.py) | The `Player` class — `_attr_*` pattern, `__final_*` properties, abstract commands, `update_state()`, `LinkedOutputProtocol`, `MEDIA_IDENTITY_KEYS` (~3650 lines) |
+| [`music_assistant/models/protocol_backed_player.py`](../../music_assistant/models/protocol_backed_player.py) | `ProtocolBackedPlayer` — shared base for delegating players, `EXTERNAL_SOURCE_PROTOCOLS`, `FORWARDED_FEATURES` |
+| [`music_assistant/helpers/player.py`](../../music_assistant/helpers/player.py) | `get_default_player_icon` — the `default_icon` fallback chain |
 | `music_assistant_models.player` | `PlayerState` (dataclass snapshot), `DeviceInfo`, `OutputProtocol`, `PlayerMedia`, `PlayerSource`, `PlayerSoundMode`, `PlayerOption` |
 | `music_assistant_models.enums` | `PlayerType`, `PlayerFeature`, `PlaybackState`, `IdentifierType` |
 | [`music_assistant/constants.py`](../../music_assistant/constants.py) | `PROTOCOL_FEATURES`, `ACTIVE_PROTOCOL_FEATURES`, `PROTOCOL_PRIORITY`, `EXTERNAL_SOURCES`, `PLAYER_CONTROL_PROTOCOL` |

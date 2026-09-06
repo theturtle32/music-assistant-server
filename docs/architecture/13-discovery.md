@@ -343,11 +343,12 @@ Beyond manual IPs, each of these providers discovers in a way the manifest canno
 | `yandex_station` | Two-phase (#3605): the **Quasar cloud API** enumerates the account's devices in `discover_players()` (requires session cookies derived from an `x_token`), while local control arrives over mDNS through the manifest |
 | `amplipi` | Not a discovery mechanism at all — the controller host comes from the setup flow, and `discover_players()` registers each non-disabled **zone** of the already-polled controller status as a player. A background `_poll_loop` keeps that status fresh |
 | `sendspin` | Devices arrive over Sendspin's own server protocol plus a pairing flow, with manual IPs as a fallback. It declares **no** `mdns_discovery` and implements no `discover_players()` |
-| `local_audio` | Enumerates the host's audio **output devices** in an executor (via the configured ALSA/PulseAudio backend on Linux, ignored on macOS) and registers each as a player through the Sendspin bridge |
 | `msx_bridge` | `discover_players()` is deliberately **empty** — Media Station X players register on demand via `get_or_register_player()` when a TV first connects |
 | `sync_group`, `universal_group`, `universal_player` | No network discovery. `discover_players()` reads stored player configs and re-registers the virtual players by id prefix (`syncgroup_`, `ugp_`, and `up` — constant names `SGP_PREFIX` / `UGP_PREFIX` / `UNIVERSAL_PLAYER_PREFIX`). `universal_player` also includes unavailable and disabled configs, since those players are created by the `PlayerController` rather than discovered |
 
 Two providers that look like they belong here but don't: `ariacast_receiver` is a **plugin** with no network discovery of its own (it runs a protocol server that senders connect *to*), and `teddycloud` is a **music** provider. Neither registers players.
+
+`local_audio` used to appear in this table, enumerating the host's own soundcards. It was retired in #5965 and has no discovery — or implementation — left; see [15-provider-lifecycle.md](15-provider-lifecycle.md#retired-providers).
 
 ### The Two-Phase Discovery Flow
 
