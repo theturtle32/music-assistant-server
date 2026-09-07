@@ -75,7 +75,11 @@ Even a clean EOF is discarded when fewer than `ANALYSIS_MIN_COMPLETENESS_RATIO =
 | `record_analysis_failure(...)` / `clear_analysis_failure(...)` | Write and delete `DB_TABLE_AUDIO_ANALYSIS_FAILURES` rows (#4167). Both no-op when the provider does not resolve to a loaded music provider. |
 | `get_extra_data_for_album_tracks(...)` | Bulk read of `extra_data` across an album's tracks — used by AcoustID's album-level voting. |
 
-**Corrupt-row recovery** (#4721). A row whose `analysis_data` JSON fails to deserialize — a model field changed type, say — would otherwise break reads. `_parse_row()` catches the failure, logs only the error *type* and field name (the exception message can embed the entire 1800-bin payload), and collects the row id; the caller then **deletes** the unparsable rows so the track is simply re-analyzed. Provider keys are stored as `provider.domain` for streaming providers and `provider.instance_id` otherwise, so a re-added instance of a local filesystem provider does not orphan its rows.
+**Corrupt-row recovery** (#4721, extended in #6218). Corruption is handled at two levels. A row whose `analysis_data` JSON fails to deserialize — a model field changed type, say — would otherwise break reads: `_parse_row()` catches the failure, logs only the error *type* and field name (the exception message can embed the entire 1800-bin payload), and collects the row id; the caller then **deletes** the unparsable rows so the track is simply re-analyzed.
+
+Corruption below that level has to be handled in the query itself. A `TEXT` column holding non-UTF-8 bytes makes the SQLite driver raise `OperationalError` before Python ever sees the row, which would fail the whole read rather than one item. The reads therefore select `CAST(analysis_data AS BLOB)` and enumerate their columns explicitly instead of using `SELECT *`, so `analysis_data` arrives as raw bytes and decoding is deferred to `_parse_row()` — which lets it skip just the bad row (#6218).
+
+Provider keys are stored as `provider.domain` for streaming providers and `provider.instance_id` otherwise, so a re-added instance of a local filesystem provider does not orphan its rows.
 
 ## `AudioAnalysisProvider`
 

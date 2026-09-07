@@ -597,7 +597,7 @@ Determines the final encoding from the URL's format extension and the player's c
 
 - Use the content sample rate when the player supports it, else its highest supported rate. Bit depth is then capped by the depths actually **paired with that rate**, not by the player's global maximum — a player that only does 24-bit at 48 kHz is described correctly.
 - Lossy formats cap at 16-bit and 48 kHz.
-- Non-track media (TTS, radio) caps at 16-bit.
+- Non-track media (TTS, radio) is capped by the **source's** declared depth, rounded up to a container width of 16, 24 or 32 bit (#6214). Capping on the internal PCM depth would be wrong, because normalization or DSP widens it to 32-bit float: a lossy station or a TTS clip stays 16-bit, while a hi-res radio stream keeps its own depth.
 - `fmt == "pcm"` derives the content type from the resolved bit depth.
 - Channels collapse to 1 when an output-channel override is set.
 
