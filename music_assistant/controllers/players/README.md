@@ -8,6 +8,7 @@ This document provides an overview of the Music Assistant Player Controller arch
 - [Player vs PlayerState](#player-vs-playerstate)
 - [Core Components](#core-components)
 - [Player Types](#player-types)
+- [Protocol-Backed Players](#protocol-backed-players)
 - [Multi-Protocol Player System](#multi-protocol-player-system)
 - [Universal Player](#universal-player)
 - [Protocol Linking](#protocol-linking)
@@ -81,6 +82,12 @@ The main orchestrator that manages:
 - Handles announcements and TTS playback
 - Coordinates sync groups and grouped playback
 
+The controller is assembled from three mixins, so each large concern lives in its own module:
+
+```python
+class PlayerController(AnnouncementsMixin, AudioSourceMixin, ProtocolLinkingMixin, CoreController):
+```
+
 ### 2. ProtocolLinkingMixin ([protocol_linking.py](protocol_linking.py))
 
 Mixin class containing all protocol linking logic:
@@ -88,12 +95,31 @@ Mixin class containing all protocol linking logic:
 - Creating and managing Universal Players
 - Protocol link lifecycle (add, remove, cleanup)
 - Output protocol selection for playback
+- Exclusive ownership (`_evict_protocol_from_other_parents`) and teardown of a parent's children
 
-### 3. Helper Utilities ([helpers.py](helpers.py))
+### 3. AudioSourceMixin ([audio_sources.py](audio_sources.py))
+
+Owns the live external sources playing on players. An `AudioSourceSession` is held per player in
+`_source_sessions`, independent of that player's queue — selecting Spotify Connect leaves the
+queue untouched:
+- `get_audio_source_session` / `get_player_audio_source` — read the live session
+- `claim_audio_source_session` — commit a stream request, evicting whichever other player held
+  the source (first request for a selection only)
+- `update_source_metadata` / `update_source_options` / `refresh_source` — the plugin push surface
+- `release_provider_sources` — drop every session of a provider being unloaded
+
+### 4. AnnouncementsMixin ([announcements.py](announcements.py))
+
+Owns `play_announcement`: accepts either a `url` or a `message` to speak (rendered up front through
+a TTS engine so a group fan-out plays audio rather than re-speaking), the pre-announce chime, and
+saving and restoring player state around the interruption.
+
+### 5. Helper Utilities ([helpers.py](helpers.py))
 
 Contains standalone helper functions and decorators:
 - `handle_player_command` decorator for command validation
 - `AnnounceData` type definition
+- `wait_for_power_on`
 
 ## Player Types
 
@@ -122,6 +148,31 @@ A group player that represents (synchronized) playback across multiple physical 
 ### PlayerType.STEREO_PAIR
 
 A dedicated stereo pair of two speakers acting as one player.
+
+### Non-speaker types
+
+Four further types describe devices that participate in playback without being speakers. They
+mainly affect presentation (notably the default icon picked by
+[`helpers/player.py`](../../helpers/player.py)):
+
+- `PlayerType.DISPLAY` — a screen rather than a speaker
+- `PlayerType.LIGHT` — a light that participates in playback (Hue Entertainment)
+- `PlayerType.SOURCE` — an input rather than an output, e.g. a capture-only Sendspin client
+- `PlayerType.VISUALIZER` — a visualizer sink, e.g. the Milkdrop plugin
+
+`SOURCE` and `UNKNOWN` are excluded from group-target expansion, since neither is something audio
+can be grouped onto.
+
+## Protocol-Backed Players
+
+A player with no playback capability of its own, whose commands are routed to a linked protocol
+player, should subclass [`ProtocolBackedPlayer`](../../models/protocol_backed_player.py) rather
+than reimplement the delegation. It provides availability from the backing protocols, setup
+passthrough, delegated state and transport, and surfacing of an external source playing on a
+linked protocol (`EXTERNAL_SOURCE_PROTOCOLS` / `FORWARDED_FEATURES`). A subclass supplies only
+`_backing_protocol_player_ids()`.
+
+In-tree subclasses: `UniversalPlayer` (universal_player) and `LinkPlayPlayer` (wiim).
 
 ## Multi-Protocol Player System
 
@@ -178,7 +229,7 @@ When playing media, the controller selects the best output protocol:
 1. **Grouped protocol** - If a protocol is actively grouped/synced, use it
 2. **User preference** - Honor user's configured preferred protocol
 3. **Native playback** - Use native PLAY_MEDIA if available
-4. **Best available** - Select by protocol priority (AirPlay > Chromecast > DLNA)
+4. **Best available** - Select by `PROTOCOL_PRIORITY` (lower wins): AirPlay (10) > Squeezelite (20) > Chromecast (30) > Sendspin (40) > DLNA (50)
 
 ## Universal Player
 
@@ -235,10 +286,23 @@ When protocol players are registered without a native match:
 
 When a native player appears for a device that has a Universal Player:
 1. Native player is registered
-2. Controller finds matching Universal Player
+2. Controller finds matching Universal Player (by identifiers, or because the native player's ID is in the Universal Player's stored protocol list)
 3. Active and cached protocol ownership transfers to the native player
-4. Universal Player is removed
-5. Native player becomes the visible entity
+4. The Universal Player's user configuration (custom name, config values, DSP and per-queue settings) is carried over and group memberships are re-pointed at the native player
+5. Universal Player is removed
+6. Native player becomes the visible entity
+
+A protocol link can be **refused**, most commonly when the native player already holds an active link from the same protocol domain. `_check_replace_universal_player()` therefore compares `active_protocol_ids - moved_protocol_ids`: if anything failed to move, the Universal Player is **kept** and only the protocols that actually moved are handed over, so the refused ones aren't left orphaned. Steps 4-6 only run once every active protocol transferred.
+
+### Derived Transports
+
+A protocol player can ride on top of another output instead of being an independent path to the device - a Sendspin bridge running inside an AirPlay or Chromecast session, for example. These players declare an `underlying_player_id`, and the controller resolves their parent from that edge rather than from device identifiers:
+
+- `_try_link_derived_protocol()` attaches the derived player to the parent of the player it rides on (or to that player itself when it is not a protocol player)
+- `_link_derived_protocols_of()` runs after a player is linked or registered natively, picking up derived players that registered before their underlying player had a parent
+- Derived players are skipped by identifier matching and never seed a Universal Player of their own
+
+The `OutputProtocol` entry for a derived transport carries `derived_from`, holding the `output_protocol_id` of the base output it runs on - or `"native"` when it rides on the parent player itself. A Sendspin bridge on a Sonos speaker's AirPlay protocol records that AirPlay protocol player's ID; a bridge riding on the Sonos player directly records `"native"`.
 
 ## Development Guide
 
@@ -315,13 +379,16 @@ Key scenarios to test:
 ### Configuration Storage
 
 Protocol links are persisted in player configuration:
-- `linked_protocol_ids` - List of protocol player IDs
+- `linked_protocol_ids` - List of protocol player IDs (on the native/universal parent)
+- `protocol_parent_id` - Cached parent player ID (on the protocol player)
+- `underlying_player_id` - Derived-transport edge (on a bridge protocol player)
 - Restored on restart for fast reconnection
 
 ### Key Methods (in protocol_linking.py)
 
 - `_evaluate_protocol_links()` - Entry point for link evaluation
 - `_try_link_protocol_to_native()` - Link protocol to existing native
+- `_try_link_derived_protocol()` / `_link_derived_protocols_of()` - Resolve derived transports via their underlying player
 - `_schedule_protocol_evaluation()` - Delay evaluation for batching
 - `_create_or_update_universal_player()` - Create/update Universal Player
 - `_check_replace_universal_player()` - Replace Universal with native

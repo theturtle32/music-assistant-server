@@ -1,0 +1,212 @@
+---
+name: arch_docs_v2_phase00_baseline
+overview: "COMPLETE. Phase 0 of the round-2 architecture docs refresh: sync the fork's dev to upstream/dev (1096 commits), merge that baseline into both the docs branch and the refresh branch stacked on it, and open the single PR that all later phases will grow. No doc edits in this phase. Final branch names are docs/arch and docs/arch-refresh; see Outcome at the end for what actually happened."
+todos:
+  - id: fetch
+    content: Fetch upstream and origin; confirm upstream/dev tip and that the current docs/architecture base (4b67568d6) is an ancestor of it
+    status: completed
+  - id: ff_dev
+    content: Fast-forward origin/dev to upstream/dev and push
+    status: completed
+  - id: branch
+    content: Check out docs/architecture-refresh (already created, carrying the plan-stack commit)
+    status: completed
+  - id: merge
+    content: "Merge origin/dev into docs/architecture-refresh; resolve any conflicts (expected: none)"
+    status: completed
+  - id: sanity
+    content: "Sanity-check the merged tree: docs/architecture/ intact, controller packages present, pre-commit passes"
+    status: completed
+  - id: pr
+    content: Push the branch and open the PR into docs/architecture with the phase checklist as its body
+    status: completed
+  - id: cleanup
+    content: Remove the /tmp/ma-dev scratch worktree if one exists, since the working tree is now current dev
+    status: completed
+isProject: false
+---
+
+# Phase 0 — Baseline sync and PR setup
+
+No documentation is edited in this phase. The goal is to get the code being documented into the
+working tree, so that every later phase can read `music_assistant/` directly instead of
+inspecting `upstream/dev` from a side worktree.
+
+## Current state
+
+- `docs/architecture` = 10 commits on top of upstream `4b67568d6` ("Fix protocol recovery with
+  missing cached parent (#3829)"), 2 of which are the docs tree and the round-1 plan stack, 8 of
+  which are the round-1 refresh squashes.
+- `upstream/dev` = `76422b305`, **1096 commits ahead**. `4b67568d6` is a clean ancestor, so the
+  fast-forward is safe.
+- `origin/dev` (the fork's `dev`) is stale at the old baseline.
+- PR #6 (`docs/architecture` → `dev`, fork) is open and stays open.
+- **`docs/architecture-refresh` already exists** on `origin`, cut from `docs/architecture` and
+  carrying one commit: the round-2 plan stack. So this phase checks it out rather than creating it,
+  and the baseline merge becomes the branch's second commit. No PR has been opened yet.
+
+## Steps
+
+```bash
+cd /Users/theturtle32/work/music-assistant-server
+git fetch upstream dev
+git fetch origin
+
+# Confirm the fast-forward is safe before doing anything.
+git merge-base --is-ancestor 4b67568d6 upstream/dev && echo "ff safe"
+
+# Fast-forward the fork's dev to upstream/dev.
+git push origin upstream/dev:refs/heads/dev
+
+# The long-lived refresh branch already exists with the plan-stack commit.
+git checkout docs/architecture-refresh
+git pull --ff-only origin docs/architecture-refresh
+
+# Bring the new code baseline in.
+git fetch origin dev
+git merge origin/dev
+```
+
+The merge is expected to be conflict-free: `docs/` does not exist upstream, and `.cursor/plans/`
+is fork-only. If conflicts do appear, they will be in fork-only files — keep the fork side for
+`docs/` and `.cursor/plans/`, take upstream for everything under `music_assistant/` and `tests/`.
+
+## Sanity checks before opening the PR
+
+- `ls docs/architecture/` still lists `00-overview.md` … `16-audio-analysis.md` and `README.md`.
+- The new controller packages are present, confirming the merge landed:
+  `music_assistant/controllers/config/`, `controllers/music/`, `controllers/metadata/`,
+  `controllers/player_queues/`, `controllers/dashboard/`, `controllers/diagnostics/`,
+  `controllers/translations/`.
+- `git log --oneline -3` shows the merge commit with `docs/architecture` and `origin/dev` as parents.
+- `pre-commit run --all-files` passes. If upstream hooks fail on upstream-owned files, do not
+  "fix" upstream code in this branch — note it and move on.
+
+## PR
+
+Open **one** PR that every later phase will add commits to:
+
+```bash
+git push origin docs/architecture-refresh
+gh pr create -R theturtle32/music-assistant-server \
+  --base docs/architecture \
+  --title "docs(architecture): refresh against current upstream/dev" \
+  --body-file -   # see body below
+```
+
+PR body should contain the phase checklist from `arch_docs_v2_index.plan.md` (phases 0–16) as
+unchecked boxes, so progress is visible as commits land. Note in the body that the first commit
+is a baseline merge of 1096 upstream commits and carries no doc changes, so reviewers should
+review the PR by commit rather than by combined diff.
+
+## Cleanup
+
+If a scratch worktree at `/tmp/ma-dev` exists from the planning pass, remove it — the working
+tree is now the authoritative copy of current `dev`:
+
+```bash
+git worktree remove /tmp/ma-dev --force
+git worktree prune
+```
+
+## Note for later phases
+
+After this phase, `git log --oneline 4b67568d6..HEAD -- <path>` is the way to find the upstream
+PRs behind any given change, and code can be read straight from the working tree.
+
+**Write long docs incrementally.** These phases produce doc files of many hundreds of lines, and a
+single write of a whole file at that size fails or silently truncates. Build each doc across several
+tool calls instead: write the opening sections first, then append or replace section-by-section with
+targeted edits. Rewriting an existing doc in place (section by section, preserving what is still
+accurate) is both safer and cheaper than regenerating the file wholesale.
+
+## Outcome
+
+Completed, with three deviations from the plan above. The names and numbers below are the current
+ones; the `docs/architecture*` names used earlier in this file are dead.
+
+**Branches were renamed.** `docs/architecture` collided with the `docs/architecture/` directory,
+which makes bare git revision arguments ambiguous — `git reset --hard docs/architecture` fails with
+"ambiguous argument" and silently does nothing useful. Final names:
+
+| Role | Branch |
+| --- | --- |
+| Docs base branch, submitted upstream | `docs/arch` |
+| Long-lived refresh branch, one commit per phase | `docs/arch-refresh` |
+
+Renaming via the GitHub API auto-closed the two open PRs, because GitHub treats a renamed head
+branch as deleted and closed PRs cannot be reopened once the head is gone. They were recreated:
+
+| Old | New | Shape |
+| --- | --- | --- |
+| #6 | **#17** | `docs/arch` → `dev` |
+| #16 | **#18** | `docs/arch-refresh` → `docs/arch` |
+
+**`upstream/dev` was merged into the base branch too.** The plan only merged it into the refresh
+branch, which left the refresh PR showing all 1096 upstream commits. GitHub diffs against the merge
+base, so the base branch must also contain upstream for a stacked PR to read as documentation-only.
+`docs/arch` therefore carries its own merge (`ba9adaf8e`) and `docs/arch-refresh` was rebuilt on top
+of it carrying only the plan commits. PR #18 is now 18 files, 2848 insertions, 0 deletions.
+
+**The fork's `dev` was already current.** The plan assumed `origin/dev` was stale; it was already at
+`76422b305`, verified with `git ls-remote` against both remotes. Something auto-syncs the fork, so
+the fast-forward was a no-op.
+
+### Resolved: the mypy hook
+
+**This is fixed — later phases should run the full `pre-commit run --all-files`, mypy included, and
+expect it to pass.** Verified green during Phase 7.
+
+Historical note, since the workaround it prompted outlived the problem. Immediately after the
+baseline merge the **mypy** hook failed with ~140 errors across 42 upstream-owned files, because the
+local venv was stale relative to the merged tree. Phases 1–7 were therefore run with
+`SKIP=mypy`, and that habit persisted after it stopped being necessary. The venv has since been
+rebuilt. Note also that the original diagnosis (an `aiosendspin` version skew) was not quite right:
+`aiosendspin` is not a base dependency at all — it appears only in `requirements_all.txt` as a
+provider requirement installed at runtime by the provider loader — and is not present in the venv
+today, yet mypy passes without it.
+
+Do not "fix" upstream code to satisfy mypy. If the hook fails again, suspect the venv first and
+re-run `scripts/setup.sh`.
+
+### Loose ends, deliberately not addressed
+
+- A local `backup/refresh-pre-restructure` ref points at the pre-rebuild tip of the refresh branch.
+  Safe to delete once PR #18 looks right.
+
+### DECIDED: strip working notes before submitting upstream
+
+**The upstream PR must not include the `.cursor/` tree.** Confirmed by the developer after Phase 16.
+
+PR #17 (`docs/arch` → `dev`) currently adds **19 working-note files** that are not architecture
+documentation:
+
+| Path | Count | Contents |
+| --- | --- | --- |
+| `.cursor/plans/*.plan.md` | 9 | Round-1 plan stack |
+| `docs/architecture/plans/*.md` | 10 | Round-1 verification reports and sub-plans |
+
+The `.cursor/` removal is decided. The `docs/architecture/plans/` files are the same category of
+thing and were flagged together originally, but stripping them is still the developer's call —
+confirm before removing.
+
+**Ordering matters.** Do the removal on `docs/arch` **after** PR #18 has merged down into it, not
+before. `docs/arch-refresh` still tracks the round-2 plan stack (20 files) and carries it as review
+context; strip first and the merge just brings everything back.
+
+Mechanism, once #18 has landed on `docs/arch`:
+
+```bash
+git checkout docs/arch
+git rm -r --quiet .cursor
+# and, if confirmed:
+git rm -r --quiet docs/architecture/plans
+git commit -m "docs(architecture): drop working notes from the upstream submission"
+git push origin docs/arch
+```
+
+A `git rm` commit is sufficient — GitHub diffs against the merge base, so a file added and later
+deleted on the same branch nets to nothing in PR #17's diff. No history rewrite needed.
+
+Do **not** solve this by adding `.cursor/` to `.gitignore` in this PR: it would not untrack the
+existing files, and it puts an unrelated repo-config change into a documentation PR.

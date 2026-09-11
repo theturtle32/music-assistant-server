@@ -11,7 +11,7 @@ This document provides an overview of the Music Assistant Streams Controller arc
 - [AudioBuffer](#audiobuffer)
 - [StreamsAudio](#streamsaudio)
 - [Streaming Pipeline](#streaming-pipeline)
-- [Analyze Callbacks](#analyze-callbacks)
+- [Audio Analysis](#audio-analysis)
 - [Smart Fades](#smart-fades)
 - [Audio Overlay](#audio-overlay)
 - [Stream Types](#stream-types)
@@ -27,7 +27,7 @@ The Streams Controller is a core controller that manages all audio streaming to 
 - Flow mode for continuous queue playback
 - Audio overlay: a looping sound effect (e.g. rain) mixed into queue playback
 - Announcement and plugin source streaming
-- Ahead-of-time audio analysis (loudness, beat detection) via buffer callbacks
+- Ahead-of-time audio analysis (loudness, beat detection, key detection) by passive readers on the playback buffer
 
 ## Network Architecture
 
@@ -57,13 +57,24 @@ controllers/streams/
   __init__.py          - Package init, exports StreamsController
   controller.py        - StreamsController: HTTP endpoints, public streaming API
   audio.py             - StreamsAudio: audio processing, stream acquisition, DSP/filters
+  audio_analysis.py    - AudioAnalysisController: distributes buffered PCM to audio analysis providers
   audio_buffer.py      - AudioBuffer: in-memory PCM audio buffering with seek support
+  audio_processing.py  - AudioProcessingManager: runtime processing chain per queue stream
   constants.py         - Shared constants (buffer sizes, config keys)
   ogg_handler.py       - Chained OGG stream stitching for radio
-  smart_fades/         - Smart crossfade detection and mixing
-    analyzer.py        - Beat analysis for smart fade detection
-    fades.py           - Fade curve generation
+  strings.json         - Translatable labels for the controller's config entries
+  icon.svg             - Controller icon (icon_dark.svg for dark mode)
+  smart_fades/         - Smart crossfade planning, rendering and mixing
+    planner/           - Candidate/policy transition planner
+    bands.py           - Band-power signals over the transition window
+    fades.py           - SmartFade ABC plus SmartCrossFade / StandardCrossFade
+    filters.py         - FFmpeg filter toolset
+    helpers.py         - Shared helpers
     mixer.py           - Crossfade mixing logic
+    models.py          - Smart fade data models
+    renderer.py        - Renders a planned transition
+    structure.py       - Bar-level musical structure detection
+    vocal.py           - Vocal-activity contract and collision math
 ```
 
 Supporting modules in `helpers/`:
@@ -117,22 +128,25 @@ Supporting modules in `helpers/`:
 
 `StreamsAudio` is the audio processing sub-controller, initialized as `self.audio` on the StreamsController. It handles all audio-related logic that needs access to the MusicAssistant instance:
 
-- **Stream acquisition**: `get_media_stream`, `get_stream_details`, radio/HTTP/file stream helpers
+- **Stream acquisition**: `get_stream_details`, `get_media_stream`, and `_resolve_media_stream_source` (the per-stream-type resolution that replaced the separate radio/HTTP/file helpers)
 - **Queue streaming**: `get_queue_item_stream`, `get_queue_item_stream_with_smartfade`, `get_queue_flow_stream`
-- **Format selection**: `get_output_format`, `select_pcm_format`, `select_flow_format`
-- **DSP and output plans**: `get_player_output_plan`, `get_player_dsp_details`, `get_stream_dsp_details`
+- **Format selection**: `get_output_format`, `select_pcm_format`, `select_flow_pcm_format`
+- **DSP and output plans**: `get_player_output_plan` (returns the executable filters plus the client-facing `AudioOutputDetails`)
 - **Crossfade management**: `crossfade_allowed`, `clear_crossfade_handover`
-- **Loudness analysis**: `attach_loudness_analyzer` (via buffer callbacks)
 
 `AudioProcessingManager`, initialized as `self.audio_processing` on the
 StreamsController, combines queue processing and per-player output plans into complete
 `AudioProcessingChain` snapshots attached to `StreamDetails`.
 
+`AudioAnalysisController`, initialized as `self.audio_analysis` on the StreamsController,
+owns the analysis side: it starts analysis sessions on the registered audio analysis
+providers, feeds them PCM read from the playback buffer, and persists their results.
+
 ## Streaming Pipeline
 
 ```
 Music Provider -> get_media_stream() -> FFmpeg (decode to raw PCM)
-    -> AudioBuffer (raw PCM storage, analyze callbacks run here)
+    -> AudioBuffer (raw PCM storage; audio analysis reads from here in parallel)
     -> buffer.get_stream() -> Optional: FFmpeg (volume normalization, speed, fade-in)
     -> Optional: Smart Fades (crossfade mixing between tracks)
     -> FFmpeg (encode to output format with player-specific DSP)
@@ -144,22 +158,39 @@ Music Provider -> get_media_stream() -> FFmpeg (decode to raw PCM)
 1. **HTTP endpoints** (`serve_queue_item_stream`, `serve_queue_flow_stream`): Used by players that consume HTTP streams (Chromecast, DLNA, Sonos, etc.)
 2. **Direct PCM** (`get_stream`): Used by player providers that consume raw PCM directly (AirPlay, Sendspin, etc.)
 
-## Analyze Callbacks
+## Audio Analysis
 
-AudioBuffer supports registering chunk callbacks that receive raw PCM data as it flows into the buffer. This enables ahead-of-time analysis without re-streaming:
+Analysis is a **passive observer** of the playback buffer: nothing is pushed to it and the audio path is not modified. The analysis reader keeps its own cursor over the buffer's retained chunks, so a slow analyzer falls behind and loses its session rather than holding up the playback stream.
 
-### Loudness Measurement
-- Attached automatically when a new buffer is created (tracks and radio)
-- Feeds up to 2 minutes of PCM into an FFmpeg `ebur128` process
-- Result stored for future volume normalization (avoids dynamic mode overhead)
+```
+AudioBuffer.get_buffer()
+    -> mass.streams.audio_analysis.start_analysis(buffer, streamdetails)   [fire-and-forget task]
+        -> provider.start_analysis() on every available audio analysis provider
+        -> AudioAnalysisController._buffer_reader_worker()
+            -> buffer.read_chunk_for_analysis(cursor)     [1-second chunks, non-mutating]
+            -> provider.process_pcm_chunk() fanned out to all accepted providers
+            -> provider.finalize() at clean EOF, provider.cancel() otherwise
+```
 
-### Smart Fades Beat Analysis
-- Attached automatically for music tracks (MediaType.TRACK only, not podcasts/audiobooks)
-- Collects first 45 seconds (intro) and last 45 seconds (outro) of audio
-- Triggers librosa beat detection in a background thread
-- Results cached for crossfade timing decisions
+- A session is only started for a **freshly created** buffer at seek position 0, and never for `AUDIO_SOURCE` or `SOUND_EFFECT` media
+- Providers **decline** a session when the track already has analysis at the provider's current `analysis_version`, or when the track exceeds the provider's `max_analysis_duration`; a session with no accepting provider is never started
+- The buffer's only hook is `register_cancel_callback()`, used to drop the session when the buffer is torn down (track skipped, buffer cleaned up)
+- If the reader falls a full window behind and the chunk it needs has already been evicted, the session is dropped rather than allowed to slow the producer
+- A stream that ends short of 90% of the expected duration is discarded instead of finalized, so a died-mid-track source can't persist truncated analysis
+- At most 2 realtime sessions run per queue (the playing track and its preloaded successor); a provider that exceeds the per-chunk hang guard is evicted from the session
 
-Both analyzers check for existing measurements before starting, avoiding redundant work.
+The same provider interface is reused by the nightly **background scan**, which streams local files through FFmpeg for tracks that have no (current) analysis yet.
+
+### Analysis Providers
+
+| Provider | Produces | Notes |
+|----------|----------|-------|
+| `loudness_analysis` | EBU R128 integrated loudness | Feeds PCM into an FFmpeg `ebur128` process, capped at 600 seconds of audio. Result is stored so future playback can use measurement-based normalization instead of dynamic mode |
+| `smart_fades` | Beats, downbeats, musical key, RMS energy, spectral centroid, vocal activity | Beat This! neural beat tracker plus S-KEY and FireRed AED; see the [Smart Fades provider README](../../providers/smart_fades/README.md) |
+| `sonic_analysis` | librosa scalars and CLAP embeddings | Describes how a track sounds, powering similarity and mood-based features |
+| `acoustid_lookup` | MusicBrainz recording ID and ISRC | Computes a Chromaprint fingerprint and resolves it via AcoustID; produces no signal analysis of its own |
+
+Results are persisted by `AudioAnalysisController` and read back via `get_audio_analysis()`, so a track is analyzed once and reused on later playback.
 
 ## Smart Fades
 
@@ -195,7 +226,8 @@ audio stream:
 | Queue tracks | Yes (SEEKABLE) | Regular track playback with full buffering |
 | Radio streams | Yes (ROLLING) | Short rolling buffer, non-seekable |
 | Announcements | Yes (SEEKABLE) | Short one-off audio (TTS), rendered once and shared by all consumers |
-| Plugin sources | No | Real-time audio (microphone, aux), streamed directly |
+| `AUDIO_SOURCE` items | No | Real-time audio from a plugin provider (Spotify Connect, an AirPlay/AriaCast/VBAN receiver), streamed directly. Queue-item sources are served from `/single/`; a source attached to a player is served from `/source/`. The old `PluginSource` model and its dedicated endpoint are gone |
+| Sound effects | No | Overlay sources, mixed in as an extra FFmpeg input |
 
 ## Configuration
 
@@ -206,4 +238,12 @@ Key configuration entries (in streams controller config):
 | `buffer_size` | String | Memory-dependent (`maximum` >=8GB, `balanced` >=4GB, `minimal` <4GB) | Audio buffer size preset |
 | `volume_normalization_radio` | String | `fallback_dynamic` | Normalization mode for radio |
 | `volume_normalization_tracks` | String | `fallback_dynamic` | Normalization mode for tracks |
+| `volume_normalization_fixed_gain_radio` | Float | `-6` | Fixed/fallback gain (dB) for radio |
+| `volume_normalization_fixed_gain_tracks` | Float | `-6` | Fixed/fallback gain (dB) for tracks |
+| `volume_normalization_target` | Integer | `-14` | Target loudness in LUFS (advanced) |
 | `allow_crossfade_same_album` | Boolean | `false` | Whether to crossfade consecutive album tracks |
+| `publish_ip` | String | `auto` | IP address communicated to players in stream URLs (advanced) |
+| `bind_port` | Integer | `8097` | Port the streams webserver binds to (advanced) |
+| `bind_ip` | String | `0.0.0.0` | Interface the streams webserver binds to (advanced) |
+| `smart_fades_log_level` | String | `GLOBAL` | Log level for the Smart Fades mixer and analyzer (advanced) |
+| `background_scan_concurrency` | Integer | `2` (`1` below 4 cores) | Tracks analyzed concurrently during the nightly background scan |

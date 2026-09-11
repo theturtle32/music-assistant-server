@@ -2,6 +2,8 @@
 
 The webserver is the primary interface between Music Assistant and the outside world. It serves the Vue.js frontend, exposes a JSON-RPC command API over both WebSocket and HTTP, manages authentication and user sessions, and provides remote access via WebRTC. The `WebserverController` (on port 8095 by default) handles all of this through a single `aiohttp` application, while the streams controller runs a separate HTTP server on port 8097 for audio delivery (see [10-streaming-pipeline.md](10-streaming-pipeline.md)).
 
+This document covers the transport: routes, the command registry and dispatch, the WebSocket lifecycle, remote access, and static serving. The authorization model those paths enforce — scopes, roles, tokens, impersonation, guest access — is documented separately in [19-authentication.md](19-authentication.md).
+
 ---
 
 ## Architecture Overview
@@ -9,13 +11,13 @@ The webserver is the primary interface between Music Assistant and the outside w
 ```mermaid
 graph TB
     subgraph "Port 8095 — WebserverController"
-        Frontend["Vue.js PWA<br/>(static files)"]
+        Frontend["Vue.js PWA<br/>(per-file + /assets)"]
         WS["/ws — WebSocket API"]
         HTTP["/api — HTTP JSON-RPC"]
-        Auth["/auth/* — Authentication"]
-        ImgProxy["/imageproxy"]
+        Auth["/auth/* + /login + /setup"]
         APIDocs["/api-docs — Swagger/OpenAPI"]
         Sendspin["/sendspin — Sendspin Proxy"]
+        Dynamic["dynamic routes<br/>/imageproxy/{id}, /mcp/v1/*"]
     end
 
     subgraph "Port 8094 — Ingress (HA add-on only)"
@@ -58,45 +60,84 @@ graph TB
 | `CONF_BIND_PORT` | `8095` | Main webserver port |
 | `CONF_BIND_IP` | `0.0.0.0` | Bind address |
 | `CONF_BASE_URL` | Auto-detected | Public URL for external references |
+| `CONF_SERVER_NAME` | Derived | Friendly name for this server (#6031); a change refreshes the mDNS record — see [13-discovery.md](13-discovery.md) |
+| `CONF_EXTERNAL_URL` | Unset | Explicitly configured external URL, trailing slash stripped (#5284, #5299) |
 | Ingress port | `8094` | HA internal network only (`172.30.32.x`) |
+
+**`internal_base_url` is not `base_url`.** It is the address at which *this host* can reach its own API, derived from what the webserver actually binds to rather than from what it advertises. The advertised address is not necessarily dialable locally: a configured `base_url` would route out through DNS and a reverse proxy only to come back in, and a published IP need not exist on this host at all in a container or NAT setup. Remote-access WebSocket bridging uses `internal_base_url` for exactly that reason.
 
 ### Route Map
 
-The controller registers routes during `setup()`:
+`setup()` builds one `routes` list and hands it to `Webserver.setup(static_routes=...)`.
 
 | Method | Path | Handler | Purpose |
 |---|---|---|---|
 | GET | `/` | `_handle_index` | Frontend with onboarding guard |
 | HEAD | `/` | `_handle_index` | Health check |
-| GET | `/{filename}` | `serve_static` | Frontend static files |
+| GET | `/<each frontend file>` | `serve_static` | Frontend static files — see below |
+| GET | `/logo.png` | `serve_static` | MA logo from the resources dir |
+| GET | `/resources/common.css` | `serve_static` | Shared CSS for the server-rendered HTML pages |
+| GET | `/info` | `_handle_server_info` | Server info |
+| OPTIONS | `/info` | `_handle_cors_preflight` | CORS preflight |
 | GET | `/ws` | `_handle_ws_client` | WebSocket API |
 | POST | `/api` | `_handle_jsonrpc_api_command` | HTTP JSON-RPC API |
-| GET | `/imageproxy` | `mass.metadata.handle_imageproxy` | Image proxy |
-| GET | `/preview` | `serve_preview_stream` | Audio preview (AAC) |
-| GET | `/info` | `_handle_server_info` | Server info (CORS enabled) |
+| GET | `/preview` | `serve_preview_stream` | Audio preview (AAC), addressed by a short-lived `?token=` — see below |
 | GET | `/login` | `_handle_login_page` | Login page |
 | POST | `/auth/login` | `_handle_auth_login` | Login action |
+| OPTIONS | `/auth/login` | `_handle_cors_preflight` | CORS preflight |
+| POST | `/auth/logout` | `_handle_auth_logout` | Revoke the presented bearer token |
 | GET | `/auth/me` | `_handle_auth_me` | Current user info |
-| GET | `/auth/providers` | `_handle_auth_providers` | Available auth providers |
+| PATCH | `/auth/me` | `_handle_auth_me_update` | Update own username / display name / avatar |
+| GET | `/auth/providers` | `_handle_auth_providers` | Available login providers |
 | GET | `/auth/authorize` | `_handle_auth_authorize` | OAuth initiation |
 | GET | `/auth/callback` | `_handle_auth_callback` | OAuth callback |
-| GET | `/setup` | `_handle_setup_page` | First-time admin setup |
-| POST | `/setup` | `_handle_setup` | Create first admin user |
-| GET | `/api-docs` | `_handle_api_intro` | API documentation |
+| GET | `/setup` | `_handle_setup_page` | First-time admin setup page |
+| POST | `/setup` | `_handle_setup` | Create the first admin user |
+| GET | `/api-docs`, `/api-docs/` | `_handle_api_intro` | API documentation index |
 | GET | `/api-docs/openapi.json` | `_handle_openapi_spec` | OpenAPI 3.0 spec |
-| GET | `/api-docs/swagger` | `_handle_swagger_ui` | Swagger UI |
-| GET | `/api-docs/commands` | `_handle_commands_reference` | Commands reference page |
+| GET | `/api-docs/swagger`, `/api-docs/swagger/` | `_handle_swagger_ui` | Swagger UI |
+| GET | `/api-docs/commands`, `/api-docs/commands/` | `_handle_commands_reference` | Commands reference page |
 | GET | `/api-docs/commands.json` | `_handle_commands_json` | Commands JSON data |
-| GET | `/api-docs/schemas` | `_handle_schemas_reference` | Schemas reference page |
+| GET | `/api-docs/schemas`, `/api-docs/schemas/` | `_handle_schemas_reference` | Schemas reference page |
 | GET | `/api-docs/schemas.json` | `_handle_schemas_json` | Schemas JSON data |
 | GET | `/sendspin` | `handle_sendspin_proxy` | Sendspin WebSocket proxy |
+
+Plus one static-content mount: `/assets` → the frontend's `assets` subdirectory.
+
+**Frontend files are registered individually, not through a catch-all.** `setup()` walks `locate_frontend()` and appends one explicit `GET /{filename}` route per file found (skipping `.py`), each bound to `serve_static` with a `partial`. There is no `GET /{filename}` wildcard, so a request for a path the frontend does not ship falls through to the dynamic-route catch-all rather than being answered with a static file.
+
+**`/imageproxy` is not registered here.** Images are addressed by opaque id (#3960, #4544), and `MetaDataController.post_setup()` registers the canonical `/imageproxy/{image_id}?size=&fmt=` form as a **dynamic** route, on *both* the webserver and the streams controller, and unregisters it on teardown. See [14-metadata.md](14-metadata.md#image-proxy-system).
+
+**CORS** is deliberately narrow: only `/info` and `/auth/login` answer `OPTIONS`, via `_handle_cors_preflight`, which returns `Access-Control-Allow-Origin: *`, allows `GET, POST, OPTIONS` and the `Content-Type`/`Authorization` headers, and caches the preflight for 24 hours. `_handle_auth_login` repeats those headers on its own responses. Nothing else is cross-origin accessible.
+
+**`/preview` is token-addressed** (#5821): `create_preview_url(provider, item_id)` mints an opaque `secrets.token_urlsafe(16)` and returns `/preview?token=…`, with an unknown or expired token answered as **404**. It takes no `provider` / `item_id` query parameters. Three details follow from what a preview URL is actually for:
+
+- The path is **relative on purpose**. A client reaches this server through whatever address its own setup uses — HA ingress, a reverse proxy, the remote connection — and the advertised `base_url` is not necessarily any of them.
+- `PREVIEW_TOKEN_TTL` is **60 seconds** and the token is *not* single-use: it only has to survive the hop from the API response to the audio element that plays it, but players routinely re-request a media URL they have already opened.
+- `MAX_PREVIEW_TOKENS` caps the store at 500. `LIBRARY_READ` is a guest scope, so minting is reachable by every signed-in client; expired tokens are swept during minting (the only regular traffic on the store), and if all 500 are still live the oldest is dropped to make room.
+
+### Dynamic Routes
+
+The webserver is constructed with `Webserver(self.logger, enable_dynamic_routes=True)`, which installs a catch-all handler and exposes a runtime registration API re-exported on the controller:
+
+```python
+unregister = mass.webserver.register_dynamic_route("/imageproxy/*", handler)   # method defaults to "*"
+mass.webserver.unregister_dynamic_route("/imageproxy/*")
+```
+
+Routes are keyed `"{method}.{path}"`; registering a duplicate key raises. `_handle_catch_all` resolves in a fixed order — exact `"{METHOD}.{path}"`, then exact `"*.{path}"`, then any registered key ending in `/*` matched as a prefix. Registration returns an unregister callable, so a component that comes and goes can clean up after itself.
+
+This is what lets subsystems outside the webserver own HTTP paths without the controller knowing about them: the metadata controller claims `/imageproxy/*`, and the MCP server plugin claims `/mcp/v1/*` plus its well-known and Connect Wizard routes (see [18-ai-and-mcp.md](18-ai-and-mcp.md#mounting-the-asgi-bridge)).
 
 ### Onboarding Guard
 
 The index handler (`_handle_index`) implements first-time setup logic:
-- If no users exist and request is from ingress: checks HA user role — non-admins get an error page
-- If no users exist and not ingress: redirects to `/setup`
-- Otherwise: serves the Vue.js frontend normally
+
+- **Ingress, and setup is incomplete** (no users *or* `onboard_done` is false): resolve the HA user's role via `get_ha_user_role()` and render an error page for anyone who is not an HA administrator. An HA admin is allowed through — their account is auto-created and the frontend takes over the onboarding wizard.
+- **Not ingress, and no users**: 302 redirect to `setup`.
+- **Otherwise**: serve the frontend's `index.html`.
+
+Note that the ingress guard also fires when users exist but onboarding is unfinished, so a non-admin household member cannot land in a half-configured instance.
 
 ### SSL/TLS Support
 
@@ -110,22 +151,41 @@ The command system is the backbone of the MA API. Every controller method decora
 
 ### The `@api_command` Decorator
 
-Defined in `helpers/api.py`:
+Defined in `helpers/api.py`. Authorization is **scope-based** (#4613). There is no `required_role` parameter anywhere in the Python code:
 
 ```python
-@api_command("players/all", authenticated=True, required_role=None)
-def get_all_players(self) -> list[Player]:
+@api_command(
+    "players/all",
+    authenticated=True,
+    required_scope=Scope.PLAYERS_READ,
+    allow_impersonation=False,
+    alias=False,
+)
+def get_all_players(self) -> list[PlayerState]:
     ...
 ```
 
-The decorator sets three attributes on the function:
-- `api_cmd` — the command path string (e.g., `"players/all"`)
-- `api_authenticated` — whether authentication is required (default: `True`)
-- `api_required_role` — required role (`"admin"`, `"user"`, or `None`)
+The decorator sets five attributes on the function:
+
+| Attribute | Purpose |
+|---|---|
+| `api_cmd` | The command path string (e.g. `"players/all"`) |
+| `api_authenticated` | Whether authentication is required (default `True`) |
+| `api_required_scope` | `Scope \| None` — `None` means any authenticated user |
+| `api_allow_impersonation` | Whether the command accepts an injected `user` argument |
+| `api_alias` | Whether this is a backward-compatible alias, functional but hidden from the docs |
+
+See [19-authentication.md](19-authentication.md#per-command-enforcement) for the scope model and [19-authentication.md](19-authentication.md#impersonation) for what `allow_impersonation` implies.
 
 ### `APICommandHandler` Dataclass
 
-During initialization, `MusicAssistant._register_api_commands()` scans a fixed list of class instances — `self` (MusicAssistant), `config`, `metadata`, `tasks`, `music`, `players`, `player_queues`, `webserver`, and `webserver.auth` — for methods with `api_cmd` attributes. Each match creates an `APICommandHandler` stored in `mass.command_handlers: dict[str, APICommandHandler]`. Additional commands (e.g., party mode, genre APIs) are registered dynamically at runtime via `mass.register_api_command()`:
+During startup, `MusicAssistant._register_api_commands()` scans a fixed list of instances for methods carrying `api_cmd`:
+
+`self` (MusicAssistant), `config`, `metadata`, `tasks`, `music`, `players`, `player_queues`, `translations`, `webserver`, `webserver.auth`, `streams.audio_analysis`, `diagnostics`, `dashboard`.
+
+The scan skips dunder names and — importantly — **properties**, checked via `getattr(type(cls), attr_name, None)`, so registration never triggers a lazy initializer as a side effect (the `http_session` property would otherwise build an aiohttp connector during startup). Attributes that raise `AttributeError` or `RuntimeError` while the instance is still initializing are skipped too.
+
+Each match becomes an `APICommandHandler` in `mass.command_handlers: dict[str, APICommandHandler]`. Anything not on that list registers itself at runtime through `mass.register_api_command(...)`, which returns an unregister callable and raises on a duplicate command name — this is how plugin providers (`party/*`, `music_quiz/*`, `ai_radio/*`, `profiler/report`) and the remote-access manager (`remote_access/*`) contribute commands.
 
 ```python
 @dataclass
@@ -135,11 +195,15 @@ class APICommandHandler:
     type_hints: dict[str, Any]
     target: Callable[...]
     authenticated: bool = True
-    required_role: str | None = None
-    alias: bool = False
+    required_scope: Scope | None = None      # None means any authenticated user
+    allow_impersonation: bool = False        # command accepts an injected 'user' argument
+    alias: bool = False                      # hidden from API docs, still callable
 ```
 
-The `parse` classmethod resolves forward references, TypeVars, and type aliases for accurate parameter validation and API documentation generation.
+The `parse` classmethod resolves forward references, TypeVars, and type aliases for accurate parameter validation and API documentation generation. Two of its behaviours are load-bearing:
+
+- **Forward refs declared under `TYPE_CHECKING` are resolved anyway.** Controllers routinely type-hint models imported only for type checking, so a naive `get_type_hints()` would raise `NameError` at registration. `_get_type_hints_for_api_command` catches the `NameError`, extracts the missing symbol, searches the `music_assistant_models` package for it, injects it into the globals, and retries — up to 32 times.
+- **A command cannot both allow impersonation and take its own `user`/`username` parameter.** Since the dispatch pops that argument before parsing, the collision would silently swallow the handler's own parameter, so `parse` raises `RuntimeError` at startup instead.
 
 ### `parse_arguments`
 
@@ -162,42 +226,78 @@ sequenceDiagram
     Client->>WS: CommandMessage {command, args, message_id}
     WS->>Registry: Look up command path
     Registry-->>WS: APICommandHandler
-    WS->>WS: Check authentication & role
+    WS->>WS: authenticated or required_scope? → resolve user
+    WS->>WS: has_scope(user, handler.required_scope)
+    WS->>WS: set current_user / token / client_id context vars
+    WS->>WS: allow_impersonation? → resolve_command_impersonation(args)
     WS->>WS: parse_arguments(handler.signature, args)
     WS->>Handler: handler.target(**parsed_args)
     Handler-->>WS: result
     WS-->>Client: SuccessResultMessage {message_id, result}
 ```
 
-Both WebSocket and HTTP endpoints use the same dispatch path — they differ only in transport and authentication flow.
+Both transports run the same sequence, and both gate on `handler.authenticated or handler.required_scope` — declaring a scope implies authentication. They differ in three ways:
+
+| | WebSocket | HTTP |
+|---|---|---|
+| Identity source | The connection's stored user, set once by the `auth` command or ingress headers | Re-resolved per request from the `Authorization: Bearer` header or ingress headers |
+| Enforcement site | `WebsocketClientHandler._handle_command` | `WebserverController._authenticate_api_command` |
+| Failure shape | `ErrorResultMessage` with an error code and translation key | HTTP 401 (with `WWW-Authenticate`) or 403 |
+
+The scope check happens *after* the context vars are set, so a handler that needs a finer-grained decision can read `get_current_user()` and call `has_scope` itself.
 
 ---
 
 ## WebSocket API (`/ws`)
 
-`WebsocketClientHandler` (`websocket_client.py`) manages a single WebSocket connection with 30-second heartbeats.
+`WebsocketClientHandler` (`websocket_client.py`) manages a single WebSocket connection. The socket is created with `heartbeat=25`, so aiohttp pings every 25 seconds. Each connection gets a `client_id` (`uuid4().hex`), which is exposed to handlers through the `current_client_id` context var and is what the dashboard controller uses to tie a registration to a connection.
+
+On connect, before any authentication, the handler sends the server info message. If no users exist and the connection is not ingress, it sends a `setup_required` error and closes.
+
+### Special pre-dispatch commands
+
+Two commands are handled inside `_handle_command` before the registry is consulted, because they mutate connection state rather than invoking a controller:
+
+- **`auth`** — validates the token and establishes the connection's identity.
+- **`translations/set_locale`** — sets the connection's UI locale and warms it up. A locale can also be supplied as an argument to `auth`, which avoids a second round trip.
+
+The locale matters beyond convenience: it is bound into `TRANSLATION_RESOLVER` for every outgoing message, so error details and translatable model fields are localized per connection at serialization time. See [21-localization.md](21-localization.md).
 
 ### Authentication Flow
 
-**Regular connections**: The first meaningful command must be `"auth"` with a token:
+**Regular connections**: the first meaningful command must be `auth` with a token (`access_token` is accepted as a legacy alias):
 
 ```json
-{"command": "auth", "args": {"token": "eyJhbG..."}}
+{"command": "auth", "args": {"token": "eyJhbG...", "locale": "nl"}}
 ```
 
-The token is validated via `authenticate_with_token()`. Home Assistant system users are blocked on non-ingress connections.
+The token is validated via `authenticate_with_token()`. The Home Assistant system user is rejected on non-ingress connections. On success the handler stores the user, the raw token, and the token id (for revocation-driven disconnect), then subscribes to events and registers with the controller for tracking.
 
-**Ingress connections**: Auto-authenticated via HTTP headers (`X-Remote-User-ID`, `X-Remote-User-Name`, `X-Remote-User-Display-Name`). The handler creates or updates the user account automatically, using HA as the source of truth for display name and avatar.
+**Ingress connections**: auto-authenticated from `X-Remote-User-ID` / `X-Remote-User-Name` / `X-Remote-User-Display-Name`, creating or linking the account as needed, and **subscribed to events immediately** — before any command arrives. A regular connection only subscribes after a successful `auth`. See [19-authentication.md](19-authentication.md#ingress-auto-provisioning).
+
+An ingress connection *without* user headers is left unauthenticated on purpose: that is how the HA integration itself connects, using a token over the internal network.
 
 ### Event Subscription
 
-After authentication, the client automatically subscribes to all `MassEvent` broadcasts. Events are filtered based on the user's `player_filter` — if set, only events for allowed player IDs are forwarded. Special handling for `TASKS_UPDATED` events: the controller calls `list_tasks_for_user(user)` to filter task visibility.
+Once subscribed, the connection receives every `MassEvent`, with three filters applied in the callback:
 
-Events are serialized inline (not in an executor) and sent via `_send_message_sync` for minimal latency.
+**`player_filter`** — when the user has one, events of type `PLAYER_ADDED`, `PLAYER_REMOVED`, `PLAYER_UPDATED`, `PLAYER_SLEEP_TIMER_UPDATED`, `QUEUE_ADDED`, `QUEUE_ITEMS_UPDATED`, `QUEUE_TIME_UPDATED`, and `QUEUE_UPDATED` are dropped unless their `object_id` is in the filter — or matches the connection's own Sendspin player id, so a restricted guest still gets events for the player they are listening on.
+
+**`SETUP_FLOW_UPDATED`** — filtered by scope, not by player. Setup-flow steps carry prefilled values, OAuth URLs, and the `flow_id` that guards the unauthenticated callback route, so only a user who could actually interact with the flow may receive them. The required scope comes from `mass.config.get_setup_flow_required_scope(flow_id)`. When that returns `None` — the flow was already popped, which happens when a terminal step publishes just after the registry pop — the handler falls back to requiring **both** `CONFIG_PROVIDERS_WRITE` and `CONFIG_PLAYERS_WRITE`, because the flow's kind is no longer knowable. See [02-configuration.md](02-configuration.md#setup-flows).
+
+**`TASKS_UPDATED`** — not forwarded verbatim. The handler re-derives the payload per connection via `mass.tasks.list_tasks_for_user(user)` and sends a rebuilt event, so each user sees only their own tasks.
+
+Note that **`provider_filter` is not applied at the event layer** — only `player_filter` is. `provider_filter` narrows API results, not the event stream.
+
+Events are serialized inline via `_send_message_sync` (no executor) since they are small and latency-sensitive.
 
 ### Command Execution
 
-Commands from the client are dispatched as independent tasks (not blocking the message loop). For async generators (e.g., large result sets), the handler collects items in batches of 500 and sends partial `SuccessResultMessage` responses for each batch.
+Commands are dispatched as independent tasks so a slow handler never blocks the receive loop. For async generators — large library listings — the handler accumulates items and flushes a partial `SuccessResultMessage` every 500 items, then sends the remainder as the final message.
+
+Response serialization runs in a thread executor with `contextvars.copy_context()`, which carries `IMAGE_PROXY_ID_RESOLVER` and `TRANSLATION_RESOLVER` into the worker thread. That is what lets nested models inject an opaque `proxy_id` and localize their own fields inside `__post_serialize__` without the serializer needing a reference back to the controllers.
+
+`MusicAssistantError` subclasses are logged at warning level (they are normal API responses, not crashes) and returned as `ErrorResultMessage` carrying the error code plus the translation key, arguments, and owner. Anything else is logged as an error and returned with code `999`.
 
 ### Writer Queue and Backpressure
 
@@ -209,89 +309,45 @@ A bounded `asyncio.Queue(maxsize=512)` separates message production from WebSock
 
 The HTTP endpoint accepts POST requests with a `CommandMessage` body. The dispatch logic mirrors WebSocket:
 
-1. Reject if no users exist (503 "Setup required")
-2. Parse body as `CommandMessage`
-3. Look up handler in `command_handlers`
-4. Authenticate via `Authorization: Bearer <token>` header
-5. `parse_arguments` → execute → return raw JSON result via `web.json_response(result)` (no `SuccessResultMessage` envelope — that wrapper is WebSocket-only)
+1. Reject if no users exist (503 "Setup required"), or if there is no body (400)
+2. Parse body as `CommandMessage` — a missing `message_id` is tolerated and defaulted to `"unknown"`, since HTTP callers have no use for correlation ids
+3. Look up handler in `command_handlers` (400 on an unknown command)
+4. `_authenticate_api_command` — resolve the user from the `Authorization: Bearer` header or ingress headers, set the context vars, check `required_scope`
+5. Resolve impersonation if the command allows it, `parse_arguments`, execute
+6. Return the raw JSON result — **no `SuccessResultMessage` envelope**, that wrapper is WebSocket-only
 
-For async generators, results are collected into a list before returning.
+For async generators the items are collected into a list before returning. Errors map to status codes: `InsufficientPermissions` → 403, `InvalidDataError` → 400, anything else → 500 with a generic "Internal server error" body (the detail goes to the log, not the response).
+
+The response locale comes from the request headers rather than connection state, since HTTP has no session: `_locale_from_request` reads the highest-priority tag from `Accept-Language` (dropping any `q=` factor, returning `None` when the header is absent), the catalogue is warmed, and `_localized_json_response` binds both `IMAGE_PROXY_ID_RESOLVER` and `TRANSLATION_RESOLVER` for the duration of serialization.
 
 ---
 
-## Authentication System
+## Authentication and Authorization (transport view)
 
-`AuthenticationManager` (`auth.py`) manages users, tokens, and login providers with its own SQLite database (`auth.db`).
+`AuthenticationManager` (`auth.py`) owns users, tokens, join codes, and login providers, backed by its own SQLite database (`auth.db`, five tables at schema version 5). The full model — the `Scope` enum, `ROLE_SCOPES`, the four built-in roles, impersonation, the three token classes and their expiry rules, join codes, guest access, and both OAuth flows — is documented in [19-authentication.md](19-authentication.md). What follows is only what the transport layer itself does.
 
-### User Model
+### Where authentication happens
 
-| Field | Type | Notes |
-|---|---|---|
-| `user_id` | `str` | `secrets.token_urlsafe(32)` |
-| `username` | `str` | Case-insensitive, stored lowercase |
-| `role` | `UserRole` | `ADMIN`, `USER`, or `GUEST` |
-| `enabled` | `bool` | Disabled users cannot authenticate |
-| `display_name` | `str \| None` | Optional display name |
-| `avatar_url` | `str \| None` | Profile image |
-| `preferences` | `dict` | User preferences JSON |
-| `player_filter` | `list` | Restrict visible players |
-| `provider_filter` | `list` | Restrict visible providers |
-
-### Token System
-
-Two token types, both JWT-based (with legacy SHA-256 hash fallback for backward compatibility):
-
-| Type | Expiry | Auto-Renewal | Use Case |
-|---|---|---|---|
-| Short-lived | 30 days | Sliding window — extends 30 days on each use | Browser sessions, mobile apps |
-| Long-lived | ~10 years (3650 days) | No | API integrations, automation |
-
-Tokens are stored as SHA-256 hashes in the database. The database expiration is the source of truth (not the JWT `exp` claim), allowing server-side revocation.
-
-### Login Providers
-
-**`BuiltinLoginProvider`**: Username/password authentication. Passwords are hashed with `hashlib.pbkdf2_hmac("sha256", ..., iterations=100000)` using `{user_id}:{server_id}` as the salt. A `LoginRateLimiter` enforces progressive delays after failed attempts:
-
-| Failed Attempts | Delay |
+| Path | Mechanism |
 |---|---|
-| 1-2 | None |
-| 3-5 | 30 seconds |
-| 6-9 | 60 seconds |
-| 10-14 | 120 seconds |
-| 15+ | 300 seconds |
+| `/ws` | The `auth` command (or ingress headers) once per connection; the user is then cached on the handler |
+| `POST /api` | Per request, in `_authenticate_api_command` → `get_authenticated_user` |
+| `/sendspin` | Ingress headers, or an `{"type": "auth", "token": ...}` first message; the auth message also carries the `client_id` that binds the socket to a Sendspin player |
+| Other HTTP routes | **Handler-local** — each route that needs a user calls `get_authenticated_user` (or equivalent) itself. There is no app-wide aiohttp middleware |
 
-**`HomeAssistantOAuthProvider`**: OAuth2 flow when the HA integration is configured. Uses HA's external URL for the authorization endpoint. On callback, exchanges the code for a token, retrieves the HA user ID, and creates or links an MA user account. Supports an `allow_self_registration` setting to control whether new HA users can create MA accounts.
+`helpers/auth_middleware.py` is a live module *despite its name*: it owns `ROLE_SCOPES`, `has_scope`, the auth context vars, ingress detection, and `get_authenticated_user`. What it no longer owns is any middleware. The `auth_middleware` function and the `require_authentication` helper were **deleted** in #5211 — they had been carried as dead surface, never registered on `web.Application`, and are now gone rather than merely unused. `helpers/webserver.py` still builds the app with no `middlewares` argument at all.
 
-### Join Codes
+There is therefore no app-wide HTTP authentication layer. Authentication is **handler-local**: each route that needs an identity calls `get_authenticated_user(request)` itself, and the JSON-RPC surface enforces scopes per command through `@api_command`. A new HTTP route added without such a call is unauthenticated by construction, which is worth knowing before adding one.
 
-6-character codes from the set `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no I/O/0/1 to avoid ambiguity). Used by the Party plugin for QR/link-based guest login. Features:
-- Configurable expiry (default 8 hours)
-- Maximum use count
-- Exchangeable for a short-lived token via `auth/join_code/exchange`
-- Automatic cleanup of expired/exhausted codes (daily)
+### Ingress and socket-level verification
 
-### Context Variables
+Under the HA add-on a second `TCPSite` is started on the internal `172.30.32.x` address at port **8094**, sharing the same aiohttp app, and its `(host, port)` pair is stored in `app["ingress_site"]`.
 
-Request-scoped authentication state is propagated through the async call chain via `contextvars.ContextVar`:
-- `get_current_user()` / `set_current_user()` — the authenticated user
-- `get_current_token()` / `set_current_token()` — the auth token
-- `get_sendspin_player_id()` / `set_sendspin_player_id()` — Sendspin player binding
+`is_request_from_ingress(request)` does **not** trust headers. It reads the actual TCP socket's `sockname` via `request.transport.get_extra_info("sockname")` and compares the bound address and port to the stored ingress site parameters. Only a request that genuinely arrived on the ingress site matches, so the `X-Remote-User-*` headers cannot be spoofed by an external caller hitting port 8095. As a second layer, the Home Assistant system user is rejected on non-ingress connections in both the HTTP and WebSocket paths.
 
-### Ingress Security
+### Token revocation reaches live connections
 
-Ingress detection uses **socket-level verification**, not headers. The `is_request_from_ingress(request)` function checks the actual TCP socket's `sockname` against the ingress site bind address and port — this prevents header spoofing from external requests.
-
-### Auth Database Schema
-
-Five tables in `auth.db` (schema version 5):
-
-| Table | Purpose |
-|---|---|
-| `settings` | Key/value store (schema version, JWT secret) |
-| `users` | User accounts |
-| `user_auth_providers` | Links users to login providers (builtin password hash, HA user ID) |
-| `auth_tokens` | Token records with hash, expiry, last-used tracking |
-| `join_codes` | Short codes with expiry, use count, device name |
+`webserver.register_websocket_client` / `unregister_websocket_client` maintain `self.clients`, which exists so that `disconnect_websockets_for_token(token_id)` can walk live connections and drop any whose token was just revoked. Without that set, a revoked token would keep working until the socket happened to close.
 
 ---
 
@@ -325,14 +381,45 @@ sequenceDiagram
     Gateway-->>Remote: Forward back via data channel
 ```
 
-**Key components**:
+### The Remote ID
 
-- **Remote ID**: Derived from a persistent DTLS certificate, formatted as `MA-XXXX-XXXX`. This ID is stable across restarts, enabling client-side pinning.
-- **Signaling server**: `wss://signaling.music-assistant.io/ws`. The gateway maintains a persistent connection with exponential backoff reconnection (10s → 300s max). A close code of 4000 (`CLOSE_CODE_REPLACED`) means another instance registered with the same remote ID — reconnection stops.
-- **ICE servers**: Default STUN servers from Google and Cloudflare. When HA Cloud is available, TURN servers are retrieved for NAT traversal.
-- **Data channel bridging**: Each WebRTC session gets a local WebSocket connection to `/ws?webrtc_session_id=...`. Messages are forwarded bidirectionally, making remote access transparent to the API layer.
-- **HTTP proxy**: Remote clients can send HTTP requests through the data channel for endpoints that aren't WebSocket-based (e.g., image proxy, audio preview).
-- **Sendspin channel**: A separate data channel labeled `"sendspin"` bridges to the internal Sendspin server for turntable control.
+The Remote ID is **not** formatted `MA-XXXX-XXXX`; that shape appears only in some stale upstream UI copy. It is a **26-character uppercase string** derived deterministically from the instance's persistent WebRTC DTLS certificate, in `helpers/webrtc_certificate.py::_remote_id_from_certificate`:
+
+1. take the SHA-256 fingerprint of the DER certificate (the same digest DTLS advertises, so the ID and the certificate can never disagree)
+2. keep the **first 128 bits**
+3. base32-encode, strip the `=` padding, and substitute `9` for `2`
+
+128 bits at 5 bits per base32 symbol is exactly 26 characters. The `2`→`9` substitution is a custom alphabet choice for readability. `tests/helpers/test_webrtc_certificate.py` pins the whole derivation against a frozen certificate fixture, so any change to the algorithm is a test failure rather than a silent break of every client's saved ID.
+
+The certificate itself is an ECDSA SECP256R1 keypair (the standard WebRTC DTLS curve) valid for 10 years, persisted in the MA storage directory as `webrtc_certificate.pem` and `webrtc_private_key.pem`. The private key is written through `os.open(..., 0o600)` with an explicit `fchmod` **before any key byte is written**, and its permissions are repaired on load — older versions wrote it under the process umask first, so a crash in that window could leave it world-readable, and a valid pair is otherwise never rewritten. A mismatched cert/key pair (a crash between the two writes) is detected on load and regenerated, since it would otherwise fail every DTLS handshake.
+
+Crucially, `get_or_create_remote_id()` derives the ID **without importing the WebRTC library at all**, so `remote_access/info` can report it on an instance where remote access is disabled and the native library was never loaded.
+
+### Other key components
+
+- **WebRTC stack**: **`aiolibdatachannel`** (a binding for libdatachannel), not aiortc — migrated in #4930. It is imported lazily, only when remote access is actually enabled (#4292), so a disabled instance never spins up the native library's thread pool.
+- **Signaling server**: `wss://signaling.music-assistant.io/ws`. The gateway holds a persistent connection with exponential-backoff reconnection, from 10 s up to a 300 s ceiling. Close code 4000 (`CLOSE_CODE_REPLACED`) means another instance registered the same Remote ID — reconnection then stops rather than fighting for the registration.
+- **ICE servers**: there are two public-STUN lists, and which one applies depends on the path. In basic mode `RemoteAccessManager` passes no ICE servers to the gateway, so `WebRTCGateway.DEFAULT_ICE_SERVERS` applies — **four** entries: `stun.home-assistant.io:3478`, `stun.l.google.com:19302`, `stun1.l.google.com:19302`, `stun.cloudflare.com:3478`. When HA Cloud is available its STUN/TURN set is passed in instead, adding relay for restrictive networks, and `get_ice_servers()` is additionally wired in as a per-session callback so TURN credentials stay fresh. That method's own fallback is a shorter three-entry list (no `stun1`), which is only reached if HA Cloud reports available and then yields nothing. `get_ice_servers()` works whether or not remote access is enabled.
+- **Data channel bridging**: each WebRTC session opens a local WebSocket connection to `/ws?webrtc_session_id=...`, so remote access is transparent to the API layer — the same handler, the same auth, the same scope checks.
+- **Message chunking**: libdatachannel caps a data-channel message at 256 KiB, so `ma-api` messages larger than `DATA_CHANNEL_CHUNK_SIZE` (64 KiB) are split and reassembled. The piece size is *preferred*, not fixed: each piece becomes a base64 frame roughly a third larger, and the channel's own negotiated `max_message_size` can size it down further. `DATA_CHANNEL_CHUNK_OVERHEAD` (128 bytes) accounts for the JSON envelope's fixed keys plus the group/sequence/count numbers.
+- **Dedicated channels.** Beyond the client's own API channel, the gateway routes three labelled data channels (#5635, #5643, #5648, #5693, #5626):
+
+| Label | Bridges to |
+|---|---|
+| `http_proxy` | Plain HTTP requests for endpoints that are not WebSocket-based (the image proxy, audio preview). Requires schema ≥ 49 |
+| `live_announcement` | The [live announcement](10-streaming-pipeline.md#live-announcements) inbound WebSocket |
+| `sendspin` | The internal Sendspin server |
+
+- **The HTTP proxy carries raw binary**, so it needs no base64 escaping and its `HTTP_PROXY_BODY_CHUNK_SIZE` (192 KiB) sits close to libdatachannel's cap. It is bounded by `HTTP_PROXY_CONCURRENCY` (6), a `HTTP_PROXY_SEND_TIMEOUT` (10 s) so a client that stops draining cannot park the channel's send lock and a semaphore slot for the session, and a `HTTP_PROXY_FETCH_TIMEOUT` (20 s total) in place of aiohttp's five-minute default. Both budgets sit inside the 30 seconds a client waits before abandoning a proxied request, so the server never works on — or answers — a request nobody is listening for.
+
+### Configuration and scopes
+
+Remote access is a stored core config value (`core/remote_access/enabled`), not a provider. Enabling it schedules a debounced gateway start (`STARTUP_DELAY` = 5 s). Both commands are registered dynamically by the manager and require **`Scope.SYSTEM_MANAGE`** — not a bare admin check:
+
+| Command | Returns / does |
+|---|---|
+| `remote_access/info` | `RemoteAccessInfo`: `enabled`, `running`, `connected`, `remote_id`, `using_ha_cloud`, `signaling_url` |
+| `remote_access/configure` | Toggles `enabled`, starts or stops the gateway, and signals `CORE_STATE_UPDATED` when the value actually changed |
 
 ### Home Assistant Integration
 
@@ -354,13 +441,55 @@ When running as an HA add-on:
 | `/api-docs/commands.json` | Custom JSON | Command reference data for the docs UI |
 | `/api-docs/schemas.json` | Custom JSON | Data model schemas |
 
-The generator converts Python type hints to OpenAPI schemas, parses docstrings (supporting Sphinx, Google, NumPy, and bullet formats), and remaps internal types (e.g., `Player` → `PlayerState` from the models package).
+The generator converts Python type hints to OpenAPI schemas, parses docstrings (supporting Sphinx, Google, NumPy, and bullet formats), and remaps internal types (e.g., `Player` → `PlayerState` from the models package). Commands flagged `alias=True` are skipped in both the OpenAPI and the commands-reference output, and each entry carries a `required_scope` field so a reader can see the permission a command needs without reading the source.
+
+One stale artefact to be aware of: `helpers/resources/commands_reference.html` still renders a `required_role` badge from the JSON payload. That field no longer exists, so the badge never appears — it is dead frontend template code, not a second authorization mechanism.
+
+---
+
+## Command Namespaces Without HTTP Routes
+
+Some subsystems expose an API surface but no HTTP route of their own, so they belong here rather than in a document of their own.
+
+### Dashboard
+
+`DashboardController` (#4887) casts MA dashboards — now-playing screens, Party mode — onto display devices. It has **no HTTP routes at all**: everything is `dashboard/*` commands plus one URL builder.
+
+| Command | Scope | Purpose |
+|---|---|---|
+| `dashboard/register` | *(any authenticated)* | Register the calling client as a dashboard endpoint |
+| `dashboard/unregister` | *(any authenticated)* | Drop a registration and any active session |
+| `dashboard/dashboards` | *(any authenticated)* | List registered endpoints, optionally filtered by dashboard type |
+| `dashboard/sessions` | *(any authenticated)* | List active cast sessions |
+| `dashboard/show` | `USERS_INVITE` | Show a dashboard on a registered endpoint |
+| `dashboard/hide` | `USERS_INVITE` | Hide whatever is showing |
+| `dashboard/get_url` | `USERS_INVITE` **or** session ownership | Resolve a URL for the caller to load itself |
+
+Two things make this WebSocket-specific rather than transport-agnostic:
+
+**Registration requires a `client_id`.** `dashboard/register` and `dashboard/unregister` read `get_current_client_id()` and raise `InvalidCommand` when it is `None` — that is, when called over HTTP. A registration is *owned* by a WebSocket connection, recorded on `_RegisteredDashboard.client_id`, and re-registration by a different owner is rejected. The WebSocket handler calls `mass.dashboard.handle_client_disconnected(client_id)` in its `finally`, so a display that drops off the network takes its registration and session with it instead of lingering as a phantom endpoint.
+
+**`dashboard/get_url` has a dual authorization rule.** A caller with `USERS_INVITE` may resolve any URL; a caller without it may still resolve a URL matching *its own* active session, which is what lets a registered display fetch its own URL without holding an invite scope.
+
+The URL itself embeds a **guest join code**: a `dashboard_viewer` guest account with a 1-hour code (`DASHBOARD_CODE_EXPIRY_HOURS`), built through the shared guest-access helper. Which form is returned depends on reachability — an https `base_url` yields a same-origin URL, otherwise the remote-access portal form `https://app.music-assistant.io/<channel>/?remote_id=…&dashboard=…&path=…` is used, and `ActionUnavailable` is raised when neither is configured (cast receivers require https). `prefer_local=True` bypasses that gate for native LAN apps, which are not bound by the receiver's https requirement.
+
+### Diagnostics
+
+`diagnostics/get` (#4652) returns a full sanitized diagnostics report and requires `Scope.SYSTEM_MANAGE`. The HTTP download endpoint that originally accompanied it was removed in #4709, so the report is command-only. [20-background-tasks.md](20-background-tasks.md) covers what goes into it.
+
+### Provider icons
+
+`providers/icon` (#4907) returns a provider icon variant as a base64 `data:` URI, gated on `Scope.PROVIDERS_READ`. Serving them on demand keeps the manifest payload small.
+
+### MCP
+
+The FastMCP server plugin mounts a Model Context Protocol endpoint at `/mcp/v1` (configurable) as a **dynamic route**, bridging Starlette ASGI to aiohttp, plus a `/.well-known/oauth-protected-resource` route and a Connect Wizard under `<mount>/connect`. It reuses this server's port, auth subsystem, and origin allowlist rather than standing up its own. See [18-ai-and-mcp.md](18-ai-and-mcp.md#the-fastmcp-server--ma-as-the-tool-provider).
 
 ---
 
 ## Sendspin Proxy
 
-`SendspinProxyHandler` provides an authenticated WebSocket proxy between web clients and the internal Sendspin server (port 8927). Authentication follows the same pattern as the main WebSocket — ingress uses headers, regular connections require a token in the first message. Messages are forwarded bidirectionally (both text and binary). The proxy extracts a `client_id` from the auth message to associate the WebSocket client with a specific Sendspin player.
+`SendspinProxyHandler` provides an authenticated WebSocket proxy between web clients and the internal Sendspin server (port 8927). Authentication follows the same pattern as the main WebSocket — ingress uses headers, regular connections must send `{"type": "auth", "token": "..."}` as the first message, and anything else closes the socket with code 4001. Messages are forwarded bidirectionally (both text and binary). The proxy extracts a `client_id` from the auth message to associate the WebSocket client with a specific Sendspin player, which is also what populates the `sendspin_player_id` context var used by the event filter.
 
 ---
 
@@ -368,13 +497,16 @@ The generator converts Python type hints to OpenAPI schemas, parses docstrings (
 
 | File | Purpose |
 |---|---|
-| [`music_assistant/controllers/webserver/controller.py`](../../music_assistant/controllers/webserver/controller.py) | `WebserverController` — routes, lifecycle, frontend serving |
-| [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — users, tokens, join codes, login providers |
-| [`music_assistant/controllers/webserver/websocket_client.py`](../../music_assistant/controllers/webserver/websocket_client.py) | `WebsocketClientHandler` — WebSocket connection management |
-| [`music_assistant/controllers/webserver/api_docs.py`](../../music_assistant/controllers/webserver/api_docs.py) | OpenAPI/Swagger documentation generation |
+| [`music_assistant/controllers/webserver/controller.py`](../../music_assistant/controllers/webserver/controller.py) | `WebserverController` — route list, lifecycle, frontend serving, HTTP dispatch, `_authenticate_api_command`, CORS preflight |
+| [`music_assistant/helpers/webserver.py`](../../music_assistant/helpers/webserver.py) | `Webserver` — the aiohttp app, TCP sites (including ingress), static content, dynamic routes and the catch-all resolver |
+| [`music_assistant/controllers/webserver/websocket_client.py`](../../music_assistant/controllers/webserver/websocket_client.py) | `WebsocketClientHandler` — heartbeat, pre-dispatch commands, scope enforcement, event filtering, writer queue |
+| [`music_assistant/controllers/webserver/api_docs.py`](../../music_assistant/controllers/webserver/api_docs.py) | OpenAPI/Swagger/commands documentation generation |
 | [`music_assistant/controllers/webserver/sendspin_proxy.py`](../../music_assistant/controllers/webserver/sendspin_proxy.py) | Sendspin WebSocket proxy |
-| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context variables, ingress detection, auth middleware |
-| [`music_assistant/controllers/webserver/helpers/auth_providers.py`](../../music_assistant/controllers/webserver/helpers/auth_providers.py) | `BuiltinLoginProvider`, `HomeAssistantOAuthProvider`, rate limiter |
-| [`music_assistant/controllers/webserver/helpers/ssl.py`](../../music_assistant/controllers/webserver/helpers/ssl.py) | SSL certificate management |
-| [`music_assistant/controllers/webserver/remote_access/`](../../music_assistant/controllers/webserver/remote_access/) | `RemoteAccessManager`, `WebRTCGateway` |
-| [`music_assistant/helpers/api.py`](../../music_assistant/helpers/api.py) | `@api_command`, `APICommandHandler`, `parse_arguments` |
+| [`music_assistant/controllers/webserver/auth.py`](../../music_assistant/controllers/webserver/auth.py) | `AuthenticationManager` — see [19-authentication.md](19-authentication.md) |
+| [`music_assistant/controllers/webserver/helpers/auth_middleware.py`](../../music_assistant/controllers/webserver/helpers/auth_middleware.py) | Context vars, `is_request_from_ingress`, `get_authenticated_user`, `has_scope`, `ROLE_SCOPES` — auth *helpers*, no middleware (#5211) |
+| [`music_assistant/controllers/webserver/helpers/ssl.py`](../../music_assistant/controllers/webserver/helpers/ssl.py) | SSL context creation and the `verify_ssl` action |
+| [`music_assistant/controllers/webserver/remote_access/`](../../music_assistant/controllers/webserver/remote_access/) | `RemoteAccessManager`, `WebRTCGateway`, `RemoteAccessInfo` |
+| [`music_assistant/helpers/webrtc_certificate.py`](../../music_assistant/helpers/webrtc_certificate.py) | Persistent DTLS keypair and the Remote ID derivation |
+| [`music_assistant/controllers/dashboard/controller.py`](../../music_assistant/controllers/dashboard/controller.py) | `DashboardController` — the `dashboard/*` namespace and URL resolution |
+| [`music_assistant/helpers/api.py`](../../music_assistant/helpers/api.py) | `@api_command`, `APICommandHandler`, `parse_arguments`, `parse_value` |
+| [`music_assistant/controllers/webserver/README.md`](../../music_assistant/controllers/webserver/README.md) | In-tree companion: component inventory, auth-provider development guide, remote-access testing steps |

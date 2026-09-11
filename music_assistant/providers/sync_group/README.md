@@ -73,7 +73,7 @@ The sync group doesn't directly play audio. Instead, it delegates to a **sync le
 
 ### Sync Leader Selection
 
-The sync leader is selected when the group is powered on (which forms the group). Selection is also re-evaluated when the current leader is removed from the group or becomes unavailable.
+The sync leader is selected when the group is formed, which happens when playback starts (or on power-on for groups that have a power control assigned). Selection is also re-evaluated when the current leader is removed from the group or becomes unavailable.
 
 1. **Keep current leader**: If a leader exists and is still available, keep it
 2. **Prefer session continuity**: When re-selecting after a leader change while playing, prefer a member that the live session already feeds, since only such a member can inherit the session without a teardown
@@ -179,28 +179,40 @@ For detailed information on protocol linking, output protocol selection, and how
 
 ## Group Lifecycle
 
-The group's lifecycle is driven by **power**:
+The group's lifecycle is driven by the **playback session**, not by power:
 
-- `power(True)` **forms** the group: selects a sync leader and syncs all members to it
-- `power(False)` **dissolves** the group: ungroups all members from the leader and clears the sync leader
-- `stop()` only stops the leader — it does **not** dissolve the group; the group remains powered and ready to resume
+- Playback **forms** the group: both `play_media()` and `play()` call `_form_syncgroup()`, which selects a sync leader and syncs all members to it
+- `stop()` **dissolves** the group immediately, releasing the members back to individual control
+- A **natural** transition to IDLE (the queue simply ran out) starts a grace timer and dissolves the group after `IDLE_GRACE_SECONDS` (10 seconds), so an end-of-track gap or a quick "play something else" doesn't tear down the live sync session
+- Removing the sync leader from a playing group schedules a debounced re-form after `REFORM_DEBOUNCE_SECONDS` (2 seconds), so cascaded unjoins coalesce into a single restart
 
-This mirrors how a typical AVR or stereo system behaves: turn it on, it's an active output; turn it off, it's gone.
+While the group is dormant it does **not** capture its members: they remain individually controllable and a command targeting a member is not redirected to the group.
 
-### Powering On
+### Session State
+
+`is_active_session` — not `powered` — is the canonical "this group is holding its members" signal. It is True while a sync leader is set, while the idle grace timer is pending, or while a debounced re-form is pending. The base `Player` model's active-group derivation consults it to decide whether the configured members should report this group as their `active_group`.
+
+### Optional Power Control
+
+`PlayerFeature.POWER` is deliberately **not** advertised by default. Users who want an explicit on/off toggle can assign **Fake power control** to the group; the feature is then advertised and:
+
+- `power(True)` re-applies the configured preset members and pre-forms the group, capturing its members immediately
+- `power(False)` stops any playback and dissolves the group
+- while powered on, `stop()` and the idle grace timer leave the group formed — it stays pinned as active until the user powers it off
+
+### Forming
 
 ```
-1. cmd_power(syncgroup, True)  (also called implicitly by play_media / play)
+1. play_media(media) / play()   (or cmd_power(syncgroup, True) with fake power control)
    │
 2. _form_syncgroup() runs
    │
-   ├─► Ensure static members are included in _attr_group_members
+   ├─► Cancel any pending idle-grace or re-form timer
    ├─► Select sync leader (if not already set)
    ├─► Move sync leader to the front of the member list
+   ├─► If the leader still reports synced_to, wait for it to settle (abort if stuck)
    ├─► If leader is currently playing something else, stop it (and wait for IDLE)
-   └─► cmd_set_members on the leader to sync the remaining members
-   │
-3. _attr_powered = True ; state event emitted
+   └─► _handle_set_members on the leader to sync the remaining members
 ```
 
 ### Starting Playback
@@ -211,7 +223,7 @@ This mirrors how a typical AVR or stereo system behaves: turn it on, it's an act
 2. play_media(media)
    │
    ├─► Optimistically set _attr_current_media / _attr_active_source
-   ├─► _form_syncgroup()            # idempotent - recovers if dissolved-but-powered
+   ├─► _form_syncgroup()            # idempotent - no-op when already formed
    └─► _handle_play_media(sync_leader, media)   # leader actually plays
    │
 3. Leader starts playback, synced members follow
@@ -222,23 +234,23 @@ This mirrors how a typical AVR or stereo system behaves: turn it on, it's an act
 ```
 1. User stops playback on SyncGroupPlayer
    │
-2. stop() forwarded to sync leader (group stays powered & formed)
+2. stop()
+   │
+   ├─► Cancel any pending idle-grace / re-form timer
+   ├─► Forward the stop to the sync leader
+   └─► _dissolve_syncgroup()   # skipped when pinned via fake power control
 ```
 
-### Powering Off
+### Dissolving
 
 ```
-1. cmd_power(syncgroup, False)
+_dissolve_syncgroup()
    │
-2. If currently playing/paused: stop() first
-   │
-3. _dissolve_syncgroup()
-   │
-   ├─► cmd_set_members on leader to remove all sync children (waits for state)
-   ├─► Clear leader's active_output_protocol (when leader is not still playing)
+   ├─► _handle_set_members on leader to remove all sync children (waits for state)
+   ├─► Schedule a clear of the leader's active_output_protocol (deferred until it reports IDLE)
    └─► sync_leader = None
    │
-4. _attr_powered = False ; state event emitted
+state event emitted
 ```
 
 ### State Polling
@@ -251,8 +263,8 @@ When `SET_MEMBERS` is called on a dynamic group:
 
 ### Adding Members
 
-1. Validate the member exists, is available, and is not in the members filter
-2. If there is no sync leader yet (empty / unpowered group): just register the member; sync happens when the group is next formed
+1. Validate the member exists, is available, and is permitted by the configured allowed-members list (`allowed_members`, empty means "any player may join"; preset members always may)
+2. If there is no sync leader yet (empty / dormant group): just register the member; sync happens when the group is next formed
 3. Otherwise check compatibility with the current sync leader's `can_group_with` (which already includes all of the leader's linked output protocols, so e.g. an AirPlay-only player IS valid for a Sonos leader that has AirPlay as a linked protocol)
 4. Incompatible members are **not** registered (avoids stranding orphan entries in the group)
 5. Compatible members are appended to the internal member list and forwarded to `cmd_set_members` on the leader, which handles protocol selection (and possibly switching the leader to a different output protocol so the new member can be grouped via that protocol)
@@ -275,7 +287,7 @@ The SyncGroupPlayer has limited base features but inherits additional capabiliti
 
 ### Base Features
 - `PLAY_MEDIA` - Always supported
-- `POWER` - Always supported (powered state is the canonical "is this group active" signal)
+- `POWER` - Only when the user assigned 'Fake power control' to the group
 
 ### Features from Sync Leader (when active)
 - `ENQUEUE` - Queue next track
@@ -283,6 +295,8 @@ The SyncGroupPlayer has limited base features but inherits additional capabiliti
 - `VOLUME_SET` - Volume control
 - `VOLUME_MUTE` - Mute control
 - `MULTI_DEVICE_DSP` - DSP processing
+
+When there is no sync leader yet, these features are derived from all available (configured) members instead, so controls like volume are advertised while the group is dormant.
 
 ### Dynamic Feature
 - `SET_MEMBERS` - Only if group is configured as dynamic
@@ -299,6 +313,10 @@ Boolean option to allow runtime member changes. When enabled:
 - Group supports `SET_MEMBERS` feature
 - Members can be added/removed via UI or API
 - Group can start with zero members
+
+### Allowed Members
+
+Advanced option (only relevant for dynamic groups) that restricts which players may join at runtime. When left empty, any compatible player may join. Players in the Group Members preset are always allowed.
 
 ## Provider Details
 
@@ -326,15 +344,15 @@ The SyncGroupPlayer reads most state from the sync leader's **raw** attributes (
 
 | Property | Source |
 |----------|--------|
-| `powered` | `_attr_powered` — set by `power()`, the canonical "is this group active" signal |
+| `powered` | `_attr_powered` — `None` unless a power control is assigned, in which case `power()` sets it. Session capture is tracked by `is_active_session`, not by this attribute |
 | `playback_state` | Sync leader's raw `state.playback_state` (or IDLE if no leader) |
 | `elapsed_time` | Sync leader's raw `state.elapsed_time` |
 | `elapsed_time_last_updated` | Sync leader's raw `state.elapsed_time_last_updated` |
 | `current_media` | Sync leader's raw `current_media` (set optimistically in `play_media`) |
 | `active_source` | Sync leader's raw `active_source` (set optimistically in `play_media`) |
 | `group_members` | Sync leader's reported `state.group_members` (preferred) or internal list |
-| `can_group_with` | Aggregated from all current members' `can_group_with` |
-| `supported_features` | Base features + features inherited from the active sync leader |
+| `can_group_with` | Static groups: the configured member list. Dynamic groups: aggregated from all current members' `can_group_with` |
+| `supported_features` | Base features + features inherited from the active sync leader (or from the available members while dormant) |
 
 ## Related Documentation
 

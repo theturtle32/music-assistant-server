@@ -4,19 +4,19 @@ overview: "Refresh docs/architecture/06-grouping.md and docs/architecture/04-pla
 todos:
   - id: preflight
     content: "Pre-flight: switch to Plan mode and write a detailed sub-plan for this stack against current upstream/dev (file paths, code citations, exact wording)"
-    status: pending
+    status: completed
   - id: branch
     content: Cut docs/architecture-syncgroup-update from docs/architecture-controller-update
-    status: pending
+    status: completed
   - id: implement
     content: Apply the doc edits per the pre-flight sub-plan
-    status: pending
+    status: completed
   - id: verify
     content: pre-commit + sweep
-    status: pending
+    status: completed
   - id: commit_pr
     content: Single commit, push, open PR -> docs/architecture-controller-update
-    status: pending
+    status: completed
 isProject: false
 ---
 

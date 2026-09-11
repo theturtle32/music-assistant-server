@@ -50,11 +50,14 @@ and the audio-to-color analyzer (`analyzer.py`).
 
 ```
 hue_entertainment/
-├── __init__.py                Config flow (pairing, settings)
+├── __init__.py                Provider setup entry point
+├── setup_flow.py              Setup flow: bridge pairing (link button → app user + clientkey)
 ├── provider.py                mDNS discovery, lifecycle management
 ├── bridge.py                  Sendspin visualizer client → analyzer → EntertainmentSession
-├── analyzer.py                Bass beat detection, color cycling, effect modes
+├── analyzer.py                Beat-schedule rendering, color cycling, effect modes
 ├── constants.py               MA config keys + Sendspin spectrum request config
+├── strings.json               Translatable labels for config entries and the setup flow
+├── icon.svg                   Provider icon (icon_dark.svg for dark mode)
 └── manifest.json              Experimental plugin manifest (requires hue-entertainment)
 ```
 
@@ -82,9 +85,8 @@ The Hue REST API, DTLS streamer, `EntertainmentSession` and data models
 
 ## Status
 
-Working and tested on Hue Bridge V2 and Hue Bridge Pro. The current implementation provides a solid foundation with four effect modes and bass-driven beat detection. There is room for future improvements:
+Working and tested on Hue Bridge V2 and Hue Bridge Pro. The current implementation provides a solid foundation with four effect modes driven by the server's beat schedule. There is room for future improvements:
 
-- More precise beat detection using the MA audio analyzer controller
 - Genre/mood-aware effects using track metadata
 - Additional effect modes (strobe, rainbow, color wash)
 - Per-light position-aware effects using entertainment area spatial data
@@ -92,6 +94,6 @@ Working and tested on Hue Bridge V2 and Hue Bridge Pro. The current implementati
 
 ## Known Limitations
 
-- Beat detection uses bass energy spikes from the visualizer spectrum data — works well for beat-heavy music, less precise for acoustic/vocal tracks.
+- Beats come from the schedule the Sendspin visualizer pushes, which is derived from the `smart_fades` audio analysis. A track that has not been analyzed yet has no schedule, and the analyzer falls back to the visualizer's onset peaks until one arrives — less precise, and noticeably so on acoustic or vocal material.
 - Entertainment areas are discovered at plugin (re)load — adding a new area in the Hue app requires reloading the plugin.
 - The Hue bridge only allows one entertainment area active at a time.
