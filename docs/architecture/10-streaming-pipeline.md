@@ -98,7 +98,7 @@ self._active_output_streams = 0
 
 `StreamsAudio` in turn instantiates a `SmartFadesMixer` (exposed as the `smart_fades_mixer` property) that reads persisted analysis to drive crossfade execution — the mixer is separate from the analysis algorithm, which lives in the `smart_fades` audio-analysis provider. See [17-smart-fades.md](17-smart-fades.md).
 
-`setup()` calls `self.audio.setup()` and `self._audio_analysis.setup()`, mirrors the log level onto the audio and FFmpeg loggers, configures the dedicated smart-fades logger, validates FFmpeg version (≥ 6), and starts the HTTP server.
+`setup()` calls `self.audio.setup()` and `self._audio_analysis.setup()`, mirrors the log level onto the audio and FFmpeg loggers, configures the dedicated smart-fades logger, validates FFmpeg version (≥ 7), and starts the HTTP server.
 
 ### HTTP Endpoints
 
@@ -167,6 +167,8 @@ Per-player `CONF_HTTP_PROFILE` controls response behavior:
 | Chunked | Not set | Chunked encoding | Most players |
 | No content-length | Not set | Identity | Players that choke on chunked |
 | Forced content-length | Calculated | Identity | Players that require length (some DLNA) |
+
+A forced content-length is *measured* once per encoding and cached for a year, so any encoder setting that moves the encoded size would otherwise leave the cache announcing a body that is no longer produced. `get_output_format_key()` folds `OUTPUT_ENCODING_REVISION` into the cache key for exactly that reason: bumping the revision retires every stale entry at once, and the old ones expire unread. It is at **2** because FLAC output now pins `-frame_size 4096`. Encoding stays at `-compression_level 0` for speed, but level 0 sizes the block by time, which gives 1152 samples at 44.1 kHz where libFLAC uses 4096 from level 5 up — 3.5x the frame headers and CRCs for the same audio, costing 22% more to encode and 43% more to decode.
 
 ## StreamsAudio
 
@@ -348,6 +350,8 @@ The limits exist because the clip is held in memory while it is spoken, and beca
 | `BALANCED` | 300 | ~4 GB |
 | `MAXIMUM` | 1200 | ~8 GB |
 
+Those seconds are the whole story only for ordinary PCM. DSD is retained as high-rate F32, so `DSD_BUFFER_MAX_BYTES` caps each preset's payload as well as its duration — 64 / 128 / 256 MiB, converted to a second count against the decoded frame size and applied as the lower of the two (#6177). Stereo DSD64 on Balanced therefore lands near 47 seconds rather than 300, which is what lets the current and next-track buffers coexist on a host that only just qualifies for the preset. Radio's 15-second rolling buffer sits under even the Minimal byte cap and is unaffected.
+
 The RAM figures are **nominal** targets checked through `meets_memory_target()`, which absorbs the gap between a host's advertised size and what the kernel reports (MemTotal reservation plus any integrated-GPU carve-out) — so a "4 GB" box reporting ~3.8 GB still qualifies for Balanced. `get_available_buffer_sizes()` only offers the presets the host can sustain. When total memory is unknown (0.0, e.g. on Windows) the *options list* fails open and offers all three, while the *default* deliberately picks Minimal.
 
 Radio streams always use `RADIO_BUFFER_SIZE` (15 seconds) regardless of preset.
@@ -473,15 +477,17 @@ The buffered tail is `SMART_CROSSFADE_DURATION` (45 s) for smart or the configur
 
 ### Output pacing
 
-Audio handed to a player is rate-limited a little above playback speed. The rationale is in `streams/constants.py`: Music Assistant serves audio for *listening*, not for collecting. Barely above realtime the player's buffer still grows steadily, while pulling an entire catalogue takes about as long as listening to it would. A gentle feed also keeps a realtime source's banked head start resident for its end-of-track crossfade, and spares players with a small input buffer (Chromecast being the known case).
+Audio handed to a player is rate-limited a little above playback speed, once it has had its opening burst. The rationale is in `streams/constants.py`: Music Assistant serves audio for *listening*, not for collecting. Barely above playback speed the player's buffer still grows, while pulling an entire catalogue takes about as long as listening to it would.
 
-`output_pacing_args(profile)` renders `-readrate` / `-readrate_initial_burst` from three named profiles:
+`output_pacing_args(profile)` renders `-readrate` / `-readrate_initial_burst` from a `PacingProfile`. The profile follows **what is being served**, not the player receiving it:
 
 | Profile | `readrate` | Initial burst | Used for |
 |---|---|---|---|
-| `default` | `1.02` | `3` | Ordinary flow and single-item streams |
-| `gapless_burst` | `1.2` | `60` | Players that must hold a whole opening chunk before they play gapless (MusicCast is the known case) |
-| `low_latency` | `1.02` | `0.5` | Live `AudioSource` streams, where whatever the burst hands over sits in the player's buffer as listening delay |
+| `DEFAULT` | `1.1` | `60` | A track handed over on its own. The opening chunk is what a gapless player holds before it starts, and the head start rides out a hiccup later in the track |
+| `NEAR_REALTIME` | `1.03` | `3` | The flow stream, and sources that hand their audio over just-in-time — radio, and a Spotify music-provider track on its Soloist backend. Such a source delivers ~1.1x at best, and what it banks ahead is all its end-of-track crossfade has |
+| `LOW_LATENCY` | `1.02` | `0.5` | Live `AudioSource` streams, where whatever the burst hands over sits in the player's buffer as listening delay |
+
+Single-item serving picks per queue item: `AUDIO_SOURCE` takes `LOW_LATENCY`, an `is_realtime` streamdetails takes `NEAR_REALTIME`, everything else takes `DEFAULT`. Note that Spotify *Connect* is an `AUDIO_SOURCE` and so takes `LOW_LATENCY`, not the Soloist track's `NEAR_REALTIME`. The flow encode is always `NEAR_REALTIME` — it is one continuous stream, so the player gains nothing from running far ahead, and a short buffer is what keeps a Chromecast from restarting the stream outright. The live `/source/` encode is always `LOW_LATENCY`.
 
 The pacing is deliberate and load-bearing — the constant carries an explicit "do not remove this pacing to *fix* slow buffering" warning. The live *decode* side is separate and stricter (`-readrate 1` with a `0.5` burst), and the Universal Player's own passthrough is the one remaining caller that still hardcodes `1.1` / `5`.
 
@@ -660,7 +666,8 @@ For radio streams using in-band OGG metadata (Opus/Vorbis), `ogg_handler.py` han
 - **Error handling** — non-zero exit codes surface as `AudioError` with log tail context.
 - **HTTP inputs** — automatic reconnect arguments for HTTP sources.
 - **Filter chain** — `-af` parameters joined with proper `aresample`/dither rules; `soxr` resampler avoided when `loudnorm` filter is present (compatibility).
-- **Version check** — `check_ffmpeg_version` ensures FFmpeg ≥ 6 at startup.
+- **Version check** — `check_ffmpeg_version` ensures FFmpeg ≥ `MINIMAL_FFMPEG_VERSION` (7) at startup. The container ships 9.0.1; the floor is what a self-hosted install must meet.
+- **Undecodable input** — ffprobe reports zero channels for a file it cannot decode, so `AudioTags.parse` rejects that as `InvalidDataError` alongside a missing audio stream (#6242). A scan then skips the file with a warning rather than storing an audio format whose zero channel count divides by zero in the later quality sort. For a mapping already stored that way, queue loading catches the `ZeroDivisionError` per item, so one bad row costs its own track instead of the whole play request.
 
 ## Key Files
 

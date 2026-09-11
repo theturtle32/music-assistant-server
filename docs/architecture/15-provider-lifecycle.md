@@ -490,15 +490,17 @@ Neither `sendspin_source` nor `helpers/pulse_capture.py` is a replacement for `l
 
 ## `ProviderFeature` Flags
 
-Providers declare their capabilities via `supported_features: set[ProviderFeature]`. This enum has 56 members (including the `UNKNOWN` fallback), loosely grouped by provider type:
+Providers declare their capabilities via `supported_features: set[ProviderFeature]`. The enum lives in `music-assistant-models` and has 58 members (including the `UNKNOWN` fallback), loosely grouped by provider type:
 
-**Music provider features:** `BROWSE`, `SEARCH`, `RECOMMENDATIONS`, `LIBRARY_ARTISTS`, `LIBRARY_ALBUMS`, `LIBRARY_TRACKS`, `LIBRARY_PLAYLISTS`, `LIBRARY_RADIOS`, `LIBRARY_AUDIOBOOKS`, `LIBRARY_PODCASTS`, `AUTHOR_AUDIOBOOKS`, `NARRATOR_AUDIOBOOKS`, `ARTIST_ALBUMS`, `ARTIST_TRACKS`, `ARTIST_TOPTRACKS`, `ARTIST_TOPALBUMS`, library edit features (`LIBRARY_*_EDIT`), favorite edit features (`FAVORITE_*_EDIT`), `SIMILAR_TRACKS`, `SIMILAR_ARTISTS`, playlist features (`PLAYLIST_TRACKS_EDIT`, `PLAYLIST_CREATE_*`)
+**Music provider features:** `BROWSE`, `SEARCH`, `RECOMMENDATIONS`, `ALBUM_VERSIONS`, `LIBRARY_ARTISTS`, `LIBRARY_ALBUMS`, `LIBRARY_TRACKS`, `LIBRARY_PLAYLISTS`, `LIBRARY_RADIOS`, `LIBRARY_AUDIOBOOKS`, `LIBRARY_PODCASTS`, `AUTHOR_AUDIOBOOKS`, `NARRATOR_AUDIOBOOKS`, `ARTIST_ALBUMS`, `ARTIST_TRACKS`, `ARTIST_TOPTRACKS`, `ARTIST_TOPALBUMS`, library edit features (`LIBRARY_*_EDIT`), favorite edit features (`FAVORITE_*_EDIT`), `SIMILAR_TRACKS`, `SIMILAR_ARTISTS`, external-id lookup features (`TRACK_BY_EXTERNAL_ID`, `ALBUM_BY_EXTERNAL_ID`, `ARTIST_BY_EXTERNAL_ID`), playlist features (`PLAYLIST_TRACKS_EDIT`, `PLAYLIST_CREATE_*`)
 
 **Player provider features:** `SYNC_PLAYERS`, `REMOVE_PLAYER`, `CREATE_GROUP_PLAYER`, `REMOVE_GROUP_PLAYER`
 
 **Metadata provider features:** `ARTIST_METADATA`, `ALBUM_METADATA`, `TRACK_METADATA`, `PLAYLIST_METADATA`, `LYRICS`
 
-**Plugin features:** `AUDIO_SOURCE`, `SOUND_EFFECTS`, `AI_QUERY`, `TTS`
+**Plugin features:** `AUDIO_SOURCE`, `SOUND_EFFECTS`, `SCROBBLE`, `AI_QUERY`, `TTS`
+
+Because the enum is shared with the frontend, a member can land here before the server reads it. `ALBUM_VERSIONS` and `SCROBBLE` are currently in that state: defined, but not yet referenced anywhere in the server.
 
 These flags drive conditional behavior throughout the system — the config controller uses them to determine which library sync options to show, the music controller uses them to decide which providers to query for searches, and the player controller uses them for command routing.
 

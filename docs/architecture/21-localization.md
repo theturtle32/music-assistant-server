@@ -46,7 +46,7 @@ The `common.` file is where shared strings live — a label like "Username" is a
 
 ### Building
 
-`scripts/build_translations.py` flattens every authoring file into one sorted, fully-qualified `key -> English` map at `music_assistant/translations/en.json` (currently ~2,790 keys). It is standalone by design — no `music_assistant` imports at all — so it runs without the server's import chain and under any models version.
+`scripts/build_translations.py` flattens every authoring file into one sorted, fully-qualified `key -> English` map at `music_assistant/translations/en.json` (currently ~2,810 keys). It is standalone by design — no `music_assistant` imports at all — so it runs without the server's import chain and under any models version.
 
 Two behaviours matter:
 

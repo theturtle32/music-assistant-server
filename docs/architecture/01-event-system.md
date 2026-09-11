@@ -4,7 +4,7 @@ The event system is the pub/sub backbone that ties Music Assistant together. Eve
 
 ## `EventType` Enum
 
-Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with **32 members** — 31 real event types plus the `UNKNOWN` fallback (verified against `music-assistant-models==1.1.207`, the version pinned in `pyproject.toml`):
+Defined in `music_assistant_models.enums`, `EventType` is a `StrEnum` with **32 members** — 31 real event types plus the `UNKNOWN` fallback (verified against `music-assistant-models==1.1.209`, the version pinned in `pyproject.toml`):
 
 | Category | Events | Typical `object_id` |
 |---|---|---|

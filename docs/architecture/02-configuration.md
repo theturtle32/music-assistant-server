@@ -47,7 +47,11 @@ Each mixin owns one config scope and declares `if TYPE_CHECKING:` stubs for the 
 
 ### JSON File I/O
 
-Settings are stored in `{storage_path}/settings.json`. The controller loads the file on `setup()` and writes it back with a **debounced save** — `save()` schedules a write after `DEFAULT_SAVE_DELAY` (5 seconds) using `call_later`. Calling `save(immediate=True)` bypasses the debounce for critical writes (a rotated auth token, a completed setup flow). On shutdown, `close()` cancels the debounce timer and then writes only if `_save_written != _save_requested` (#5345, #5360) — meaning the latest change never reached disk, because its save is either still inside the debounce window or was cancelled on stop. Comparing the two counters rather than checking for a pending timer is what makes this correct for both cases, and it returns immediately when the file is already current.
+Settings are stored in `{storage_path}/settings.json`. The controller loads the file on `setup()` and writes it back with a **debounced save** — `save()` schedules a write after `DEFAULT_SAVE_DELAY` (5 seconds) using `call_later`. Calling `save(immediate=True)` bypasses the debounce for critical writes (a rotated auth token, a completed setup flow). Both forms are fire-and-forget: `immediate=True` starts the write as a task rather than awaiting it.
+
+`async_save()` is the awaitable form (#6262), for a caller that must not proceed until the change is on disk — `close()` and the post-`migrate()` write in `_load()` both use it. It cancels any pending debounce timer, takes `_save_lock`, and then skips the write if the generation it was going to persist has already been written by a save that ran while it waited for the lock. Data assigned directly by load or migrate carries no generation and is always written.
+
+On shutdown, `close()` cancels the debounce timer and then writes only if `_save_written != _save_requested` (#5345, #5360) — meaning the latest change never reached disk, because its save is either still inside the debounce window or was cancelled on stop. Comparing the two counters rather than checking for a pending timer is what makes this correct for both cases, and it returns immediately when the file is already current.
 
 Writes go through `_save_to_disk` and are **atomic and backed up** (durable `fsync` of the temp file before rename — #5716; earlier atomic-write work also tracked under #4534):
 

@@ -117,7 +117,9 @@ Every in-tree provider declaring `mdns_discovery`, verbatim from the manifests:
 | `yandex_station` | player | `_yandexio._tcp.local.` |
 | `hue_entertainment` | **plugin** | `_hue._tcp.local.` |
 
-Two entries deserve a note. `airplay` subscribes to **four** types, not two — the companion-link and mediaremotetv records are what make native transport controls on Apple TVs possible (#4882), alongside the RAOP/AirPlay pair used to build the player. And `musiccast` subscribes to the generic `_http._tcp.local.`, which is extremely common on a home network, so that provider does its own filtering in the callback rather than trusting the service type.
+`wiim` owns the whole `_linkplay._tcp.local.` space, not just WiiM-branded hardware, and then picks a backend per device via `is_official_device(manufacturer, model)`. Audio Pro devices always take the official SDK; a WiiM or LinkPlay manufacturer takes it only when the UPnP *model* identifies a WiiM product. Everything else — generic LinkPlay OEM gear such as the Teufel Holist S — is driven by the generic pywiim backend instead (#6223). The model check is what makes that possible: OEM devices advertise the same `Linkplay` manufacturer as WiiM's own products, so the manufacturer alone cannot tell them apart.
+
+Two further entries deserve a note. `airplay` subscribes to **four** types, not two — the companion-link and mediaremotetv records are what make native transport controls on Apple TVs possible (#4882), alongside the RAOP/AirPlay pair used to build the player. And `musiccast` subscribes to the generic `_http._tcp.local.`, which is extremely common on a home network, so that provider does its own filtering in the callback rather than trusting the service type.
 
 `hue_entertainment` is the only **plugin** provider using this infrastructure — a reminder that mDNS subscription is a `Provider` capability, not a `PlayerProvider` one. See [11-plugin-system.md](11-plugin-system.md#hue-lights-sync).
 

@@ -91,7 +91,7 @@ The pairing mirrors how the Player Controller pairs a runtime `Player` with the 
 
 ### `PlayerQueue` — the wire model
 
-Verified field by field against `music-assistant-models` **1.1.207** (the version pinned in `pyproject.toml`). Re-check this table when that pin moves.
+Verified field by field against `music-assistant-models` **1.1.209** (the version pinned in `pyproject.toml`). Re-check this table when that pin moves.
 
 | Field | Type | Description |
 |---|---|---|
@@ -103,7 +103,7 @@ Verified field by field against `music-assistant-models` **1.1.207** (the versio
 | `shuffle_enabled` | `bool` | Shuffle mode. Forced `True` and locked in dynamic mode |
 | `repeat_mode` | `RepeatMode` | `OFF`, `ONE`, `ALL`. Locked in dynamic mode |
 | `crossfade_enabled` | `bool` | Effective crossfade state — the global default unless the queue holds an override (#4373) |
-| `autoplay_enabled` | `bool` | Effective autoplay state: keep playing past the end of the queue (#4404) |
+| `autoplay_enabled` | `bool` | Effective autoplay state: keep playing past the end of the queue (#4404). Forced off while `repeat_mode` is `ONE` or `ALL` |
 | `overlay_enabled` | `bool` | Whether a looping sound effect is mixed into playback (#4674) |
 | `overlay_source` | `ItemMapping \| None` | The selected sound effect; retained while the overlay is disabled so it can be re-enabled with the same sound |
 | `overlay_volume` | `int` | Overlay loudness relative to the music, in percent (0–200; 100 = equally loud) |
@@ -111,6 +111,7 @@ Verified field by field against `music-assistant-models` **1.1.207** (the versio
 | `smart_shuffle_active` | `bool` | **Derived, read-only, not persisted.** True when smart shuffle is in effect (or the queue is dynamic) |
 | `current_index` | `int \| None` | Index the player is playing |
 | `index_in_buffer` | `int \| None` | Index the player has preloaded/buffered |
+| `ended` | `bool` | True once the queue played all the way through and is waiting to be restarted. `ADD` continues such a queue; `REPLACE` and `play_index` reset it |
 | `elapsed_time` | `float` | Seconds elapsed in the current item, in **media-time** |
 | `elapsed_time_last_updated` | `float` | Wall-clock timestamp of the last `elapsed_time` update |
 | `playback_speed` | `float` | The speed in effect at `elapsed_time_last_updated` |
@@ -149,6 +150,7 @@ The **restore path carries the same aliases**, independently of the wire hooks: 
 | `session_id` | `str \| None` | The current stream session; validated in stream URLs |
 | `flow_mode_stream_log` | `list[PlayLogEntry]` | Per-item play log for the active flow stream |
 | `next_item_id_enqueued` | `str \| None` | The `queue_item_id` most recently handed to the player as its next item |
+| `last_served_item_id` | `str \| None` | The `queue_item_id` the player last fetched, so `is_current_window_item` can judge "expected next" from where the player actually is rather than from the playhead |
 | `items_cache_dirty` | `bool` | Set when items changed since the last cache write |
 | `last_saved_state` | `dict \| None` | The significant part of the last-written state, so a redundant write can be skipped |
 
@@ -221,8 +223,9 @@ Delayed and background work is dispatched through the hub's named timers and tas
 | `fill_dynamic_tracks_{queue_id}` / `fill_autoplay_tracks_{queue_id}` | Refills, 5 s after the trigger |
 | `save_queue_cache_{queue_id}` | Debounced cache write (`QUEUE_CACHE_SAVE_DELAY`, 5 s) |
 | `queue_buffer_completed_{queue_id}` | Waits for the player to go idle after a flow stream ends |
+| `prepare_next_audio_buffer_{queue_id}` | Warms the next track's buffer ~60 s before the current one ends |
 
-`stop()` cancels the play-index timer and both the preload and enqueue-next work, as a task **and** as a timer, so nothing can enqueue onto a queue that has just stopped. `on_player_remove()` additionally cancels the cache-write timer *and* an already-started cache-write task, since a fired timer becomes a task and could otherwise recreate an entry that was just deleted.
+`stop()` cancels the play-index timer and both the preload and enqueue-next work, as a task **and** as a timer, so nothing can enqueue onto a queue that has just stopped. It also cancels the pre-warm, which would otherwise attach its buffer after the teardown that follows and leave a stopped queue holding a provider's stream — cancelled at the top of `stop()` rather than beside that teardown, because by then the task id can already belong to a new session. `on_player_remove()` additionally cancels the cache-write timer *and* an already-started cache-write task, since a fired timer becomes a task and could otherwise recreate an entry that was just deleted.
 
 ## Playing Media
 
@@ -267,9 +270,10 @@ async def play_media(
 
 **`REPLACE` never empties the queue.** It is explicitly exempt from the mechanical `_clear`, because clearing and then loading would publish an empty queue to every subscriber in between. Instead it swaps the contents in one `load(keep_remaining=False, keep_played=False)`, having first:
 
-1. released the audio the outgoing items hold via `_cleanup_queue_audio_data`, since the track about to start needs their source slot,
-2. dropped `index_in_buffer` (the player is still on the old index, and the swap would otherwise hand it a "next" item taken from the new list at that position — `play_index` sets the real one), and
-3. reset `queue.ended`, so `play_index` knows playback is starting over rather than honouring a stored resume position.
+1. cancelled `prepare_next_audio_buffer_{queue_id}` (#6238) — a pre-warm caught mid-flight would otherwise resume after the swap and warm audio for an item that has left the queue,
+2. released the audio the outgoing items hold via `_cleanup_queue_audio_data`, since the track about to start needs their source slot,
+3. dropped `index_in_buffer` (the player is still on the old index, and the swap would otherwise hand it a "next" item taken from the new list at that position — `play_index` sets the real one), and
+4. reset `queue.ended`, so `play_index` knows playback is starting over rather than honouring a stored resume position.
 
 An *ended* queue continued with `ADD` is the one case that still clears mechanically. Dynamic queues rebuild their pool from **index 0** on REPLACE, not from behind the playing track.
 
@@ -395,11 +399,11 @@ If gating leaves nothing at all, `_ungated_fallback` returns the globally least-
 running_low = queue.current_index is not None and (queue.items - queue.current_index) < 5
 if queue.is_dynamic and running_low:
     self.mass.call_later(5, self._fill_dynamic_tracks, queue_id, task_id=...)
-elif queue.autoplay_enabled and queue_data.enqueued_media_items and running_low:
+elif queue.autoplay_enabled and running_low:
     self.mass.call_later(5, self._fill_autoplay_tracks, queue_id, task_id=...)
 ```
 
-The two paths are mutually exclusive: **autoplay never runs while `is_dynamic`**, because the managed pool owns that queue's supply.
+The two paths are mutually exclusive: **autoplay never runs while `is_dynamic`**, because the managed pool owns that queue's supply. Note the trigger does not require enqueued items — that check belongs to the music branch of the fill itself, since a podcast or audiobook successor does not need a seed.
 
 `_fill_dynamic_tracks` restores the queue owner's user context (so provider filters apply during background work), calls `ManagedPool.fill(is_initial=False)`, and caps the batch to `MANAGED_POOL_MAX - unplayed` as a defensive ceiling on top of the sizing `fill()` already did. The result is appended past the end of the queue.
 
@@ -434,7 +438,7 @@ Mode details:
 - **`PLAYLIST`** (`Autoplay.get_playlist_tracks`) reads the playlist from *the level the mode resolves from*: a queue following the global autoplay mode also follows the global playlist, so a leftover per-queue playlist cannot override it.
 - **`SIMILAR`** goes through `_get_similar_tracks`, which asks the `radio_playlist` provider for `get_dynamic_tracks(seeds, include_base_tracks=False, target_size=25)`, steered by the user's `provider_filter` when they have one. One refinement: some providers have very deterministic similar-track algorithms for a single-track seed, so when continuing from a single track on a refill the seeds are re-sampled from the queue's play history instead, keeping the result varied.
 
-`set_autoplay` kicks off a refill 5 seconds later if the queue is *already* near its end (fewer than 5 items after the current index) and has enqueued items to seed from — but not when the queue is dynamic, since the pool manages its own refills.
+`set_autoplay` refuses to enable while repeat is on (see [Repeat masks autoplay](#repeat-masks-autoplay)); otherwise it re-resolves the toggles and hands off to `_schedule_autoplay_fill`, which kicks off a refill 5 seconds later if the queue is *already* near its end (fewer than 5 items after the current index) — but not when the queue is dynamic, since the pool manages its own refills.
 
 ## Shuffle and Repeat
 
@@ -503,6 +507,20 @@ The windows come from the shared `RecencyEngine` and are **global-only** configu
 
 `allow_repeat=False` is the error-recovery escape hatch: `play_index` uses it when skipping past an unplayable item, so repeat-all cannot turn a queue of broken items into an infinite loop.
 
+#### Repeat masks autoplay
+
+Repeat and autoplay both answer "what happens at the end of the queue", and they cannot both be honoured: autoplay appends fresh tracks before repeat ever gets to wrap, which leaves Repeat All unable to repeat. Repeat wins (#6250). `_resolve_default_toggles` resolves autoplay from its override or the global default as usual, then forces `queue.autoplay_enabled` to `False` whenever `repeat_mode` is `ONE` or `ALL`.
+
+The distinction that makes this safe to reverse is that only the *effective* flag is masked — the saved preference is untouched, so turning repeat back off restores whatever the queue was following before, rather than leaving the user's autoplay setting silently rewritten. It follows that a repeating queue can hold `autoplay_override=True` while reporting `autoplay_enabled=False`.
+
+Around that:
+
+- `set_autoplay(..., True)` raises `InvalidCommand` while repeat is on, rather than storing a preference that would not take effect. Disabling is always allowed.
+- `set_repeat` re-resolves the toggles, then cancels a pending `fill_autoplay_tracks_{queue_id}` if autoplay just became masked, or schedules one via `_schedule_autoplay_fill` if turning repeat off just restored it.
+- An in-flight refill re-checks `autoplay_enabled` after restoring the user context and again immediately before `load`, so a repeat toggled mid-fetch does not land a batch anyway.
+- Already-queued items stay; only future autoplay additions are blocked. Dynamic queues are unaffected — `set_repeat` still raises on them, and pool refills are not autoplay.
+- `RepeatMode.UNKNOWN` does not mask.
+
 ## Playback Flow
 
 ### `play_index` — Starting a Track
@@ -567,7 +585,9 @@ Details worth knowing:
 
 Three mechanisms overlap here, and they are easy to conflate.
 
-**1. Buffer pre-warm, ~60 s before the end.** During PCM streaming in `get_queue_item_stream`, once the consumed position passes `duration - 60` the streams layer calls `player_queues.prepare_next_audio_buffer(queue_id)`, public on `StreamFeederMixin`. It only fires for a next item that is a `TRACK`: live sources would open an upstream connection that sits idle and likely times out before the player consumes it. The method itself is defensive — it returns early for `AUDIO_SOURCE` items, when `next_item` still points at the currently playing track (a real race while player state lags), and when a valid buffer already exists — then spawns a task to resolve stream details if needed and call `get_audio_buffer(..., reason="prepare_next", allow_provider_match=False)` — a *pre-warm* must not consume a provider slot by switching mappings, since the currently playing track's own needs come first.
+**1. Buffer pre-warm, ~60 s before the end.** During PCM streaming in `get_queue_item_stream`, once the consumed position passes `duration - 60` the streams layer calls `player_queues.prepare_next_audio_buffer(queue_id)`, public on `StreamFeederMixin`. The caller only fires it for a next item that is a `TRACK` or `SOUND_EFFECT`: live sources would open an upstream connection that sits idle and likely times out before the player consumes it. The method itself is defensive — it returns early for `AUDIO_SOURCE` items, when `next_item` still points at the currently playing track (a real race while player state lags), and when a valid buffer already exists — then spawns a task to resolve stream details if needed and call `get_audio_buffer(..., reason="prepare_next", allow_provider_match=False)` — a *pre-warm* must not consume a provider slot by switching mappings, since the currently playing track's own needs come first.
+
+Because the task outlives the decision to start it, it re-checks that the item is still on the queue twice: after the stream-details fetch, and again after the buffer fills. `REPLACE` cancels the task outright, but the removal paths that do not (`REPLACE_NEXT`, `delete_item`) can drop the item mid-fill, and the stale-buffer sweep only walks current items — so a buffer left behind would sit until its inactivity timeout. The second check detaches it before clearing, as everywhere a buffer is released. Cancellation itself is handled too: a replacement pre-warm clears the half-filled source rather than pinning its slot.
 
 **2. Preloading stream details and enqueuing.** When the streams layer reports `track_loaded_in_buffer(queue_id, item_id)`, the controller records `index_in_buffer`, signals an update, schedules `_cleanup_stale_queue_buffers`, and calls `_preload_next_item`. That waits (one-second polls, `max(120, int(duration) + 10)` of them) for the buffered item to actually become the queue's `current_item` — this prevents preloading too early while the player is still working through a previously enqueued item — and bails out if the queue drains to no current item in the meantime. Then `load_next_queue_item()` resolves the next item's stream details and `_enqueue_next_item()` is scheduled. Radio items and items without a duration skip this path entirely.
 
@@ -619,7 +639,7 @@ Flow mode concatenates the whole queue into one stream, which means the player's
 | `clear` | Clears items and sources, resets `is_dynamic`, drops the audio-processing state, and cleans up buffers |
 | `move_item` / `move_item_end` / `delete_item` | Reordering and removal; all refuse items at or before the committed index |
 
-**Autoplay and crossfade are overrides, not plain toggles** (#6130, #6187). Each has a global default (`CONF_AUTOPLAY_ENABLED`, default on; `CONF_CROSSFADE_ENABLED`, default off) plus an optional per-queue `autoplay_override` / `crossfade_override` on `PlayerQueueData`, which is `None` until the user changes it on that queue. The wire fields `autoplay_enabled` / `crossfade_enabled` report the **resolved** value. Storing the override separately is what lets a queue that has never been touched keep following a later change to the global default, instead of being pinned to whatever the default happened to be when the queue was created. Both overrides are persisted by `to_cache()` alongside `credited_albums`.
+**Autoplay and crossfade are overrides, not plain toggles** (#6130, #6187). Each has a global default (`CONF_AUTOPLAY_ENABLED`, default on; `CONF_CROSSFADE_ENABLED`, default off) plus an optional per-queue `autoplay_override` / `crossfade_override` on `PlayerQueueData`, which is `None` until the user changes it on that queue. The wire fields `autoplay_enabled` / `crossfade_enabled` report the **resolved** value — for autoplay, resolved and then masked by repeat, so it can read `False` over a stored `autoplay_override=True`. Storing the override separately is what lets a queue that has never been touched keep following a later change to the global default, instead of being pinned to whatever the default happened to be when the queue was created. Both overrides are persisted by `to_cache()` alongside `credited_albums`.
 
 ## Player-to-Queue Reconciliation
 
