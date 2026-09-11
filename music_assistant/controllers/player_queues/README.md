@@ -291,6 +291,8 @@ player_queues/
 ├── constants.py    # config keys + default values for enqueue options, artist/album selection
 │                   #   modes and client click actions, the autoplay/crossfade config keys, plus the
 │                   #   two cache category identifiers (queue state, queue items)
+├── config.py       # the core-module and per-queue ConfigEntry schemas, built from shared builders;
+│                   #   the controller exposes them through thin delegators
 ├── autoplay.py     # Autoplay + AutoplayMode: resolves the per-queue autoplay mode and
 │                   #   produces the next batch of tracks for the library-/playlist-based modes
 ├── smart_shuffle.py # SmartShuffle: recency-aware, well-spaced ordering of the upcoming items
@@ -343,7 +345,8 @@ mechanism) that configure default enqueue behaviour, in three groups:
 The first two groups are read back at enqueue time to decide how a given media item is turned into
 queue items. The click actions are **not read by the server at all**: they live here so every client
 resolves the same behaviour from one discoverable, translated schema instead of each defining its
-own local preferences. The config keys and their default values live in `constants.py`.
+own local preferences. The config keys and their default values live in `constants.py`; the entry
+schemas themselves are built in `config.py`.
 
 Separately, the controller exposes **per-queue** config entries (via `get_queue_config_entries`,
 surfaced by the Config Controller) grouped into categories: *autoplay* (the refill mode and, for

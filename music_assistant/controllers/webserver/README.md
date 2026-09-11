@@ -43,38 +43,46 @@ The main orchestrator that manages:
 - Manages authentication routes (`/login`, `/auth/*`, `/setup`)
 - Serves API documentation (`/api-docs`)
 - Handles image proxy and audio preview endpoints
+- Proxies authenticated Sendspin WebSocket clients (`/sendspin`) to the internal Sendspin server
 
 ### 2. AuthenticationManager ([auth.py](auth.py))
 
 Handles all authentication and user management:
 
 **Database Schema:**
-- `users` - User accounts with roles (admin/user)
+- `users` - User accounts with roles
 - `user_auth_providers` - Links users to authentication providers (many-to-many)
-- `auth_tokens` - Access tokens with expiration tracking
+- `auth_tokens` - Token metadata (token hash, expiration, last used) for revocation checking
+- `join_codes` - Short codes (QR/link login) that a client exchanges for a token
 - `settings` - Schema version and configuration
 
 **Authentication Providers:**
-- **Built-in Provider** - Username/password authentication with bcrypt hashing
+- **Built-in Provider** - Username/password authentication, hashed with PBKDF2-HMAC-SHA256
 - **Home Assistant OAuth** - OAuth2 flow for Home Assistant users (auto-enabled when HA provider is configured)
 
 **Token Types:**
-- **Short-lived tokens**: Auto-renewing on use, 30-day sliding expiration window (for user sessions)
-- **Long-lived tokens**: No auto-renewal, 10-year expiration (for integrations/API access)
+
+Tokens are **JWTs** signed with a server-side secret (`JWTHelper`). The database only holds a SHA-256 hash of each issued token, so a token can be revoked without ever storing it.
+
+- **Short-lived tokens**: Auto-renewing on use, 30-day sliding expiration window, capped by an absolute 90-day lifetime from creation (`TOKEN_ABSOLUTE_MAX_EXPIRATION`) after which the user must re-authenticate
+- **Long-lived tokens**: No auto-renewal, 365-day expiration (`TOKEN_LONG_LIVED_EXPIRATION`) for integrations/API access
+- **Guest tokens**: Fixed 1-day lifetime, never renewed
 
 **Security Features:**
 - Rate limiting on login attempts (progressive delays)
-- Password hashing with bcrypt and user- and server specific salts
-- Secure token generation with secrets.token_urlsafe()
+- Password hashing with PBKDF2-HMAC-SHA256 (100,000 iterations) and a user- and server-specific salt
+- Signed JWTs; only their hash is persisted, and revocation deletes the row
 - WebSocket disconnect on token revocation
 - Session management and cleanup
 
 **User Roles:**
-- `ADMIN` - Full access to all commands and settings
+- `ADMIN` - Full access (granted `Scope.ALL`)
 - `USER` - Standard access (configurable via player/provider filters)
 - `GUEST` - Read-only library access plus player/queue control
 - `SERVICE` - Standard access plus player config, reading user accounts and impersonation
   (used by the Home Assistant integration)
+
+Roles map to scopes via `ROLE_SCOPES` in [helpers/auth_middleware.py](helpers/auth_middleware.py); the API itself gates on **scopes**, not on roles.
 
 ### 3. RemoteAccessManager ([remote_access/](remote_access/))
 
@@ -83,11 +91,11 @@ Manages WebRTC-based remote access for external connectivity:
 **Architecture:**
 - **Signaling Server**: Cloud-based WebSocket server for WebRTC signaling (hosted at `wss://signaling.music-assistant.io/ws`)
 - **WebRTC Gateway**: Local component that bridges WebRTC data channels to the WebSocket API
-- **Remote ID**: Unique identifier (format: `MA-XXXX-XXXX`) for connecting to specific instances
+- **Remote ID**: Unique identifier derived from the instance's WebRTC DTLS certificate, used to connect to a specific instance
 
 **How it works:**
 1. Remote access can be enabled regardless of Home Assistant Cloud subscription
-2. A unique Remote ID is generated and stored in config
+2. The Remote ID is derived from the persisted WebRTC DTLS certificate
 3. The gateway connects to the signaling server and registers with the Remote ID
 4. Remote clients (PWA or mobile apps) connect via WebRTC using the Remote ID
 5. Data channel messages are bridged to/from the local WebSocket API
@@ -173,17 +181,13 @@ Manages individual WebSocket connections:
 6. **Token Generation**: MA token created and returned via redirect with `code` parameter
 7. **Client Handling**: Client extracts token from URL and stores it
 
-### Remote Client OAuth Flow
+### Remote Clients
 
-For remote clients (PWA over WebRTC), OAuth requires special handling since redirect URLs can't point to localhost:
-
-1. **Request Session**: Remote client calls `auth/authorization_url` with `for_remote_client=true`
-2. **Session Created**: Server creates a pending OAuth session and returns session_id and auth URL
-3. **User Opens Browser**: Client opens auth URL in system browser
-4. **OAuth Flow**: User completes OAuth in browser
-5. **Token Stored**: Server stores token in pending session (using special return URL format)
-6. **Polling**: Client polls `auth/oauth_status` with session_id
-7. **Token Retrieved**: Once complete, client receives token and can authenticate
+Remote clients (the PWA over WebRTC) use the same `/auth/authorize` → `/auth/callback` flow
+as any other client — there is no separate remote-client OAuth path. The `return_url` a
+client supplies is classified as trusted, external or blocked by
+[helpers/redirect_validation.py](../../helpers/redirect_validation.py) before the token is
+appended to it, which is what makes the redirect safe across origins.
 
 ### Ingress Authentication (Home Assistant Add-on)
 
@@ -236,16 +240,16 @@ Remote access enables users to connect to their Music Assistant instance from an
 - Handles multiple concurrent sessions
 
 **Remote ID**:
-- Format: `MA-XXXX-XXXX` (e.g., `MA-K7G3-P2M4`)
-- Uniquely identifies a Music Assistant instance
-- Generated once and stored in controller config
-- Used by remote clients to connect to specific instance
+- A 26-character uppercase base32 string (a custom alphabet using `9` in place of `2`) derived from the first 128 bits of the SHA-256 fingerprint of the instance's WebRTC DTLS certificate — see `music_assistant/helpers/webrtc_certificate.py`
+- Uniquely and deterministically identifies a Music Assistant instance: it is stable for as long as the certificate is, and no separate value is stored
+- Derived at setup without loading the native WebRTC library, so `remote_access/info` can report it even while remote access is disabled
+- Used by remote clients to connect to a specific instance
 
 ### Connection Flow
 
 1. **Initialization**:
    - Remote access is enabled by user in settings
-   - Remote ID generated/retrieved from config
+   - Remote ID derived from the persisted WebRTC DTLS certificate
    - HA Cloud status checked (determines mode)
    - Gateway connects to signaling server with appropriate ICE servers
    - Remote ID registered with signaling server
@@ -352,7 +356,7 @@ Returns remote access status:
   "enabled": true,
   "running": true,
   "connected": true,
-  "remote_id": "MA-K7G3-P2M4",
+  "remote_id": "K7G3P4M6QRSTUVWX3Y5Z6A7BCD",
   "using_ha_cloud": false,
   "signaling_url": "wss://signaling.music-assistant.io/ws"
 }
@@ -384,7 +388,7 @@ HTTP Request → Webserver → Command Handler → Response
 WebSocket Connect → WebsocketClientHandler
                            |
                            ├─ First command: auth → Validate token → Set user context
-                           └─ Subsequent commands → Check auth/role → Execute → Respond
+                           └─ Subsequent commands → Check auth + required_scope → Execute → Respond
 ```
 
 ### Remote WebRTC Request Flow
@@ -400,22 +404,22 @@ Remote Client → WebRTC Data Channel → Gateway → Local WebSocket API
 ### Authentication
 
 - **Mandatory authentication**: All API access requires authentication (except Ingress)
-- **Secure token generation**: Uses `secrets.token_urlsafe(48)` for cryptographically secure tokens
-- **Password hashing**: bcrypt with user-specific salts
+- **Signed tokens**: JWTs signed (HS256) with a per-installation secret; the token id carried in the `jti` claim is generated with `secrets.token_urlsafe(32)`
+- **Password hashing**: PBKDF2-HMAC-SHA256 (100,000 iterations) with a salt combining the (random) user ID and the server ID
 - **Rate limiting**: Progressive delays on failed login attempts
-- **Token expiration**: Both short-lived (30 days sliding) and long-lived (10 years) tokens supported
+- **Token expiration**: Short-lived (30 days sliding, 90-day absolute cap), long-lived (365 days) and guest (1 day) tokens
 
 ### Authorization
 
-- **Role-based access**: Admin vs User roles
-- **Command-level enforcement**: API commands can require specific roles
+- **Scope-based access**: Each API command declares `required_scope=Scope.…`; the caller's role grants a set of scopes through `ROLE_SCOPES`
+- **Command-level enforcement**: Enforced identically for WebSocket commands and HTTP requests
 - **Player/Provider filtering**: Users can be restricted to specific players/providers
 - **Token revocation**: Immediate WebSocket disconnect on token revocation
 
 ### Network Security
 
 **Local Network:**
-- Webserver is unencrypted (HTTP) by design (runs on local network)
+- The webserver serves plain HTTP by default (it runs on the local network); SSL can optionally be enabled by supplying a certificate and private key in the webserver config
 - Users should use reverse proxy or VPN for external access
 - Never expose webserver directly to internet
 
@@ -427,8 +431,8 @@ Remote Client → WebRTC Data Channel → Gateway → Local WebSocket API
 
 ### Data Protection
 
-- **Token storage**: Only hashed tokens stored in database
-- **Password storage**: bcrypt with user-specific salts
+- **Token storage**: Only the SHA-256 hash of each token is stored in the database
+- **Password storage**: PBKDF2-HMAC-SHA256 with a user- and server-specific salt
 - **Session cleanup**: Expired tokens automatically deleted
 - **User disable**: Immediate disconnect of all user sessions
 
@@ -508,7 +512,7 @@ When modifying the auth database schema:
 ### Testing Remote Access
 
 1. **Enable Remote Access**: Toggle remote access in settings UI or via API
-2. **Verify Remote ID**: Check webserver config for generated Remote ID
+2. **Verify Remote ID**: Call `remote_access/info` to read the certificate-derived Remote ID
 3. **Test Gateway**: Check logs for "Starting remote access in basic/optimized mode" message
 4. **Test Connection**: Use PWA with Remote ID to connect externally
 5. **Monitor Sessions**: Check `remote_access/info` command for status and mode
@@ -522,11 +526,15 @@ webserver/
 ├── controller.py                       # Main webserver controller
 ├── auth.py                             # Authentication manager
 ├── websocket_client.py                 # WebSocket client handler
+├── sendspin_proxy.py                   # Authenticated WebSocket proxy to the internal Sendspin server
 ├── api_docs.py                         # API documentation generator
+├── strings.json                        # Translatable labels for the controller's config entries
+├── icon.svg                            # Controller icon (icon_dark.svg for dark mode)
 ├── README.md                           # This file
 ├── helpers/
-│   ├── auth_middleware.py              # HTTP/WebSocket auth helpers
-│   └── auth_providers.py               # Authentication providers
+│   ├── auth_middleware.py              # HTTP/WebSocket auth helpers, role/scope mapping
+│   ├── auth_providers.py               # Authentication providers
+│   └── ssl.py                          # SSL context creation and certificate verification
 └── remote_access/
     ├── __init__.py                     # Remote access manager
     └── gateway.py                      # WebRTC gateway implementation
