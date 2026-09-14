@@ -117,6 +117,13 @@ def test_every_markdown_file_is_scanned(repo: Path) -> None:
     assert list(find_broken_links()) == ["music_assistant/controllers/players/grouping.md"]
 
 
+def test_untracked_files_are_collected_from_git() -> None:
+    """A doc written but not yet staged is still checked, so a manual run cannot falsely pass."""
+    collected = {path.name for path in iter_doc_files()}
+    assert "README.md" in collected
+    assert all(".venv" not in path.parts for path in iter_doc_files())
+
+
 def test_ignored_directories_are_not_walked(repo: Path) -> None:
     """A markdown file inside a virtualenv or node_modules is not ours to check."""
     _write(repo, ".venv/lib/whatever/README.md", "[gone](./missing.py)")

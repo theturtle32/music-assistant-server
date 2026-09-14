@@ -105,12 +105,14 @@ def iter_doc_files() -> list[Path]:
     """
     Return every markdown file in the repository.
 
-    Uses the git index so ignored trees such as ``.venv`` are skipped, and falls back to a
-    filtered walk when git is unavailable.
+    Asks git rather than walking, so ignored trees such as ``.venv`` are skipped. Untracked files
+    are included, so a doc that has been written but not yet staged is still checked. Falls back
+    to a filtered walk when git is unavailable.
     """
     try:
         listed = subprocess.run(
-            ["git", "ls-files", "-z", "*.md"],  # noqa: S607
+            # --others with --exclude-standard adds untracked files without adding ignored ones
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*.md"],  # noqa: S607
             capture_output=True,
             check=True,
             cwd=REPO_ROOT,
