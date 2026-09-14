@@ -1,23 +1,70 @@
-# Metadata Controller
+# Metadata controller
 
-This package owns Music Assistant's metadata management: enriching library items with metadata from the music and metadata providers, resolving and serving images, and looking up artwork for radio streams. Per-method behaviour lives in the docstrings; this file covers how the package is structured and the cross-cutting design decisions.
+Enriches library items with metadata from the music and metadata providers, resolves and serves
+images, and looks up artwork for radio streams.
 
-## Package Layout
+## Deep dives
 
-The `MetaDataController` is composed from a set of mixins, each in its own module, mirroring the Player Controller (`controllers/players/`). All behaviour is reachable on the single controller instance; the split is purely for organising a large surface.
+- [images.md](images.md): the opaque image proxy, thumbnails, and colour palettes.
+- [genres.md](genres.md): aliases, the three taxonomies, and the scanning pipeline.
 
-- `controller.py` — the `MetaDataController` itself: lifecycle, config entries, preferred-language handling, the public enrichment entrypoint and the scheduled maintenance tasks. Combines the mixins below with `CoreController`.
-- `images.py` (`ImageProxyMixin`) — image resolution, the opaque image-id system, thumbnail rendering/caching, the `/imageproxy` endpoint, palette extraction and playlist collages.
-- `radio.py` (`RadioArtworkMixin`) — resolving radio-stream artwork by matching the station's now-playing metadata against the library and MusicBrainz/online providers.
-- `enrichment.py` (`MetadataEnrichmentMixin`) — the per-mediatype routines that merge provider metadata into library items.
-- `helpers.py` — pure functions that don't need the controller instance.
-- `constants.py` — shared constants (config keys, cache categories, task ids, the locale map and imageproxy tunables).
-- `strings.json` — translatable strings for this core module (the `manifest` name/description shown in the UI). It is only discovered because the controller lives in its own folder: `scripts/build_translations.py` concatenates each `controllers/<domain>/strings.json` into the source catalogue under the `core.<domain>` namespace.
+## Package layout
 
-## Design Notes
+The controller is composed from mixins, each in its own module, mirroring the player controller.
+All behaviour is reachable on the single controller instance; the split is only for organising a
+large surface.
 
-- **Image ids / imageproxy.** Images are addressed by an opaque, deterministic id (`sha256(provider + path)`) instead of carrying the raw provider/path on the query string. The id is exposed to clients as the `proxy_id` field on `MediaItemImage` (injected during outbound serialization) and fetched at `/imageproxy/<image_id>?size=&fmt=`. The mapping is registered when the id is generated — write-through an in-process LRU in front of the cache controller, so resolving a freshly generated id never blocks on SQLite — and resolved back to `(provider, path)` when the endpoint serves the thumbnail. Because only server-registered ids resolve, the endpoint cannot be coerced into fetching an arbitrary URL.
-- **Local-over-online.** Provider mappings are processed in priority order so local sources win over streaming/online ones, and online metadata is only fetched when enabled and (for most types) when an item actually needs a refresh. Online genres are not merged on top of locally-supplied ones when "prefer local genres" is set.
-- **Refresh interval.** Enrichment for a given item only re-runs every `REFRESH_INTERVAL` (90 days) unless a refresh is forced, keeping load on the free online services low. Artist bios are re-derived each refresh and picked by a fixed preferred-language-first fallback policy.
-- **Radio artwork.** Stations send free-form `artist - title` strings, so the radio subsystem normalizes and heuristically re-orders the names before matching them against the library and MusicBrainz, and caches both hits and misses to avoid hammering the providers.
-- **Maintenance tasks.** The missing-artist-metadata scan, playlist refresh and thumbnail-cache cleanup run daily at a per-instance randomized time so independent installations don't all hit the shared MusicBrainz mirror at once. Album reconciliation instead runs hourly: it re-enriches a bounded batch of albums that are still `album_type=unknown` and are due for a refresh (never refreshed, or last refreshed more than `REFRESH_INTERVAL` ago — typically created from a sparse provider search result during sync), then re-runs provider matching now that full album details are available. A confirmed match belonging to another duplicate album is folded in through the safe `add_provider_mappings`/merge path, so duplicates self-heal without ever auto-adding new library items; a transient failure simply retries at the normal `REFRESH_INTERVAL` cadence instead of a dedicated retry journal.
+| Module | Role |
+|---|---|
+| `controller.py` | Lifecycle, config entries, preferred-language handling, the enrichment entry point, maintenance tasks |
+| `images.py` | Image resolution, the opaque image id system, thumbnail rendering and caching, the proxy endpoint, palettes, playlist collages |
+| `radio.py` | Resolving radio artwork by matching now-playing metadata against the library and online sources |
+| `enrichment.py` | The per-media-type routines that merge provider metadata into library items |
+| `helpers.py` | Pure functions that need no controller instance |
+| `constants.py` | Config keys, cache categories, task ids, the locale map, proxy tunables |
+| `strings.json` | Translatable strings for this core module |
+
+The `strings.json` is only discovered because the controller lives in its own folder; the
+translation build concatenates one per controller directory under that controller's namespace.
+
+## Local beats online
+
+Provider mappings are processed in priority order, so local sources win over streaming and online
+ones. Online metadata is fetched only when enabled and, for most types, only when an item actually
+needs a refresh. Online genres are not merged on top of locally-supplied ones when the user prefers
+local genres.
+
+## Refresh interval
+
+Enrichment for a given item re-runs at most every 90 days unless a refresh is forced. The online
+services here are free and shared, and keeping load off them is the point. Artist biographies are
+re-derived on each refresh and picked by a preferred-language-first fallback.
+
+## Radio artwork
+
+Stations send free-form "artist and title" strings with no agreed separator or order. The radio
+subsystem normalizes and heuristically re-orders the names before matching them against the library
+and online sources, and caches both hits and misses so a station that never matches does not hammer
+the providers on every track change.
+
+## Maintenance tasks
+
+The daily tasks, meaning the missing-artist-metadata scan, the playlist refresh and the
+thumbnail-cache cleanup, run at a **randomized** time drawn once per process rather than at a fixed
+hour. Independent installations would otherwise all hit the same shared online mirror at the same
+moment.
+
+Album reconciliation instead runs hourly. It re-enriches a bounded batch of albums whose type is
+still unknown and that are due a refresh, which typically means they were created from a sparse
+provider search result during a sync, then re-runs provider matching now that full album details
+are available.
+
+A confirmed match belonging to another duplicate album is folded in through the safe merge path, so
+duplicates self-heal without ever auto-adding new library items. A transient failure simply retries
+at the normal refresh cadence rather than needing a retry journal of its own.
+
+## Related architecture docs
+
+- [Media library](../../../docs/architecture/media-library.md) for how enrichment fits library assembly.
+- [Providers](../../../docs/architecture/providers.md) for the metadata provider type and its features.
+- [Players](../../../docs/architecture/players.md) for how a palette reaches a player's display.
