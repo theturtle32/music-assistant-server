@@ -67,7 +67,7 @@ group starts it reacting.
 ## Limitations
 
 **Beats depend on analysis that may not exist yet.** The schedule is derived from the audio analysis
-described in [controllers/streams/analysis.md](../../controllers/streams/analysis.md). A track
+described in [Audio analysis](../../controllers/streams/analysis.md). A track
 nobody has analyzed has no schedule, and the analyzer falls back to onset peaks until one arrives,
 which is less precise and noticeably so on acoustic or vocal material.
 

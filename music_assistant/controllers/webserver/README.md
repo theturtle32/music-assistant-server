@@ -6,7 +6,7 @@ port 8095 by default. Audio is deliberately not served from here; see
 
 ## Deep dives
 
-- [remote-access.md](remote-access.md): the WebRTC gateway, data channels, and their framing.
+- [Remote access](remote-access.md): the WebRTC gateway, data channels, and their framing.
 
 ## Module layout
 
@@ -103,7 +103,7 @@ off progressively.
 
 Remote access reaches an instance from anywhere without port forwarding or a VPN, by bridging
 WebRTC data channels to the local WebSocket API. Authentication and authorization work exactly as
-they do locally. See [remote-access.md](remote-access.md) for the gateway, the channel framing and
+they do locally. See [Remote access](remote-access.md) for the gateway, the channel framing and
 the compatibility rule for adding a channel label.
 
 ## Security posture
@@ -136,7 +136,9 @@ schemas and an interactive explorer.
 
 ## Related architecture docs
 
-- [API and auth](../../../docs/architecture/api-and-auth.md) for the big picture of the API surface, scopes and users.
-- [Events and commands](../../../docs/architecture/events-and-commands.md) for the event bus and the command registry.
+- [API and auth](../../../docs/architecture/api-and-auth.md) for the big picture of the API surface,
+  scopes and users.
+- [Events and commands](../../../docs/architecture/events-and-commands.md) for the event bus and the
+  command registry.
 - [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the MCP server that mounts here.
 - [Overview](../../../docs/architecture/overview.md) for where the webserver sits in startup.

@@ -62,4 +62,4 @@ configuration.
 - [Plugins](../../../docs/architecture/plugins.md) for the plugin categories and the provider model.
 - [API and auth](../../../docs/architecture/api-and-auth.md) for guest roles, join codes and scopes.
 - [Playback](../../../docs/architecture/playback.md) for how the queue it writes into behaves.
-- [helpers/shared-playback.md](../../helpers/shared-playback.md) for the session abstraction.
+- [Shared playback sessions](../../helpers/shared-playback.md) for the session abstraction.

@@ -42,7 +42,7 @@ different questions and quietly substituting one would be misleading.
 
 - [Plugins](../../../docs/architecture/plugins.md) for plugins that implement music features.
 - [Providers](../../../docs/architecture/providers.md) for dependencies and feature flags.
-- [controllers/streams/analysis.md](../../controllers/streams/analysis.md) for where the analysis
+- [Audio analysis](../../controllers/streams/analysis.md) for where the analysis
   and the embeddings come from.
 - [Media library](../../../docs/architecture/media-library.md) for how similar-track lookups feed
   recommendations and dynamic queues.

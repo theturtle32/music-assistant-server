@@ -5,8 +5,8 @@ audio *to* the server. The inverse direction, playing to an AirPlay speaker, is 
 [airplay](../airplay/README.md) player provider.
 
 It wraps `shairport-sync` rather than implementing the protocol, running one daemon per connected
-player and exposing each as a live audio source. See [bin/README.md](bin/README.md) for the
-bundled binaries, which are also found on the system path when not bundled.
+player and exposing each as a live audio source. See [Shairport-Sync Binaries](bin/README.md) for
+the bundled binaries, which are also found on the system path when not bundled.
 
 ## One daemon, one port, per player
 

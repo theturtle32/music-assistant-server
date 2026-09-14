@@ -10,9 +10,10 @@ before the core controller infrastructure exists.
 
 ## Deep dives
 
-- [setup-flows.md](setup-flows.md): the interactive setup and reconfigure engine.
-- [migrations.md](migrations.md): the settings transforms and how to write one.
-- [scopes.md](scopes.md): setup data versus values, injected entries, global fallbacks.
+- [Setup flows](setup-flows.md): the interactive setup and reconfigure engine.
+- [Settings migrations](migrations.md): the settings transforms and how to write one.
+- [Config scopes and entries](scopes.md): setup data versus values, injected entries, global
+  fallbacks.
 
 ## Package layout
 
@@ -62,7 +63,7 @@ the host's total RAM.
 `migrations.py` transforms the raw settings dictionary right after load, before anything is parsed
 into config objects, with a second group running later for values that must be encrypted at rest.
 There is no schema version counter; each transform is independent and idempotent. See
-[migrations.md](migrations.md).
+[Settings migrations](migrations.md).
 
 ## The four config scopes
 
@@ -82,15 +83,17 @@ what resolves the entry's localized label and description when it is serialized.
 Provider status is computed on the API read path rather than stored, derived from whether the
 instance is disabled, loaded, or carries a persisted error.
 
-[scopes.md](scopes.md) covers the split between setup data and config values, the entries one
-scope injects into another, and how a per-queue setting falls back to its global default.
+[Config scopes and entries](scopes.md) covers the split between setup data and config values, the
+entries one scope injects into another, and how a per-queue setting falls back to its global
+default.
 
 ## Config entries
 
 Every setting is described by a `ConfigEntry` from the shared models package, carrying its type,
-default, options, range, UI category, visibility flags, dependencies and whether a change requires
-a reload. Labels are never authored in code; they resolve from the translation catalog, and a
-pre-commit hook fails the build when an entry hardcodes one. See [scopes.md](scopes.md).
+default, options, range, UI category, visibility flags, dependencies and whether a change requires a
+reload. Labels are never authored in code; they resolve from the translation catalog, and a
+pre-commit hook fails the build when an entry hardcodes one. See
+[Config scopes and entries](scopes.md).
 
 ## DSP configuration
 
@@ -107,7 +110,7 @@ How the chain is compiled into FFmpeg parameters belongs to the streaming pipeli
 
 Anything interactive, meaning credentials, OAuth logins and pairing, runs through the setup flow
 engine in `flows.py`. A flow is one plain coroutine in the provider's `setup_flow.py` that
-publishes a step and suspends until the user responds. See [setup-flows.md](setup-flows.md).
+publishes a step and suspends until the user responds. See [Setup flows](setup-flows.md).
 
 ## Encryption
 
@@ -140,6 +143,9 @@ token, without validation and without triggering a reload.
 
 ## Related architecture docs
 
-- [Providers](../../../docs/architecture/providers.md) for the provider error model and the load lifecycle.
-- [Events and commands](../../../docs/architecture/events-and-commands.md) for how config commands are dispatched.
-- [Overview](../../../docs/architecture/overview.md) for where the config controller sits in startup.
+- [Providers](../../../docs/architecture/providers.md) for the provider error model and the load
+  lifecycle.
+- [Events and commands](../../../docs/architecture/events-and-commands.md) for how config commands
+  are dispatched.
+- [Overview](../../../docs/architecture/overview.md) for where the config controller sits in
+  startup.

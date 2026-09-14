@@ -36,7 +36,7 @@ That is what lets the frontend render a whole settings page for a provider nobod
 
 **Labels are never authored in code.** They resolve from the translation catalogue, and a
 pre-commit hook fails the build when an entry hardcodes label or description text. See
-[localization.md](localization.md).
+[Localization](localization.md).
 
 A library of pre-built entries covers the settings many providers share, so a provider composes its
 config from those plus its own.
@@ -63,7 +63,7 @@ all still returns a synthesized finish step, so clients keep one code path for e
 
 Runtime options, by contrast, are declared by the provider and rendered from its entries.
 
-See [controllers/config/setup-flows.md](../../music_assistant/controllers/config/setup-flows.md),
+See [Setup flows](../../music_assistant/controllers/config/setup-flows.md),
 and the authoring guide at
 [developers.music-assistant.io](https://developers.music-assistant.io/setup-flows/).
 
@@ -107,11 +107,11 @@ are versioned, and a failed library migration costs the user a full rescan.
 
 So a migration has to be idempotent, survive missing and half-written values, and never raise. When
 a change touches stored data, agree the migration before treating the work as done. See
-[controllers/config/migrations.md](../../music_assistant/controllers/config/migrations.md) and
-[controllers/music/schema.md](../../music_assistant/controllers/music/schema.md).
+[Settings migrations](../../music_assistant/controllers/config/migrations.md) and
+[Database schema and migrations](../../music_assistant/controllers/music/schema.md).
 
 ## Related
 
 - [controllers/config](../../music_assistant/controllers/config/README.md) for the package.
-- [providers.md](providers.md) for provider status and the error model.
-- [api-and-auth.md](api-and-auth.md) for the scopes config commands require.
+- [Providers](providers.md) for provider status and the error model.
+- [The API and authentication](api-and-auth.md) for the scopes config commands require.

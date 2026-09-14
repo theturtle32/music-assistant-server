@@ -19,7 +19,7 @@ on first use. It is deliberately **not** stored in this source tree or in the Py
 
 Official container builds download the pinned, architecture-specific asset from its own release and
 verify it against that release's published checksums. Local development does the same through the
-setup script when the binary is absent. See [bin/README.md](bin/README.md).
+setup script when the binary is absent. See [cliairplay binaries](bin/README.md).
 
 ## Three channels
 
@@ -72,5 +72,6 @@ render at the configured queue depth.
 
 ## Related
 
-- [streaming.md](streaming.md) for the start sequence these messages drive.
-- [control.md](control.md) for the inbound control channel, which is separate from all of this.
+- [Streaming and synchronization](streaming.md) for the start sequence these messages drive.
+- [Pairing, remote control and volume](control.md) for the inbound control channel, which is
+  separate from all of this.

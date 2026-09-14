@@ -138,11 +138,11 @@ See [providers/fastmcp_server](../../music_assistant/providers/fastmcp_server/RE
 
 ## Related
 
-- [plugins.md](plugins.md) for the plugin provider model these hooks live on.
+- [Plugins](plugins.md) for the plugin provider model these hooks live on.
 - [providers/ai_radio](../../music_assistant/providers/ai_radio/README.md) for the orchestrator.
 - [providers/music_quiz](../../music_assistant/providers/music_quiz/README.md) for the grounded
   consumer.
 - [providers/smart_playlist](../../music_assistant/providers/smart_playlist/README.md) for AI as an
   optional garnish.
-- [players.md](players.md) for the announcement flow.
-- [api-and-auth.md](api-and-auth.md) for tokens and scopes.
+- [Players](players.md) for the announcement flow.
+- [The API and authentication](api-and-auth.md) for tokens and scopes.

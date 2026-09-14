@@ -38,7 +38,7 @@ comparison rather than a full parse.
 
 Items resolve by provider mapping, matching on the instance first and then on the domain. A hit
 updates the row when it changed. A miss goes through the full match-and-store flow described in
-[media/matching.md](media/matching.md), with the incoming mappings marked as in the provider's
+[Matching and merging](media/matching.md), with the incoming mappings marked as in the provider's
 library.
 
 ## Deletions

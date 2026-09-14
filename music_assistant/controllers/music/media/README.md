@@ -7,7 +7,8 @@ direction one way.
 
 ## Deep dives
 
-- [matching.md](matching.md): match and store, merging, external ids, and the comparison APIs.
+- [Matching and merging](matching.md): match and store, merging, external ids, and the comparison
+  APIs.
 
 | Module | Media type |
 |---|---|
@@ -71,7 +72,7 @@ fetch routes back to the owning sub-controller. Audiobooks are currently the onl
 Adding an item to the library is a match-first operation: an incoming provider item joins an
 existing row when it shares a mapping, an external id or a confident name match, and becomes a
 new row otherwise. The rules, the merge semantics and the three comparison APIs are in
-[matching.md](matching.md).
+[Matching and merging](matching.md).
 
 ## Event suppression during bulk work
 
@@ -115,5 +116,6 @@ user edits without re-querying per item.
 
 ## Related architecture docs
 
-- [Providers](../../../../docs/architecture/providers.md) for the provider interface these controllers fetch through.
+- [Providers](../../../../docs/architecture/providers.md) for the provider interface these
+  controllers fetch through.
 - [Overview](../../../../docs/architecture/overview.md) for where the music controller sits.

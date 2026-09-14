@@ -172,8 +172,8 @@ requested duration, and FFmpeg then silently produces no output at all.
 ## Related architecture docs
 
 - [Playback](../../../../docs/architecture/playback.md) for where crossfade sits in the pipeline.
-- [controllers/streams/processing.md](../processing.md) for the mixing stage this feeds.
-- [controllers/player_queues/continuation.md](../../player_queues/continuation.md) for the ordering
+- [Normalization, crossfade and overlay](../processing.md) for the mixing stage this feeds.
+- [Look-ahead and keeping a queue going](../../player_queues/continuation.md) for the ordering
   that uses the same analysis.
 - [providers/smart_fades](../../../providers/smart_fades/README.md) for where the analysis is
   produced.

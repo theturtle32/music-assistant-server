@@ -9,11 +9,13 @@ with different timing models, and because precise multi-room synchronization is 
 
 ## Deep dives
 
-- [streaming.md](streaming.md): the stream session, start timing, late join, and the shared clock.
-- [binaries.md](binaries.md): why the streaming runs in an external binary, and how it is driven.
-- [control.md](control.md): pairing, remote control from the device, volume ownership, and the
-  independent control planes on Apple devices.
-- [sendspin-bridge.md](sendspin-bridge.md): bridging AirPlay players into the native synchronized
+- [Streaming and synchronization](streaming.md): the stream session, start timing, late join, and
+  the shared clock.
+- [The streaming binary](binaries.md): why the streaming runs in an external binary, and how it is
+  driven.
+- [Pairing, remote control and volume](control.md): pairing, remote control from the device, volume
+  ownership, and the independent control planes on Apple devices.
+- [The Sendspin bridge](sendspin-bridge.md): bridging AirPlay players into the native synchronized
   protocol for cross-protocol grouping.
 
 ## Module layout
@@ -29,7 +31,7 @@ with different timing models, and because precise multi-room synchronization is 
 | `sendspin_bridge.py` | The bridge to the native synchronized protocol |
 | `dashboard.py` | Casting a dashboard to an Apple TV |
 | `helpers.py`, `constants.py` | Binary lookup, record serialization, tuning values |
-| `bin/` | Where the streaming binary is placed; see [bin/README.md](bin/README.md) |
+| `bin/` | Where the streaming binary is placed; see [cliairplay binaries](bin/README.md) |
 
 ## Route selection is the binary's job
 
@@ -76,7 +78,7 @@ is present in the very record that creates the player, so unlike the separate co
 cannot vary with discovery timing.
 
 Which control features a standalone player then offers is decided from advertised capabilities and
-degrades gracefully. See [control.md](control.md), and
+degrades gracefully. See [Pairing, remote control and volume](control.md), and
 [protocol linking](../../../docs/architecture/protocol-linking.md) for how endpoints merge.
 
 ## Configuration
@@ -92,7 +94,7 @@ play at all. It defaults per device family, applies to the modern route only, an
 described under the limitation below.
 
 Pairing credentials are stored per plane and separately from each other; see
-[control.md](control.md).
+[Pairing, remote control and volume](control.md).
 
 ## Limitations worth knowing
 

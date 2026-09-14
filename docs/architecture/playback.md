@@ -101,7 +101,7 @@ configured strategy while a podcast episode continues with the next episode.
 Live sources have no natural end, so autoplay does not apply to them at all.
 
 See
-[controllers/player_queues/continuation.md](../../music_assistant/controllers/player_queues/continuation.md).
+[Look-ahead and keeping a queue going](../../music_assistant/controllers/player_queues/continuation.md).
 
 ## Reconciling against reality
 
@@ -119,7 +119,7 @@ A sync group delegates to a member's native protocol, so the audio path is the l
 group fans the same stream out to each member independently, which is the only way to synchronize
 across protocols. Ad-hoc sync uses the protocol's own sync.
 
-See [grouping-and-volume.md](grouping-and-volume.md).
+See [Grouping and volume](grouping-and-volume.md).
 
 ## Live sources bypass most of this
 
@@ -128,11 +128,11 @@ buffer, normalization, crossfade and overlay, and is paced to minimize latency r
 a cushion.
 
 It is also tracked as a per-player session rather than a queue item, so selecting one leaves the
-queue intact. See [plugins.md](plugins.md).
+queue intact. See [Plugins](plugins.md).
 
 ## Related
 
 - [controllers/player_queues](../../music_assistant/controllers/player_queues/README.md)
 - [controllers/streams](../../music_assistant/controllers/streams/README.md)
-- [players.md](players.md) for command routing and announcements.
-- [media-library.md](media-library.md) for where the items come from.
+- [Players](players.md) for command routing and announcements.
+- [The media library](media-library.md) for where the items come from.

@@ -98,7 +98,7 @@ anchor and well inside the acknowledgement timeout.
 
 ## Related
 
-- [streaming.md](streaming.md) for anchoring, late join and the shared clock.
+- [Streaming and synchronization](streaming.md) for anchoring, late join and the shared clock.
 - [providers/sendspin](../sendspin/README.md) for the protocol on the other side of the bridge.
 - [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for cross-protocol
   grouping.

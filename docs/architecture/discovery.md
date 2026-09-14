@@ -57,7 +57,7 @@ rather than holding partial state and hoping for a second callback.
 **The pull matches device names exactly, not as a substring.** Matching by "does the cache key
 contain this name" would match a different device whose name merely contains the one asked for, and
 the provider would build a player out of another device's records. See
-[controllers/discovery/mdns.md](../../music_assistant/controllers/discovery/mdns.md).
+[mDNS discovery](../../music_assistant/controllers/discovery/mdns.md).
 
 ## SSDP and UPnP
 
@@ -122,7 +122,7 @@ the current one back, so the integration keeps authenticating without a restart.
 ## Related
 
 - [controllers/discovery](../../music_assistant/controllers/discovery/README.md) for the package.
-- [protocol-linking.md](protocol-linking.md) for what happens once several endpoints turn out to be
+- [Protocol linking](protocol-linking.md) for what happens once several endpoints turn out to be
   one device.
-- [providers.md](providers.md) for manifests and the provider lifecycle.
-- [api-and-auth.md](api-and-auth.md) for the integration token being rotated.
+- [Providers](providers.md) for manifests and the provider lifecycle.
+- [The API and authentication](api-and-auth.md) for the integration token being rotated.

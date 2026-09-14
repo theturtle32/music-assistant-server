@@ -49,5 +49,5 @@ they group a real player.
 
 - [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the AI provider-feature contract.
 - [Plugins](../../../docs/architecture/plugins.md) for the plugin categories.
-- [helpers/shared-playback.md](../../helpers/shared-playback.md) for the session abstraction.
+- [Shared playback sessions](../../helpers/shared-playback.md) for the session abstraction.
 - [API and auth](../../../docs/architecture/api-and-auth.md) for guest access and join codes.

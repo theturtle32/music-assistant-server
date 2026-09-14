@@ -7,7 +7,7 @@ with three selectable outputs instead of three players the user has to guess bet
 These players are never created by hand. The player controller creates one when protocol endpoints
 match the same device and nothing native claims it, and this provider only owns the player model.
 The matching itself, and the linking flows around it, live in
-[controllers/players/protocol-linking.md](../../controllers/players/protocol-linking.md).
+[Protocol linking internals](../../controllers/players/protocol-linking.md).
 
 ## Module layout
 

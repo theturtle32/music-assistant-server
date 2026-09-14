@@ -6,10 +6,12 @@ analysis readers that sit on the playback buffer.
 
 ## Deep dives
 
-- [buffering.md](buffering.md): buffer modes, the buffer lifecycle, and output pacing.
-- [processing.md](processing.md): volume normalization, crossfade, and the audio overlay.
-- [output.md](output.md): DSP and output plans, format selection, fidelity and bit-perfect.
-- [analysis.md](analysis.md): the passive analysis readers, the providers, the background scan.
+- [Buffering and pacing](buffering.md): buffer modes, the buffer lifecycle, and output pacing.
+- [Normalization, crossfade and overlay](processing.md): volume normalization, crossfade, and the
+  audio overlay.
+- [DSP, formats and fidelity](output.md): DSP and output plans, format selection, fidelity and
+  bit-perfect.
+- [Audio analysis](analysis.md): the passive analysis readers, the providers, the background scan.
 
 ## Module layout
 
@@ -86,7 +88,9 @@ URLs, and the concurrency of the nightly analysis scan.
 
 ## Related architecture docs
 
-- [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to audio.
+- [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to
+  audio.
 - [Players](../../../docs/architecture/players.md) for how a player declares its supported formats.
-- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for group streams and shared outputs.
+- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for group streams and
+  shared outputs.
 - [Plugins](../../../docs/architecture/plugins.md) for live audio sources that bypass this pipeline.

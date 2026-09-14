@@ -81,6 +81,7 @@ Dissolving is skipped entirely while the group is pinned by simulated power.
 
 ## Related
 
-- [membership.md](membership.md) for what happens when members come and go mid-session.
+- [Membership and compatibility](membership.md) for what happens when members come and go
+  mid-session.
 - [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for the session model
   shared with universal groups.

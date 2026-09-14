@@ -80,7 +80,7 @@ The overloading is genuinely confusing, so it is worth separating them.
 | The tasks controller | Long-running jobs with progress, logs, scheduling and a UI surface | Yes |
 
 Only the third emits events or appears in the frontend. Short-lived internal jobs belong on the
-first. See [operations.md](operations.md).
+first. See [Operations](operations.md).
 
 ## Provider events
 
@@ -93,10 +93,10 @@ plugin talk to its own frontend.
 
 ## Related
 
-- [api-and-auth.md](api-and-auth.md) for the transports and the scope model.
-- [overview.md](overview.md) for where registration sits in startup.
-- [music_assistant/events.md](../../music_assistant/events.md) for the bus mechanics, the registry
-  detail, and the enum members that look live but are not.
+- [The API and authentication](api-and-auth.md) for the transports and the scope model.
+- [Overview](overview.md) for where registration sits in startup.
+- [The event bus and the command registry](../../music_assistant/events.md) for the bus mechanics,
+  the registry detail, and the enum members that look live but are not.
 - [controllers/webserver](../../music_assistant/controllers/webserver/README.md) for the dispatch
   and connection detail.
-- [operations.md](operations.md) for the task system.
+- [Operations](operations.md) for the task system.

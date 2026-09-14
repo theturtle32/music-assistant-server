@@ -66,4 +66,5 @@ reclaimable to be worth the startup cost. An oversized database is logged as a w
 ## Related architecture docs
 
 - [Overview](../../../docs/architecture/overview.md) for where the cache sits among the controllers.
-- [Providers](../../../docs/architecture/providers.md) for the throttling and caching expectations on provider API calls.
+- [Providers](../../../docs/architecture/providers.md) for the throttling and caching expectations
+  on provider API calls.

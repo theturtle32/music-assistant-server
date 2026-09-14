@@ -6,8 +6,8 @@ lives.
 
 ## Deep dives
 
-- [events.md](events.md): the event bus, the command registry, and the enum members that look
-  live but are not.
+- [The event bus and the command registry](events.md): the event bus, the command registry, and the
+  enum members that look live but are not.
 
 ## Layout
 
@@ -40,7 +40,7 @@ Three things on it are worth knowing before reading any other package.
 on the hub, scanned for at startup. Both API transports dispatch through it.
 
 **The event bus.** A set of subscribers with optional filters, signalled synchronously. See
-[events.md](events.md).
+[The event bus and the command registry](events.md).
 
 **Task tracking.** Two primitives, one for a tracked task and one for a delayed call, both keyed by
 an optional id so a repeat call replaces the pending one. Everything they create is cancelled at
@@ -56,11 +56,11 @@ and the Python client share, so a change there is a wire-format change across th
 
 `helpers/` is shared utility code with no single owner. A few helpers are substantial enough to be
 subsystems in their own right and carry their own documentation:
-[shared-playback.md](helpers/shared-playback.md) for group listening sessions. Others are
+[Shared playback sessions](helpers/shared-playback.md) for group listening sessions. Others are
 documented where they are used: the scrobbler base in
 [plugins](../docs/architecture/plugins.md), the audio and ffmpeg helpers in
 [controllers/streams](controllers/streams/README.md), and the comparison and external-id helpers in
-[controllers/music/media/matching.md](controllers/music/media/matching.md).
+[Matching and merging](controllers/music/media/matching.md).
 
 ## Related architecture docs
 

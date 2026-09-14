@@ -6,7 +6,8 @@ server itself.
 
 ## Deep dives
 
-- [mdns.md](mdns.md): the aggregated browser, replay, on-demand lookup and exact name matching.
+- [mDNS discovery](mdns.md): the aggregated browser, replay, on-demand lookup and exact name
+  matching.
 
 ## Responsibilities
 

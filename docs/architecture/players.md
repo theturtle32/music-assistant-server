@@ -50,7 +50,7 @@ Volume and mute are **independent of each other**. A muted player stays muted wh
 changes, and the new level is what it will play at once unmuted. Simulated mute is the exception,
 because it is implemented with the volume itself, so there is no separate state to preserve.
 
-See [grouping-and-volume.md](grouping-and-volume.md) for the routing detail.
+See [Grouping and volume](grouping-and-volume.md) for the routing detail.
 
 ## Change detection is a hot path
 
@@ -134,11 +134,11 @@ Resolved stream details deliberately **outlive** the stream, because a paused ex
 the player while its stream is torn down, and clearing them would lose the session's identity
 across an ordinary pause.
 
-See [plugins.md](plugins.md) for the audio source model itself.
+See [Plugins](plugins.md) for the audio source model itself.
 
 ## Related
 
-- [protocol-linking.md](protocol-linking.md) for one device speaking several protocols.
-- [grouping-and-volume.md](grouping-and-volume.md) for groups, sync and volume routing.
-- [playback.md](playback.md) for what happens after a play command.
+- [Protocol linking](protocol-linking.md) for one device speaking several protocols.
+- [Grouping and volume](grouping-and-volume.md) for groups, sync and volume routing.
+- [Playback](playback.md) for what happens after a play command.
 - [controllers/players](../../music_assistant/controllers/players/README.md) for the internals.

@@ -50,63 +50,63 @@ graph TB
 
 Config, cache and the event bus are deliberately absent from that diagram: everything above
 depends on them, so they have no honest place in a dataflow drawing. See
-[overview.md](overview.md) for the full controller map.
+[Overview](overview.md) for the full controller map.
 
 ## Where to start
 
-**I want to build a music provider.** Read [overview.md](overview.md), then
-[providers.md](providers.md) for the lifecycle and manifest, [media-library.md](media-library.md)
-for how your items are matched and stored, and [configuration.md](configuration.md) for config
-entries and setup flows. The `_demo_music_provider` directory is an annotated template.
+**I want to build a music provider.** Read [Overview](overview.md), then [Providers](providers.md)
+for the lifecycle and manifest, [The media library](media-library.md) for how your items are matched
+and stored, and [Configuration and persistence](configuration.md) for config entries and setup
+flows. The `_demo_music_provider` directory is an annotated template.
 
-**I want to build a player provider.** Read [overview.md](overview.md), then
-[players.md](players.md) for the player model and command routing,
-[protocol-linking.md](protocol-linking.md) if your devices also speak another protocol,
-[discovery.md](discovery.md) for being found on the network, and [providers.md](providers.md) for
+**I want to build a player provider.** Read [Overview](overview.md), then
+[Players](players.md) for the player model and command routing,
+[Protocol linking](protocol-linking.md) if your devices also speak another protocol,
+[Discovery](discovery.md) for being found on the network, and [Providers](providers.md) for
 the lifecycle. See `_demo_player_provider`.
 
-**I want to build a plugin.** Read [plugins.md](plugins.md) for live audio sources, the selection
+**I want to build a plugin.** Read [Plugins](plugins.md) for live audio sources, the selection
 lifecycle and the receiver and scrobbler patterns. See `_demo_plugin_provider`.
 
-**I want to understand playback.** Read [playback.md](playback.md) for the path from a play request
-to audio on a speaker, then [grouping-and-volume.md](grouping-and-volume.md) for what changes when
+**I want to understand playback.** Read [Playback](playback.md) for the path from a play request
+to audio on a speaker, then [Grouping and volume](grouping-and-volume.md) for what changes when
 more than one speaker is involved.
 
-**I want to understand the API.** Read [api-and-auth.md](api-and-auth.md) for the surface, the
-transports, scopes and users, plus [events-and-commands.md](events-and-commands.md) for how
-commands and events relate.
+**I want to understand the API.** Read [The API and authentication](api-and-auth.md) for the
+surface, the transports, scopes and users, plus [Events and commands](events-and-commands.md) for
+how commands and events relate.
 
-**I want to connect an agent, or use AI features.** Read [ai-and-mcp.md](ai-and-mcp.md).
+**I want to connect an agent, or use AI features.** Read [AI and MCP](ai-and-mcp.md).
 
-**I am debugging a running server.** Read [operations.md](operations.md) for background jobs, the
-diagnostics report and where the logs are, and [discovery.md](discovery.md) for why a device is or
+**I am debugging a running server.** Read [Operations](operations.md) for background jobs, the
+diagnostics report and where the logs are, and [Discovery](discovery.md) for why a device is or
 is not being found.
 
-**I am adding user-facing text.** Read [localization.md](localization.md).
+**I am adding user-facing text.** Read [Localization](localization.md).
 
-**I want the whole picture.** Read [overview.md](overview.md),
-[events-and-commands.md](events-and-commands.md) and [configuration.md](configuration.md) first,
-since everything else assumes them, then follow whichever path above interests you.
+**I want the whole picture.** Read [Overview](overview.md),
+[Events and commands](events-and-commands.md) and [Configuration and persistence](configuration.md)
+first, since everything else assumes them, then follow whichever path above interests you.
 
 ## All pages
 
 | Page | Covers |
 |---|---|
-| [overview.md](overview.md) | The hub, the controllers, startup and shutdown, data directories |
-| [events-and-commands.md](events-and-commands.md) | The event bus, the command registry, and how they relate |
-| [configuration.md](configuration.md) | Config scopes, persistence, setup flows |
-| [providers.md](providers.md) | Provider types, manifests, loading, features, errors |
-| [players.md](players.md) | The player model and how a command reaches a device |
-| [protocol-linking.md](protocol-linking.md) | Merging one physical device that speaks several protocols |
-| [grouping-and-volume.md](grouping-and-volume.md) | The grouping models and volume routing |
-| [media-library.md](media-library.md) | Aggregating providers into one library, and enriching it |
-| [playback.md](playback.md) | From a play request to audio on a speaker |
-| [plugins.md](plugins.md) | Live audio sources and the other plugin patterns |
-| [api-and-auth.md](api-and-auth.md) | The API surface, users, scopes, remote access |
-| [discovery.md](discovery.md) | Finding devices on the network |
-| [operations.md](operations.md) | Background tasks, diagnostics, debugging |
-| [localization.md](localization.md) | Authoring translatable text |
-| [ai-and-mcp.md](ai-and-mcp.md) | AI provider features, and this server as an MCP server |
+| [Overview](overview.md) | The hub, the controllers, startup and shutdown, data directories |
+| [Events and commands](events-and-commands.md) | The event bus, the command registry, and how they relate |
+| [Configuration and persistence](configuration.md) | Config scopes, persistence, setup flows |
+| [Providers](providers.md) | Provider types, manifests, loading, features, errors |
+| [Players](players.md) | The player model and how a command reaches a device |
+| [Protocol linking](protocol-linking.md) | Merging one physical device that speaks several protocols |
+| [Grouping and volume](grouping-and-volume.md) | The grouping models and volume routing |
+| [The media library](media-library.md) | Aggregating providers into one library, and enriching it |
+| [Playback](playback.md) | From a play request to audio on a speaker |
+| [Plugins](plugins.md) | Live audio sources and the other plugin patterns |
+| [The API and authentication](api-and-auth.md) | The API surface, users, scopes, remote access |
+| [Discovery](discovery.md) | Finding devices on the network |
+| [Operations](operations.md) | Background tasks, diagnostics, debugging |
+| [Localization](localization.md) | Authoring translatable text |
+| [AI and MCP](ai-and-mcp.md) | AI provider features, and this server as an MCP server |
 
 ## Package documentation
 

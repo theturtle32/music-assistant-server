@@ -5,10 +5,10 @@ announcements.
 
 ## Deep dives
 
-- [protocol-linking.md](protocol-linking.md): identifier matching, the linking flows, output
+- [Protocol linking internals](protocol-linking.md): identifier matching, the linking flows, output
   selection, and the persisted state behind them.
-- [authoring-a-player.md](authoring-a-player.md): what a player provider has to supply, and how to
-  make protocol linking work for your devices.
+- [Writing a player provider](authoring-a-player.md): what a player provider has to supply, and how
+  to make protocol linking work for your devices.
 
 ## Module layout
 
@@ -94,6 +94,8 @@ player ids onto the protocol players actually carrying the audio. See
 ## Related architecture docs
 
 - [Players](../../../docs/architecture/players.md) for the model and command routing.
-- [Protocol linking](../../../docs/architecture/protocol-linking.md) for merging one device's protocols.
-- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for groups and volume routing.
+- [Protocol linking](../../../docs/architecture/protocol-linking.md) for merging one device's
+  protocols.
+- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for groups and volume
+  routing.
 - [Playback](../../../docs/architecture/playback.md) for what happens after a play command.

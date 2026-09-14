@@ -44,7 +44,7 @@ Describe the device's capabilities, declare the underlying player and any identi
 registering, register the external player with a stream-start callback, and either reuse the shared
 bridge role to receive audio or write a role of your own.
 
-[airplay/sendspin-bridge.md](../airplay/sendspin-bridge.md) documents a bridge that streams audio,
+[The Sendspin bridge](../airplay/sendspin-bridge.md) documents a bridge that streams audio,
 including what it does when the transport dies. The Chromecast bridge is the worked example of one
 that does not.
 
@@ -68,7 +68,7 @@ unloads. Configurations belonging to an owner that no longer exists are swept at
 plugin has to create its anchor again. Re-creating it with the same id reuses the persisted
 configuration, so the restoration is transparent, but nothing happens unless the owner acts. That is
 the sharp edge behind the same warning in
-[helpers/shared-playback.md](../../helpers/shared-playback.md), which is what most callers use
+[Shared playback sessions](../../helpers/shared-playback.md), which is what most callers use
 instead of this API directly.
 
 ## Related

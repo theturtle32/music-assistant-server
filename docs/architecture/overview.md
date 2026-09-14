@@ -148,7 +148,8 @@ usual environment variables for overriding both.
 
 ## Related
 
-- [events-and-commands.md](events-and-commands.md) for the bus and the registry the hub owns.
-- [configuration.md](configuration.md) for what the config controller does with all of this.
-- [providers.md](providers.md) for the loading lifecycle the last startup steps run.
-- [operations.md](operations.md) for the task system and diagnostics.
+- [Events and commands](events-and-commands.md) for the bus and the registry the hub owns.
+- [Configuration and persistence](configuration.md) for what the config controller does with all of
+  this.
+- [Providers](providers.md) for the loading lifecycle the last startup steps run.
+- [Operations](operations.md) for the task system and diagnostics.

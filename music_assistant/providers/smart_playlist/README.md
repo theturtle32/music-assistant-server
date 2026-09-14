@@ -25,5 +25,6 @@ going away.
 ## Related architecture docs
 
 - [Plugins](../../../docs/architecture/plugins.md) for the plugin provider model and its hooks.
-- [Media library](../../../docs/architecture/media-library.md) for dynamic playlists as library rows.
+- [Media library](../../../docs/architecture/media-library.md) for dynamic playlists as library
+  rows.
 - [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the AI provider-feature contract.

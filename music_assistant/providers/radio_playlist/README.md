@@ -45,7 +45,7 @@ library that already holds the answer never pays for the network call.
 
 - [Plugins](../../../docs/architecture/plugins.md) for plugins that implement music features.
 - [Playback](../../../docs/architecture/playback.md) and
-  [controllers/player_queues/continuation.md](../../controllers/player_queues/continuation.md) for
+  [Look-ahead and keeping a queue going](../../controllers/player_queues/continuation.md) for
   the bounded pool that consumes these playlists.
 - [Media library](../../../docs/architecture/media-library.md) for dynamic playlists as library
   rows.

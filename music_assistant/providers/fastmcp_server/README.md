@@ -9,7 +9,8 @@ webserver under a configurable path. No extra server process, no extra port, no 
 
 ## Deep dives
 
-- [permissions.md](permissions.md): tag-driven visibility, confirmation, and authentication.
+- [Permissions and authentication](permissions.md): tag-driven visibility, confirmation, and
+  authentication.
 
 ## Module layout
 
@@ -56,7 +57,7 @@ namespaces cover the library, the queue, playback, players, playlists, media, me
 and configuration.
 
 How many tools a given client sees depends entirely on configuration; see
-[permissions.md](permissions.md).
+[Permissions and authentication](permissions.md).
 
 Every tool carries annotations describing whether it is read-only, destructive, idempotent or
 open-world, plus a title, so a host can present risk sensibly. Timeouts are chosen per cost class,

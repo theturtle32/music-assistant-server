@@ -10,7 +10,8 @@ streaming, because a just-in-time render has to be served from somewhere.
 
 ## Deep dives
 
-- [generation.md](generation.md): slots, the section rule DSL, and how speech reaches the queue.
+- [Generating a program](generation.md): slots, the section rule DSL, and how speech reaches the
+  queue.
 
 ## Module layout
 
@@ -79,6 +80,7 @@ sense that any playlist URI works as a source.
 
 ## Related architecture docs
 
-- [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the provider-feature contract this consumes.
+- [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the provider-feature contract this
+  consumes.
 - [Playback](../../../docs/architecture/playback.md) for how enqueued items reach a speaker.
 - [Plugins](../../../docs/architecture/plugins.md) for the plugin provider model.

@@ -9,11 +9,11 @@ behaves identically on either, including its authentication and its required sco
 API documentation comes from that registry too.
 
 Use the WebSocket when you need events as well as commands; use HTTP for simple request and
-response. See [events-and-commands.md](events-and-commands.md).
+response. See [Events and commands](events-and-commands.md).
 
 Audio is deliberately served from a separate HTTP-only server with no TLS and no authentication,
 because embedded players struggle with handshakes and cannot hold credentials. Stream URLs carry a
-session id instead, which is what rejects a stale request. See [playback.md](playback.md).
+session id instead, which is what rejects a stale request. See [Playback](playback.md).
 
 ## Authorization is by scope
 
@@ -161,11 +161,11 @@ An instance is identified by an id derived from its own certificate fingerprint 
 separately. Two connection modes exist, one on public infrastructure and one using Home Assistant
 Cloud relays for networks where a direct connection is impossible.
 
-See [controllers/webserver/remote-access.md](../../music_assistant/controllers/webserver/remote-access.md).
+See [Remote access](../../music_assistant/controllers/webserver/remote-access.md).
 
 ## Related
 
-- [events-and-commands.md](events-and-commands.md) for the registry and the event bus.
+- [Events and commands](events-and-commands.md) for the registry and the event bus.
 - [controllers/webserver](../../music_assistant/controllers/webserver/README.md) for the package.
-- [configuration.md](configuration.md) for the config command surface.
-- [ai-and-mcp.md](ai-and-mcp.md) for how an agent authenticates.
+- [Configuration and persistence](configuration.md) for the config command surface.
+- [AI and MCP](ai-and-mcp.md) for how an agent authenticates.

@@ -9,8 +9,9 @@ that member's native protocol synchronize the rest. Cross-protocol grouping is a
 
 ## Deep dives
 
-- [lifecycle.md](lifecycle.md): forming, dissolving, the session signal, and optional power.
-- [membership.md](membership.md): compatibility, adding and removing members, leader handoff.
+- [Group lifecycle](lifecycle.md): forming, dissolving, the session signal, and optional power.
+- [Membership and compatibility](membership.md): compatibility, adding and removing members, leader
+  handoff.
 
 ## Module layout
 

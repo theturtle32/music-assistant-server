@@ -118,9 +118,10 @@ player that every guest's own device attaches to.
 
 The part worth knowing is that a guest joining is a **grouping operation, not a second stream**, so
 all the protocol translation in [grouping and volume](grouping-and-volume.md) applies unchanged.
-See [helpers/shared-playback.md](../../music_assistant/helpers/shared-playback.md).
+See [Shared playback sessions](../../music_assistant/helpers/shared-playback.md).
 
-Guest accounts and join codes are a separate mechanism; see [api-and-auth.md](api-and-auth.md).
+Guest accounts and join codes are a separate mechanism; see
+[The API and authentication](api-and-auth.md).
 
 ## Scrobblers
 
@@ -146,10 +147,10 @@ outside that set surfaces as the bug it is.
 
 ## Related
 
-- [providers.md](providers.md) for the provider lifecycle and features.
-- [players.md](players.md) for live source sessions on a player.
-- [playback.md](playback.md) for how live audio bypasses the pipeline.
-- [ai-and-mcp.md](ai-and-mcp.md) for the AI-facing plugins.
+- [Providers](providers.md) for the provider lifecycle and features.
+- [Players](players.md) for live source sessions on a player.
+- [Playback](playback.md) for how live audio bypasses the pipeline.
+- [AI and MCP](ai-and-mcp.md) for the AI-facing plugins.
 - [providers/vban_receiver](../../music_assistant/providers/vban_receiver/README.md) for the
   simplest receiver, and
   [providers/spotify_connect](../../music_assistant/providers/spotify_connect/README.md) and

@@ -21,7 +21,7 @@ The tasks controller manages work a user should be able to see and interfere wit
 playlist mutations, metadata refreshes, the audio analysis scan.
 
 **It is not the general-purpose scheduler.** Short-lived internal work belongs on the event loop
-helpers described in [events-and-commands.md](events-and-commands.md), which also disambiguates the
+helpers described in [Events and commands](events-and-commands.md), which also disambiguates the
 three different things called tasks in this codebase.
 
 | Kind | Lifetime | Retention |
@@ -142,11 +142,11 @@ list and the remaining rationale.
 
 If a provider is preventing startup, safe mode loads the core controllers and builtin providers
 only, so the UI is reachable and the offending provider can be disabled before restarting normally.
-See [overview.md](overview.md).
+See [Overview](overview.md).
 
 ## Related
 
-- [events-and-commands.md](events-and-commands.md) for the three kinds of task.
-- [discovery.md](discovery.md) for why a device is not appearing.
-- [configuration.md](configuration.md) for where settings and databases live.
-- [api-and-auth.md](api-and-auth.md) for the scopes these commands require.
+- [Events and commands](events-and-commands.md) for the three kinds of task.
+- [Discovery](discovery.md) for why a device is not appearing.
+- [Configuration and persistence](configuration.md) for where settings and databases live.
+- [The API and authentication](api-and-auth.md) for the scopes these commands require.

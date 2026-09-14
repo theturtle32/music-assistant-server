@@ -6,11 +6,14 @@ and playback bookkeeping.
 
 ## Deep dives
 
-- [search.md](search.md): the search flow, the full-text index, and URI parsing.
-- [sync.md](sync.md): sync scheduling, bulk writes, deletion handling, provider removal.
-- [schema.md](schema.md): tables, the playlog, migrations, and dev versus stable numbering.
-- [recommendations.md](recommendations.md): row aggregation, library rows, the recency engine.
-- [media/README.md](media/README.md): the per-media-type sub-controllers and the matching rules.
+- [Search and URIs](search.md): the search flow, the full-text index, and URI parsing.
+- [Library sync](sync.md): sync scheduling, bulk writes, deletion handling, provider removal.
+- [Database schema and migrations](schema.md): tables, the playlog, migrations, and dev versus
+  stable numbering.
+- [Recommendations and recency](recommendations.md): row aggregation, library rows, the recency
+  engine.
+- [Media sub-controllers](media/README.md): the per-media-type sub-controllers and the matching
+  rules.
 
 ## Package layout
 
@@ -69,7 +72,7 @@ controller, so the user can see them, pause them or run one now.
 | Database cleanup | Nightly | Prunes orphaned mappings, playlog rows and stale entries. Also queued whenever the last provider sync finishes |
 | Provider mapping correction | Monthly | Re-runs the cross-instance mapping cloning over the whole library, so mappings created before a second instance of a domain existed catch up |
 | Duplicate track reconciliation | Hourly | Merges library tracks that ended up stored twice across providers |
-| Genre mapping scan | Nightly | Applies the genre alias taxonomies across the library, registered by the genre sub-controller. See [controllers/metadata/genres.md](../metadata/genres.md) |
+| Genre mapping scan | Nightly | Applies the genre alias taxonomies across the library, registered by the genre sub-controller. See [Genres and metadata](../metadata/genres.md) |
 
 Duplicate track reconciliation is the one with behaviour worth knowing, and it is deliberately
 timid in two ways.
@@ -113,7 +116,11 @@ returning nothing.
 
 ## Related architecture docs
 
-- [Media library](../../../docs/architecture/media-library.md) for the big picture of how a library is assembled.
-- [Providers](../../../docs/architecture/providers.md) for the provider interface, features and load lifecycle.
-- [Playback](../../../docs/architecture/playback.md) for how library items reach a queue and a speaker.
-- [Plugins](../../../docs/architecture/plugins.md) for audio sources, dynamic playlists and plugin-contributed rows.
+- [Media library](../../../docs/architecture/media-library.md) for the big picture of how a library
+  is assembled.
+- [Providers](../../../docs/architecture/providers.md) for the provider interface, features and load
+  lifecycle.
+- [Playback](../../../docs/architecture/playback.md) for how library items reach a queue and a
+  speaker.
+- [Plugins](../../../docs/architecture/plugins.md) for audio sources, dynamic playlists and
+  plugin-contributed rows.

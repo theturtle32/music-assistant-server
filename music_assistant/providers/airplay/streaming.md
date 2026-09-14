@@ -104,8 +104,8 @@ The clip is wrapped in ducked silence, because the binary holds the duck for the
 Both volume changes are timed on the audible instant the binary acknowledges, and travel through the
 players controller so they land on whichever control owns the output. Neither is ever heard as the
 music changing level, because the duck is deepened by exactly the size of the volume bump: the music
-keeps its perceived level while the clip gets louder. See [control.md](control.md) for who owns the
-volume.
+keeps its perceived level while the clip gets louder. See
+[Pairing, remote control and volume](control.md) for who owns the volume.
 
 ## The shared clock daemon
 
@@ -134,6 +134,6 @@ Playback keeps working; multi-room synchronization on the modern route may be de
 
 ## Related
 
-- [binaries.md](binaries.md) for the status messages every step here waits on.
-- [sendspin-bridge.md](sendspin-bridge.md) for bridged players and stalled receiver clocks.
+- [The streaming binary](binaries.md) for the status messages every step here waits on.
+- [The Sendspin bridge](sendspin-bridge.md) for bridged players and stalled receiver clocks.
 - [Playback](../../../docs/architecture/playback.md) for flow mode and the pipeline upstream.

@@ -46,7 +46,7 @@ Finding a track on a *different* provider is a separate question with a graded a
 caller has to decide how good a substitute is acceptable. Playlist migration is the consumer.
 
 The detail lives in
-[controllers/music/media/matching.md](../../music_assistant/controllers/music/media/matching.md).
+[Matching and merging](../../music_assistant/controllers/music/media/matching.md).
 
 ## Sync
 
@@ -63,7 +63,7 @@ library mappings is removed outright, because dangling rows stay visible in arti
 An item gone from a streaming provider keeps its mapping, flagged as no longer in that provider's
 library, which preserves the metadata accumulated against it.
 
-See [controllers/music/sync.md](../../music_assistant/controllers/music/sync.md).
+See [Library sync](../../music_assistant/controllers/music/sync.md).
 
 ## Search
 
@@ -78,7 +78,7 @@ than remembered.
 Library search itself is backed by a trigram index, with a fallback scan for terms too short for a
 trigram tokenizer to match at all.
 
-See [controllers/music/search.md](../../music_assistant/controllers/music/search.md).
+See [Search and URIs](../../music_assistant/controllers/music/search.md).
 
 ## Enrichment
 
@@ -108,7 +108,7 @@ Rows and their contents are separate calls, because a Discover page has to rende
 fetches a row's items.
 
 See
-[controllers/music/recommendations.md](../../music_assistant/controllers/music/recommendations.md).
+[Recommendations and recency](../../music_assistant/controllers/music/recommendations.md).
 
 ## Per-user by construction
 
@@ -137,5 +137,5 @@ pool instead of a linear enqueue.
 - [controllers/music](../../music_assistant/controllers/music/README.md) and its deep dives.
 - [controllers/music/media](../../music_assistant/controllers/music/media/README.md) for the
   per-type sub-controllers.
-- [providers.md](providers.md) for the music provider contract.
-- [playback.md](playback.md) for what happens when one of these items is played.
+- [Providers](providers.md) for the music provider contract.
+- [Playback](playback.md) for what happens when one of these items is played.

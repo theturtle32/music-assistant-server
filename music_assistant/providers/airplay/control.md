@@ -92,6 +92,7 @@ their exposed player id stable and their merging into one user-facing player int
 
 ## Related
 
-- [streaming.md](streaming.md) for announcements, which drive volume twice in quick succession.
-- [binaries.md](binaries.md) for the outbound command channel.
+- [Streaming and synchronization](streaming.md) for announcements, which drive volume twice in quick
+  succession.
+- [The streaming binary](binaries.md) for the outbound command channel.
 - [Players](../../../docs/architecture/players.md) for control chains and power.

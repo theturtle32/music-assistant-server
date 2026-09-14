@@ -10,8 +10,10 @@ source, not the only possible one.
 
 ## Deep dives
 
-- [state.md](state.md): the server record, persistence, reconciling against the player, play counting.
-- [continuation.md](continuation.md): look-ahead and buffering, the managed pool, autoplay, ordering.
+- [State, persistence and reconciliation](state.md): the server record, persistence, reconciling
+  against the player, play counting.
+- [Look-ahead and keeping a queue going](continuation.md): look-ahead and buffering, the managed
+  pool, autoplay, ordering.
 
 ## Module layout
 
@@ -119,7 +121,9 @@ See [controllers/config](../config/README.md).
 
 ## Related architecture docs
 
-- [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to audio on a speaker.
+- [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to
+  audio on a speaker.
 - [Players](../../../docs/architecture/players.md) for command routing and the playback lock.
-- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for which player a group's queue belongs to.
+- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for which player a
+  group's queue belongs to.
 - [Plugins](../../../docs/architecture/plugins.md) for audio sources and dynamic playlists.

@@ -10,9 +10,10 @@ is exposed by the separate [sendspin_source](../sendspin_source/README.md) plugi
 
 ## Deep dives
 
-- [connecting.md](connecting.md): the three ways a client reaches the server, and why two of them
-  are not implemented here.
-- [bridges.md](bridges.md): registering another protocol's player as a client, and virtual players.
+- [Connecting a client](connecting.md): the three ways a client reaches the server, and why two of
+  them are not implemented here.
+- [Bridges and virtual players](bridges.md): registering another protocol's player as a client, and
+  virtual players.
 
 ## Module layout
 
@@ -48,13 +49,14 @@ often have neither.
 
 Authentication for the clients that *do* need it is handled one layer up, by the webserver, which is
 why this provider registers no signalling commands and pulls in no connection-brokering dependency
-of its own. See [connecting.md](connecting.md).
+of its own. See [Connecting a client](connecting.md).
 
 ## Related architecture docs
 
 - [Playback](../../../docs/architecture/playback.md) for where this protocol sits in the pipeline.
 - [Protocol linking](../../../docs/architecture/protocol-linking.md) for bridges as derived
   transports.
-- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for the grouping it backs.
+- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for the grouping it
+  backs.
 - [API and auth](../../../docs/architecture/api-and-auth.md) for the authenticated proxy and remote
   access.

@@ -64,6 +64,6 @@ the protocol supports.
 
 ## Related
 
-- [lifecycle.md](lifecycle.md) for the debounced re-form a leader removal schedules.
+- [Group lifecycle](lifecycle.md) for the debounced re-form a leader removal schedules.
 - [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for the set-members
   pipeline these commands arrive through.

@@ -151,8 +151,8 @@ hook, so a controller overrides only what it needs.
 
 ## Related
 
-- [overview.md](overview.md) for where loading sits in startup.
-- [configuration.md](configuration.md) for config entries, setup data and setup flows.
-- [discovery.md](discovery.md) for manifest-declared discovery.
-- [plugins.md](plugins.md) for what a plugin provider can do.
-- [media-library.md](media-library.md) for the music provider contract.
+- [Overview](overview.md) for where loading sits in startup.
+- [Configuration and persistence](configuration.md) for config entries, setup data and setup flows.
+- [Discovery](discovery.md) for manifest-declared discovery.
+- [Plugins](plugins.md) for what a plugin provider can do.
+- [The media library](media-library.md) for the music provider contract.

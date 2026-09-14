@@ -130,7 +130,7 @@ on, so a bridge is normally chosen only when the base protocol is unsuitable or 
 it.
 
 The selected output is also what group commands have to be translated onto; see
-[grouping-and-volume.md](grouping-and-volume.md).
+[Grouping and volume](grouping-and-volume.md).
 
 ## Consequences worth knowing
 
@@ -140,8 +140,8 @@ account for that, and the group and controller paths do so explicitly.
 
 ## Related
 
-- [players.md](players.md) for the player model these resolve into.
-- [grouping-and-volume.md](grouping-and-volume.md) for translating group commands onto protocols.
-- [discovery.md](discovery.md) for how the endpoints are found in the first place.
+- [Players](players.md) for the player model these resolve into.
+- [Grouping and volume](grouping-and-volume.md) for translating group commands onto protocols.
+- [Discovery](discovery.md) for how the endpoints are found in the first place.
 - [providers/universal_player](../../music_assistant/providers/universal_player/README.md) for the
   wrapper provider.

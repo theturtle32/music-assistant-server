@@ -45,7 +45,7 @@ The build is standalone, with no imports from the package, so it runs without th
 chain. A check mode compares its output against the committed file, which is how the pre-commit
 hook and CI keep them in sync.
 
-See [controllers/translations/authoring.md](../../music_assistant/controllers/translations/authoring.md).
+See [Authoring translatable strings](../../music_assistant/controllers/translations/authoring.md).
 
 ## The candidate chain
 
@@ -107,7 +107,7 @@ disk.
 
 **The translations controller is set up alone, before the other core controllers start
 concurrently.** Every other controller can be serialized, and serialization resolves translations,
-so none of them may start before the catalogue exists. See [overview.md](overview.md).
+so none of them may start before the catalogue exists. See [Overview](overview.md).
 
 ## Choosing a locale
 
@@ -150,5 +150,5 @@ because a literal search already covers English.
 
 - [controllers/translations](../../music_assistant/controllers/translations/README.md) for the
   runtime package.
-- [configuration.md](configuration.md) for how config entry labels resolve.
-- [media-library.md](media-library.md) for the search path that uses reverse lookup.
+- [Configuration and persistence](configuration.md) for how config entry labels resolve.
+- [The media library](media-library.md) for the search path that uses reverse lookup.

@@ -5,8 +5,8 @@ images, and looks up artwork for radio streams.
 
 ## Deep dives
 
-- [images.md](images.md): the opaque image proxy, thumbnails, and colour palettes.
-- [genres.md](genres.md): aliases, the three taxonomies, and the scanning pipeline.
+- [Image proxy and palettes](images.md): the opaque image proxy, thumbnails, and colour palettes.
+- [Genres and metadata](genres.md): aliases, the three taxonomies, and the scanning pipeline.
 
 ## Package layout
 
@@ -65,6 +65,8 @@ at the normal refresh cadence rather than needing a retry journal of its own.
 
 ## Related architecture docs
 
-- [Media library](../../../docs/architecture/media-library.md) for how enrichment fits library assembly.
-- [Providers](../../../docs/architecture/providers.md) for the metadata provider type and its features.
+- [Media library](../../../docs/architecture/media-library.md) for how enrichment fits library
+  assembly.
+- [Providers](../../../docs/architecture/providers.md) for the metadata provider type and its
+  features.
 - [Players](../../../docs/architecture/players.md) for how a palette reaches a player's display.

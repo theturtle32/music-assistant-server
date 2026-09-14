@@ -5,7 +5,8 @@ controller is the runtime half.
 
 ## Deep dives
 
-- [authoring.md](authoring.md): where to add a string, the build step, and the reference mechanism.
+- [Authoring translatable strings](authoring.md): where to add a string, the build step, and the
+  reference mechanism.
 
 ## Loading
 

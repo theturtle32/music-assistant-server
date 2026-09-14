@@ -10,7 +10,7 @@ time.
 
 Warming the next track's audio buffer is not part of this path. The streams controller triggers it
 near the end of the current track through a callback into this controller. See
-[streams/buffering.md](../streams/buffering.md).
+[Buffering and pacing](../streams/buffering.md).
 
 Every buffer records the session that claimed it. A stop leaves alone only what the session playing
 now claimed, so playback that restarted before the stop got that far keeps its audio. Everything

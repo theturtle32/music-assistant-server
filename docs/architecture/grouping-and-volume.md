@@ -141,8 +141,8 @@ would not be respected when group volume reroutes through that child.
 
 ## Related
 
-- [players.md](players.md) for the control chains these resolve through.
-- [protocol-linking.md](protocol-linking.md) for the protocol translation in phase two.
-- [playback.md](playback.md) for how group audio is actually delivered.
+- [Players](players.md) for the control chains these resolve through.
+- [Protocol linking](protocol-linking.md) for the protocol translation in phase two.
+- [Playback](playback.md) for how group audio is actually delivered.
 - [providers/sync_group](../../music_assistant/providers/sync_group/README.md) and
   [providers/universal_player](../../music_assistant/providers/universal_player/README.md).

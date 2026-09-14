@@ -7,7 +7,7 @@ of them is this provider's concern.
 |---|---|---|
 | Hardware or a native app on the LAN | Straight to the protocol server's own port | Here |
 | A browser on the LAN | An authenticated WebSocket proxy on the main webserver, forwarding frames both ways | [controllers/webserver](../../controllers/webserver/README.md) |
-| Anything outside the LAN | A labelled WebRTC data channel, bridged by the remote access gateway to the same internal server | [controllers/webserver/remote-access.md](../../controllers/webserver/remote-access.md) |
+| Anything outside the LAN | A labelled WebRTC data channel, bridged by the remote access gateway to the same internal server | [Remote access](../../controllers/webserver/remote-access.md) |
 
 ## Why two of them live elsewhere
 
@@ -50,5 +50,5 @@ The [_demo_sendspin_clients](../_demo_sendspin_clients/README.md) directory hold
 
 - [API and auth](../../../docs/architecture/api-and-auth.md) for the scope and token model the proxy
   reuses.
-- [controllers/webserver/remote-access.md](../../controllers/webserver/remote-access.md) for channel
+- [Remote access](../../controllers/webserver/remote-access.md) for channel
   labels, which are a compatibility surface.
