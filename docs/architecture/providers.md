@@ -26,6 +26,10 @@ Every provider has a manifest file in its directory declaring its type, its doma
 several instances are allowed, its Python requirements, its discovery subscriptions, its
 dependency on another provider, and its maturity stage.
 
+It also declares whether a household member may set one up as a music source of their own. Turn
+that off when setup reaches into the server itself, such as a folder on its local disk, which only
+an administrator should configure.
+
 Manifests are scanned at startup for **all** known providers, not only the configured ones, which
 is why discovery subscriptions and the provider list are available before anything loads.
 Directories prefixed with an underscore are skipped unless dev mode is on, which is what hides the

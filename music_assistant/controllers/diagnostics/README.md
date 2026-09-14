@@ -46,7 +46,7 @@ rather than losing the whole report.
 
 | Section | Contents |
 |---|---|
-| System | Version, Python, platform, add-on and safe-mode flags, uptime, a sampled event loop lag measurement, memory, disk free, and counts of threads, tasks, timers, subscribers and clients |
+| System | Version, Python, platform, add-on and safe-mode flags, uptime, a sampled event loop lag measurement, the memory split, disk free, and counts of threads, child processes, tasks, timers, subscribers and clients. The profiler report is included when that provider is loaded |
 | Install | A census: providers with load state, player counts by provider and type, library counts per media type, and which core config keys differ from default, **key names only, never values** |
 | Exceptions | The aggregated exceptions, most recent first, with rendered tracebacks |
 | Sections | Pluggable contributions |

@@ -26,22 +26,34 @@ everything-scope is the single special case.
 
 Two defaults make that fail closed. An unrecognized scope string, which is what a value from a
 newer server or a typo in stored config produces, deserializes to a member that can never satisfy
-a check rather than raising or matching by accident. And a role id that is not in the mapping
-resolves to an empty set, which is what leaves room for custom roles without them accidentally
-granting anything.
+a check rather than raising or matching by accident. And a role id that is not known resolves to
+an empty set rather than to anything permissive.
 
-Roles are typed as plain strings for that reason rather than as a closed enum.
+## Builtin and custom roles
 
-## The four roles
+Four roles are defined in code and cannot be changed:
 
 | Role | Is |
 |---|---|
 | Admin | Everything |
-| User | A normal account: library writes, read-only config, inviting guests |
+| User | A normal account: library writes, read-only config, and adding and managing music sources of their own |
 | Guest | Read the library, and **control playback** |
-| Service | A user plus player-config write, reading users, and impersonation |
+| Service | A user plus player-config write, reading users, and impersonation, but no music sources of its own |
 
-Two of those deserve explanation.
+Admins can add custom roles on top, stored in the auth database and held in memory for the scope
+checks.
+
+**A custom role is always a household member.** It keeps the guest scopes whatever else is granted,
+and it automatically keeps the scopes its granted scopes would be useless without. The scopes that
+reach into other people's accounts or into the server itself, meaning user management,
+impersonation, whole-library management, provider and core config writes and system management,
+stay with the builtin admin role and cannot be granted to a custom one.
+
+Changing a user's role, or changing the scopes of the custom role it holds, closes that user's live
+sessions so its clients reconnect with the new scopes. The last enabled admin cannot lose the admin
+role.
+
+Two of the builtin roles deserve explanation.
 
 **A guest can control playback**, and that is deliberate. The guest-facing features, meaning party
 mode, the quiz and the dashboard viewer, all exist to let someone at the party change the music.
@@ -50,11 +62,26 @@ users.
 
 **The service role exists for the Home Assistant integration.** It needs impersonation so a single
 integration token can act on behalf of whichever user triggered an automation, and it needs to read
-the user list, because impersonating a user is not useful without being able to enumerate them.
+the user list, because impersonating a user is not useful without being able to enumerate them. It
+deliberately owns no music sources of its own.
 
 Reading users is a separate scope from managing them precisely because it is a far weaker
 capability, and forcing every caller that needs to see users to hold full user management would be
 wrong.
+
+## Who can see which music source
+
+Visibility of a music source is **not** a per-user setting. Each source carries an owner and a
+sharing setting, and what a user sees follows from those. Playback uses the listener's own accounts
+first and never an account that was not shared with them, and attribution follows the owner.
+
+Players are the exception and still work the other way round: a user can be restricted to specific
+players on the user record itself.
+
+A member can connect their own account for a service that allows more than one, and can
+reconfigure, reload, remove and share what they own. A provider declares whether that is allowed
+through its manifest, and a source whose setup reaches into the server itself, such as a folder on
+its local disk, stays admin-only.
 
 ## Enforcement
 

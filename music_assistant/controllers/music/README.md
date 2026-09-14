@@ -70,14 +70,16 @@ flag, to decide whether to run a bounded managed pool instead of a linear enqueu
 
 ## User-scoped access
 
-The library is read through a per-user lens. A non-admin user can be restricted to a subset of
-music provider instances, and that filter applies to the provider lists, to browse, to
-recommendations and to every library listing. It also steers which mapping an item's details are
-fetched from. Plugin providers are never restricted.
+The library is read through a per-user lens. Which music sources a user can reach follows from the
+owner and sharing setting carried by each source rather than from an allow-list on the user, and
+the resulting set applies to the provider lists, to browse, to recommendations and to every library
+listing. It also steers which mapping an item's details are fetched from, so playback uses the
+listener's own accounts first and never one that was not shared with them. Plugin providers are
+never restricted.
 
 Play history, resume positions and recency are scoped by user. An explicit provider request is
-intersected with the user's allowed providers, and an empty intersection raises rather than
-silently returning nothing.
+intersected with what the user can reach, and an empty intersection raises rather than silently
+returning nothing.
 
 ## Related architecture docs
 

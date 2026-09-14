@@ -15,7 +15,7 @@ by a short timeout because rows are contractually cheap with no live backend cal
 fetches by a longer one. A timeout or error yields an empty list, so one misbehaving provider
 degrades to a missing row rather than a failed page.
 
-The item call re-applies the user's provider filter and re-checks that the provider still declares
+The item call re-applies the user's access rules and re-checks that the provider still declares
 the feature. Without that, a user could reach into a provider an admin restricted them from by
 calling the items endpoint directly with a row id.
 
@@ -32,7 +32,7 @@ Rows cover in-progress items, recently played, recently added, favorites, random
 and rarely played items, and most played. Rows that are interesting to some libraries and noise in
 others ship disabled by default.
 
-Library rows support the provider filter through the reachable-via listing filter, which is what
+Library rows support provider filtering through the reachable-via listing filter, which is what
 lets a user restrict "recently added" to a single service. A provider's own rows cannot offer that.
 
 ## Bulk payloads

@@ -48,11 +48,24 @@ as a phantom endpoint.
 
 ### Users, roles and scopes
 
-The API gates on scopes, never on roles. A role grants a set of scopes, and each command declares
-the scope it requires. Four roles exist: an administrator with everything, a standard user whose
-reach can be narrowed further by player and provider filters, a guest limited to reading the
-library and controlling playback, and a service account used by the Home Assistant integration,
-which adds player configuration, reading user accounts and impersonation.
+The API gates on scopes, never on roles. A role is a named set of scopes, and each command declares
+the scope it requires.
+
+Four builtin roles are defined in code and cannot be changed: an administrator with everything, a
+standard user who can also add and manage music sources of their own, a guest limited to reading
+the library and controlling playback, and a service account for the Home Assistant integration,
+which adds player configuration, reading user accounts and impersonation but owns no music sources.
+
+Admins can create custom roles on top, stored in the `roles` table and held in memory for the scope
+checks. A custom role is always a household member: it keeps the guest scopes plus any scope its
+granted scopes would be useless without, and the scopes that reach into other accounts or the
+server itself stay with the builtin admin role. Changing a user's role, or the scopes of its custom
+role, closes that user's live sessions so its clients reconnect with the new scopes, and the last
+enabled admin cannot lose the admin role.
+
+A user can be restricted to specific players on the user record. **Music sources work the other way
+round**: visibility follows from the owner and sharing setting carried by each source, not from
+anything stored on the user.
 
 A command may allow impersonation, which lets a sufficiently privileged caller execute it on behalf
 of another user.

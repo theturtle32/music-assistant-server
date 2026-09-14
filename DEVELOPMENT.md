@@ -2,7 +2,7 @@ Developer docs
 ==================================
 
 ## 📝 Prerequisites
-* ffmpeg (minimum version 7, and 7.1.1+ recommended so CMAF output is available), must be available in the path so install at OS level
+* ffmpeg (minimum version 6.1, version 7 recommended), must be available in the path so install at OS level
 * Python 3.14 is minimal required (the exact pinned runtime lives in `.python-version` at the repo root — that file is the single source of truth for all tools)
 * [Python venv](https://docs.python.org/3/library/venv.html)
 * libchromaprint, also at OS level. Install it if you want to run the `acoustid_lookup` provider: without libchromaprint AcoustID refuses to load. The test suite does not need it: the AcoustID tests drive a fake fingerprinter.
@@ -32,7 +32,9 @@ With this repository cloned locally, execute the following commands in a termina
 
 * The setup script will create a separate virtual environment (if needed), install all the project/test dependencies and configure pre-commit for linting and testing.
 * Make sure, that the python interpreter in VS Code is set to the newly generated venv.
-* Debug: Hit (Fn +) F5 to start Music Assistant locally (VS Code), or run `python -m music_assistant --log-level debug` from the command line
+* Debug: Hit (Fn +) F5 to start Music Assistant locally (VS Code, using the launch configuration in `.vscode/launch.json`), or run `python -m music_assistant --log-level debug` from the command line
+  * asyncio debug mode, with its slow-callback warnings and the scheduling stack in unhandled-error logs, comes from Python's development mode: run `python -X dev -m music_assistant --log-level debug` or set `PYTHONDEVMODE=1`. The VS Code launch configuration already enables it. The environment variable also turns on the slow-query warnings of the database helper. Dev mode records a stack trace for every scheduled callback and future, so expect a slower server while it is on.
+  * Core maintainers: the launch configuration reads the bundled provider credentials (Spotify, Qobuz, ...) from a checkout of the private `appvars` repository next to this one (`../appvars/app_vars.json`). From the command line, point `MASS_APP_VARS_FILE` at that file. Without it the bundled credentials stay empty, see `music_assistant/helpers/app_vars.py`.
 * The pre-compiled UI of Music Assistant will be available at `localhost:8095` 🎉
 
 NOTE: Always re-run the setup script after you fetch the latest code because requirements could have changed.
@@ -182,6 +184,7 @@ The manifest file contains metadata and configuration about a provider. The supp
 | requirements | List of requirements for the provider in pip string format. Supported values are `package==version` and `git+https://gitrepoforpackage` | array[string]
 | documentation | URL to the Github discussion containing the documentation for the provider. | string |
 | multi_instances | Whether multiple instances of the configuration are supported, e.g. multiple user accounts for Spotify | boolean |
+| self_service | Whether members may set up and reconfigure an instance of the provider as a music source of their own. Defaults to `true`. Set it to `false` when the setup reaches into the server itself, like a folder on its local disk | boolean |
 | mdns_discovery | List of Zeroconf service types the provider wants to subscribe to. | array[string] |
 | upnp_discovery | List of SSDP search targets the provider wants to subscribe to. | array[string] |
 

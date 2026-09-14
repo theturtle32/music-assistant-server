@@ -28,7 +28,7 @@ def repo_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         raise OSError("no git here")
 
     monkeypatch.setattr(check_doc_references, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(check_doc_references.subprocess, "run", _no_git)
+    monkeypatch.setattr("scripts.check_doc_references.subprocess.run", _no_git)
     return tmp_path
 
 

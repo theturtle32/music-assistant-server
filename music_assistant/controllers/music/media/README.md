@@ -53,9 +53,9 @@ cannot inherit the full item's availability logic.
 Restricting a listing to items with an available mapping to given provider instances answers a
 different question from "is this in my library". A library assembled from several services still
 lists items a particular service cannot play, which is wrong for a row scoped to one provider and
-wrong for a user an admin restricted to a subset. An explicit empty list means "restrict to no
+wrong for a user who was only shared some of them. An explicit empty list means "restrict to no
 providers" and returns nothing; no list at all means "do not restrict". Callers have to respect
-that difference. Counts apply the user's provider filter the same way, so a count never disagrees
+that difference. Counts apply the same access rules, so a count never disagrees
 with the list it labels.
 
 ### Collections

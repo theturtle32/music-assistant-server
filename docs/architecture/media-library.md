@@ -102,7 +102,7 @@ Recommendation rows come from every provider declaring the feature, interleaved 
 
 The library's own rows are **not** a special case: they come from a builtin plugin provider whose
 only feature is recommendations. That means they compose through the ordinary machinery, including
-the user's provider filter and timeout isolation, rather than needing a parallel path.
+the user's access rules and timeout isolation, rather than needing a parallel path.
 
 Rows and their contents are separate calls, because a Discover page has to render before anyone
 fetches a row's items.
@@ -112,12 +112,14 @@ See
 
 ## Per-user by construction
 
-A non-admin user can be restricted to a subset of music providers, and that filter applies to the
-provider lists, browse, recommendations and every library listing. It also steers which mapping an
-item's details are fetched from. Plugin providers are never restricted.
+Which music sources a user can see follows from **ownership and sharing on each source**, not from
+an allow-list on the user. A source carries an owner and a sharing setting, and the resulting set
+is applied to the provider lists, browse, recommendations and every library listing. It also steers
+which mapping an item's details are fetched from, so playback uses the listener's own accounts
+first and never an account that was not shared with them. Plugin providers are never restricted.
 
 Play history, resume positions and recency are scoped by user. An explicit provider request is
-intersected with what the user is allowed, and an empty intersection raises rather than quietly
+intersected with what the user can reach, and an empty intersection raises rather than quietly
 returning nothing.
 
 Note that "in my library" and "playable from here" are different questions. A library assembled
