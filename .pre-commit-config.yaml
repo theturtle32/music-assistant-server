@@ -98,6 +98,25 @@ repos:
         types: [text]
         files: ^(music_assistant/.+\.py|scripts/check_method_order\.py|scripts/lint_baseline(s/private_methods_not_last\.txt|\.py))$
 
+      # fail when a doc or README links to a repo path that no longer exists
+      - id: check_doc_links
+        name: check_doc_links
+        entry: scripts/run-in-env.sh -m scripts.check_doc_references
+        pass_filenames: false
+        language: system
+        types: [text]
+        files: ^(.+\.md|scripts/check_doc_references\.py)$
+
+      # report (never fail) which docs describe the source files being committed
+      - id: report_doc_references
+        name: report_doc_references
+        entry: scripts/run-in-env.sh -m scripts.check_doc_references --report
+        pass_filenames: true
+        language: system
+        types: [python]
+        files: ^music_assistant/.+\.py$
+        verbose: true  # the report is informational, so print it on success too
+
       - id: ruff-check
         name: 🐶 Ruff Linter
         language: system

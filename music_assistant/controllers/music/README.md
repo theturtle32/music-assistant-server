@@ -1,35 +1,126 @@
-# Music Controller
+# Music controller
 
-Music Assistant's core controller for the music library. It aggregates and normalizes media items from all music providers (streaming services, local files, …) into the internal SQLite library database, and is the central entry point for library access (search, browse, recommendations, library edits and playback bookkeeping).
+Aggregates and normalizes media items from every music provider into the SQLite library database,
+and is the central entry point for library access: search, browse, recommendations, library edits
+and playback bookkeeping.
 
-## Package Layout
+## Deep dives
 
-- `controller.py`: the main `MusicController` — a `CoreController` (domain `music`) that holds the orchestration logic and composes the per-media-type sub-controllers.
-- `database.py`: `MusicDatabaseSetupMixin`, mixed into `MusicController` — owns the library database lifecycle (connection setup, schema creation, maintenance). Kept separate because the schema code is large and self-contained.
-- `migrations.py`: the versioned, step-by-step schema migrations (`migrate_database`), kept out of `database.py` as a dependency-injected function so this large block stays self-contained and individually testable.
-- `media/`: the per-media-type sub-controllers (`AlbumsController`, `ArtistsController`, `TracksController`, `RadioController`, `PlaylistController`, `AudiobooksController`, `PodcastsController`, `GenreController`), all sharing `MediaControllerBase`. `MusicController` instantiates one of each and delegates per-type work to them.
-- `constants.py`: config keys, the database schema version, background-task ids and tuning constants.
-- `helpers.py`: stateless helper functions (needing no controller state) used by the controller.
-- `strings.json`: translatable strings for this module (`core.music.*`), including the `manifest` name/description.
+- [Search and URIs](search.md): the search flow, the full-text index, and URI parsing.
+- [Library sync](sync.md): sync scheduling, bulk writes, deletion handling, provider removal.
+- [Database schema and migrations](schema.md): tables, the playlog, migrations, and dev versus
+  stable numbering.
+- [Recommendations and recency](recommendations.md): row aggregation, library rows, the recency
+  engine.
+- [Media sub-controllers](media/README.md): the per-media-type sub-controllers and the matching
+  rules.
 
-## Architecture & Design Notes
+## Package layout
 
-- **Layering / dependency direction.** `MusicController` is the orchestrator; the `media/` sub-controllers hold the type-specific logic. The sub-controllers never import `MusicController` back, keeping the dependency direction one-way and avoiding import cycles.
-- **Database split via mixin.** The schema and migration code lives in `MusicDatabaseSetupMixin` (`database.py`) so `controller.py` stays focused on orchestration. The mixin carries no state of its own — it operates on its host (`mass`, `logger`, the `database` connection, the media sub-controllers and a couple of controller methods), declared under `TYPE_CHECKING`.
-- **Startup order.** As a singleton core controller it is set up once: the database is initialized first (via the mixin), then maintenance tasks are registered and provider syncs are scheduled.
-- **Library data model.** Library items use the provider id `library`; provider mappings record which provider item(s) a library item resolves to. Maintenance prunes orphaned mappings and playlog rows.
-- **Schema migrations** are versioned against `DB_SCHEMA_VERSION`: on a version mismatch the database file is backed up before migrating, and a failed migration falls back to a fresh database (triggering a full rescan) so the user is never left without a working library.
+- `controller.py`: the `MusicController`, a core controller holding the orchestration logic and
+  composing the per-media-type sub-controllers.
+- `database.py`: `MusicDatabaseSetupMixin`, mixed into the controller. Owns the library database
+  lifecycle: connection setup, schema creation, maintenance. Kept separate because the schema code
+  is large and self-contained, and it carries no state of its own.
+- `migrations.py`: the versioned schema migration steps, kept out of `database.py` as an injected
+  function so this large block stays self-contained and individually testable.
+- `media/`: the per-media-type sub-controllers.
+- `recommendations/`: the aggregating recommendations sub-controller.
+- `recency.py`: the shared recency engine.
+- `constants.py`: config keys, the database schema version, background task ids and tuning values.
+- `helpers.py`: stateless helpers used by the controller.
+- `strings.json`: translatable strings for this module.
 
-## Schema Versions on `dev` vs `stable`
+## Design notes
 
-`DB_SCHEMA_VERSION` is a single integer, so it can only describe one linear history. `stable` normally inherits dev's numbering through releases, but a **schema-changing bugfix backported to `stable`** is renumbered against stable's own (lower) counter — from that point the same integer means something different on each branch. A database coming from `stable` then reports a version that is already higher than the `if prev_version <= N:` gates of the dev steps in the gap, so those steps never run and the schema objects they add stay missing. `__create_database_tables` cannot compensate: it is `CREATE TABLE IF NOT EXISTS`, so it never touches an existing table. The user-visible result is a library that queries columns the database never got, which has already happened once when a stable install was moved to the beta image.
+**Layering.** The controller orchestrates and the sub-controllers hold the type-specific logic. The
+sub-controllers never import the controller back, which is what keeps import cycles out.
 
-Renumbering the stable backport to match dev's number does not fix it either: the database would then claim to have run every dev step in between, which it genuinely never did. Encoding that correctly needs a per-step applied-migrations ledger (alembic-style), which is out of proportion to how rarely this triggers. So when backporting a schema change to `stable`:
+**Library data model.** Library items use the provider id `library`, and provider mappings record
+which provider items a library item resolves to. A library item never has a mapping to itself.
+Maintenance prunes orphaned mappings and playlog rows.
 
-1. Record in the backport PR that stable's `DB_SCHEMA_VERSION` now diverges from dev's, and which value it took.
-2. On `dev`, bump `DB_SCHEMA_VERSION` and add an idempotent guard step re-adding every schema object introduced between the last shared version and stable's new one.
-3. Gate that guard at dev's *current* version (`<= DB_SCHEMA_VERSION - 1`), never at stable's — `_setup_database` skips migration entirely when `prev_version` already equals `DB_SCHEMA_VERSION`, so users who upgraded and broke are stamped at the current version and a lower gate never fires for them.
+**Startup order.** The database is initialized first through the mixin, then maintenance tasks are
+registered and provider syncs are scheduled. Setup also finishes any provider removal that a
+restart interrupted.
 
-## Future Enhancements
+## Provider orchestration
 
-- Isolate the database connection itself into a dedicated layer (e.g. its own sub-controller), so connection ownership and the SQL/query surface live behind one boundary instead of on `MusicController`. Splitting the migrations (`migrations.py`) and grouping setup in `MusicDatabaseSetupMixin` are first steps toward that; the connection (`_database` and the `database` property) currently still lives on `MusicController`.
+Fetching an item checks the library for a row matching that provider and item id, and returns the
+library item when there is one, optionally scheduling a background metadata refresh. Otherwise it
+resolves the provider instance and asks it directly.
+
+For an item available from several providers the library stores one canonical row plus one mapping
+per provider. Non-unique streaming mappings are cloned across all instances of the same domain, so
+a second account on the same service inherits the first one's mappings. Cloned mappings are marked
+so they can be told apart from mappings the item was genuinely added on, which both album track
+import and sync deletion rely on. A recurring task re-runs the cloning over the whole library so
+mappings created before a second instance existed catch up.
+
+One instance per streaming domain is queried for search and lookups, while every instance of a
+non-streaming provider is queried. A streaming provider's catalog is far larger than the user's
+library, so a second account adds duplicates rather than coverage, whereas a local provider's
+catalog is its library and each instance may point somewhere different.
+
+## Maintenance tasks
+
+Four recurring tasks keep the library coherent between syncs. All are registered with the tasks
+controller, so the user can see them, pause them or run one now.
+
+| Task | Runs | Does |
+|---|---|---|
+| Database cleanup | Nightly | Prunes orphaned mappings, playlog rows and stale entries. Also queued whenever the last provider sync finishes |
+| Provider mapping correction | Monthly | Re-runs the cross-instance mapping cloning over the whole library, so mappings created before a second instance of a domain existed catch up |
+| Duplicate track reconciliation | Hourly | Merges library tracks that ended up stored twice across providers |
+| Genre mapping scan | Nightly | Applies the genre alias taxonomies across the library, registered by the genre sub-controller. See [Genres and metadata](../metadata/genres.md) |
+
+Duplicate track reconciliation is the one with behaviour worth knowing, and it is deliberately
+timid in two ways.
+
+**It skips entirely while any sync is active**, because a sync is still filling in albums and
+mappings, and judging duplicates against a half-populated library would merge things that only look
+identical.
+
+**It walks the library incrementally through a persisted cursor**, examining a bounded batch of
+candidate pairs per run and merging through the same match-and-store path everything else uses. A
+cursor that has reached the end means the library has been walked end to end with nothing synced
+since, so the query is skipped rather than run for a guaranteed miss. A sync landing afterwards
+marks another pass as due, which starts once the current walk finishes rather than rewinding
+immediately, since rewinding would keep re-examining the same prefix forever.
+
+Hourly is affordable precisely because of those bounds: the task never leaves the local database
+and never touches a provider. The metadata controller runs the album counterpart on the same
+cadence; see [controllers/metadata](../metadata/README.md).
+
+## Dynamic playlists are library rows
+
+A dynamic playlist is not a separate concept here. It is an ordinary playlist row with the dynamic
+flag set. Two plugin providers write them: one rule-based, where the flag decides whether tracks
+are re-evaluated on every play or frozen once, and one that renders a seed as a playlist.
+
+Everything downstream treats them like any other playlist. Only the queue controller reads the
+flag, to decide whether to run a bounded managed pool instead of a linear enqueue.
+
+## User-scoped access
+
+The library is read through a per-user lens. Which music sources a user can reach follows from the
+owner and sharing setting carried by each source rather than from an allow-list on the user, and
+the resulting set applies to the provider lists, to browse, to recommendations and to every library
+listing. It also steers which mapping an item's details are fetched from, so playback uses the
+listener's own accounts first and never one that was not shared with them. Plugin providers are
+never restricted.
+
+Play history, resume positions and recency are scoped by user. An explicit provider request is
+intersected with what the user can reach, and an empty intersection raises rather than silently
+returning nothing.
+
+## Related architecture docs
+
+- [Media library](../../../docs/architecture/media-library.md) for the big picture of how a library
+  is assembled.
+- [Providers](../../../docs/architecture/providers.md) for the provider interface, features and load
+  lifecycle.
+- [Playback](../../../docs/architecture/playback.md) for how library items reach a queue and a
+  speaker.
+- [Plugins](../../../docs/architecture/plugins.md) for audio sources, dynamic playlists and
+  plugin-contributed rows.
