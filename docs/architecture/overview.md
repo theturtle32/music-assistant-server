@@ -2,6 +2,28 @@
 
 One process, one event loop, thirteen controllers and a provider system for everything external.
 
+## The server is one of several repositories
+
+Everything these pages describe lives in the server repository, but the server is not the whole of
+Music Assistant, and a change to what a client sees often belongs somewhere else.
+
+| Repository | Is |
+|---|---|
+| Server | Controllers, providers, the streaming engine, the webserver. The subject of these pages |
+| Models | The shared dataclasses, and therefore the wire-format contract between server and clients |
+| Client | The async Python client, mirroring the server's command surface |
+| Frontend | The web UI, served by the server's webserver controller |
+| Protocol libraries | One per speaker protocol, each wrapped by a player provider |
+
+The models package being separate is the thing to internalize: a model changed there changes the
+wire format for the frontend, the Python client and the Home Assistant integration at once. It is
+also why serialization concerns appear in the server as *usage* of models it does not own.
+
+Compatibility is negotiated separately from that, by two numbers the server owns and reports in its
+server info. One is the current schema version, bumped for additive API changes. The other is the
+oldest schema a client may speak, bumped only for a breaking change, which forces every client to
+update. Bumping the second is a decision about the whole ecosystem, not about the server alone.
+
 ## The hub
 
 A single object is the nucleus of the server, and every other component holds a reference to it. It

@@ -59,6 +59,36 @@ non-streaming provider is queried. A streaming provider's catalog is far larger 
 library, so a second account adds duplicates rather than coverage, whereas a local provider's
 catalog is its library and each instance may point somewhere different.
 
+## Maintenance tasks
+
+Four recurring tasks keep the library coherent between syncs. All are registered with the tasks
+controller, so the user can see them, pause them or run one now.
+
+| Task | Runs | Does |
+|---|---|---|
+| Database cleanup | Nightly | Prunes orphaned mappings, playlog rows and stale entries. Also queued whenever the last provider sync finishes |
+| Provider mapping correction | Monthly | Re-runs the cross-instance mapping cloning over the whole library, so mappings created before a second instance of a domain existed catch up |
+| Duplicate track reconciliation | Hourly | Merges library tracks that ended up stored twice across providers |
+| Genre mapping scan | Nightly | Applies the genre alias taxonomies across the library, registered by the genre sub-controller. See [controllers/metadata/genres.md](../metadata/genres.md) |
+
+Duplicate track reconciliation is the one with behaviour worth knowing, and it is deliberately
+timid in two ways.
+
+**It skips entirely while any sync is active**, because a sync is still filling in albums and
+mappings, and judging duplicates against a half-populated library would merge things that only look
+identical.
+
+**It walks the library incrementally through a persisted cursor**, examining a bounded batch of
+candidate pairs per run and merging through the same match-and-store path everything else uses. A
+cursor that has reached the end means the library has been walked end to end with nothing synced
+since, so the query is skipped rather than run for a guaranteed miss. A sync landing afterwards
+marks another pass as due, which starts once the current walk finishes rather than rewinding
+immediately, since rewinding would keep re-examining the same prefix forever.
+
+Hourly is affordable precisely because of those bounds: the task never leaves the local database
+and never touches a provider. The metadata controller runs the album counterpart on the same
+cadence; see [controllers/metadata](../metadata/README.md).
+
 ## Dynamic playlists are library rows
 
 A dynamic playlist is not a separate concept here. It is an ordinary playlist row with the dynamic

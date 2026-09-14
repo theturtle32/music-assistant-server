@@ -1,104 +1,88 @@
-# Hue Lights Sync Plugin
+# Hue lights sync
 
-Syncs Philips Hue lights to music using the Entertainment API. Each entertainment area on a paired Hue bridge reacts to music in real time when joined to a playing group.
+Drives Philips Hue lights from the music. Each entertainment area on a paired bridge appears as a
+light player, and reacts in real time once joined to a playing group.
 
-## Architecture
+## Where the work happens
 
-```
-Sendspin Server (PushStream → group visualizer/color roles → FFT/spectrum + beats + palette)
-       │
-       ▼ (in-process bridge roles subscribe to the group's visualizer/color roles)
-Bridge visualizer + color roles (features keyed to playback timestamp)
-       │
-       ▼ (frame / beats / color callbacks)
-HueAudioAnalyzer (queues by timestamp; bass beat detection, color cycling, energy pulse)   ← this provider
-       │
-       ▼ (30 Hz render loop drains at server-clock + Hue-latency lead → LightColorCommand frames)
-EntertainmentSession → HueDtlsStreamer (DTLS 1.2 PSK + HueStream v2)   ← hue-entertainment lib
-       │
-       ▼ (encrypted UDP port 2100)
-Hue Bridge → Entertainment Area Lights
-```
+Only the glue lives here. The bridge's own API, the encrypted streaming protocol and the session
+handling are a standalone library, pinned in the manifest, which this provider drives through a
+session facade that opens the stream on demand, runs the blocking handshake off the event loop, and
+enforces the bridge's one-active-stream limit.
 
-The bridge registers with the local Sendspin server as an **in-process external visualizer client** (`register_external_player`) — no WebSocket is involved. Its bridge visualizer and color roles subscribe directly to the playing group's visualizer/color roles and receive extracted features (spectrum, onset peaks, beat schedule, colour palette) through callbacks. Because in-process delivery follows the audio push, features arrive **ahead of the playhead** (audio is buffered seconds in advance); the analyzer queues them by playback timestamp and drains them at render time. A fixed-rate 30 Hz render loop samples the analyzer at the current server clock plus a configurable Hue-latency lead and sends one DTLS frame per tick.
+What is local is the client wiring and the analyzer that turns audio features into light frames.
 
-Entertainment areas are discovered at plugin (re)load from the Hue bridge REST API. Each area gets its own in-process Sendspin client and `EntertainmentSession`.
+| Module | Role |
+|---|---|
+| `provider.py` | Discovery, area enumeration and lifecycle |
+| `bridge.py` | The in-process visualizer client and its subscription to the group's roles |
+| `analyzer.py` | Beat rendering, colour cycling and the effect modes |
+| `setup_flow.py` | Pairing with the bridge, which needs its physical button pressed |
+| `constants.py` | Config keys and the spectrum request shape |
 
-## Effect Modes
+## Features arrive before the sound does
 
-| Mode | Description |
-|------|-------------|
-| **Smooth** (default) | Spectrum-driven brightness with a slowly drifting palette. |
-| **Ambient** | Colour cycling only, no brightness modulation — relaxing, smooth transitions. |
-| **Flashing** | Brightness pulse on every beat, stronger on downbeats. |
-| **Energetic** | Large brightness swings on hits plus fast palette rotation. |
-
-## Hue streaming layer
-
-The Hue bridge REST API (pairing, area discovery, entertainment start/stop) and the
-pure-Python DTLS 1.2 PSK + HueStream v2 streaming live in the standalone
-[`hue-entertainment`](https://github.com/music-assistant/hue-entertainment) library
-(published on PyPI, pinned in `manifest.json`). This provider drives it through the
-library's `EntertainmentSession` facade, which opens the stream on demand, runs the
-blocking DTLS handshake in an executor, and enforces the bridge's single-active-stream
-constraint.
-
-Only the Sendspin-specific glue lives here: the visualizer client wiring (`bridge.py`)
-and the audio-to-color analyzer (`analyzer.py`).
-
-## File Structure
-
-```
-hue_entertainment/
-├── __init__.py                Provider setup entry point
-├── setup_flow.py              Setup flow: bridge pairing (link button → app user + clientkey)
-├── provider.py                mDNS discovery, lifecycle management
-├── bridge.py                  Sendspin visualizer client → analyzer → EntertainmentSession
-├── analyzer.py                Beat-schedule rendering, color cycling, effect modes
-├── constants.py               MA config keys + Sendspin spectrum request config
-├── strings.json               Translatable labels for config entries and the setup flow
-├── icon.svg                   Provider icon (icon_dark.svg for dark mode)
-└── manifest.json              Experimental plugin manifest (requires hue-entertainment)
+```mermaid
+flowchart TD
+    group[Playing group] --> roles[Visualizer and colour roles]
+    roles --> bridge[In-process client]
+    bridge --> analyzer[Analyzer: queue by playback timestamp]
+    analyzer --> loop[Fixed-rate render loop]
+    loop --> session[Entertainment session] --> lights[Lights]
 ```
 
-The Hue REST API, DTLS streamer, `EntertainmentSession` and data models
-(`EntertainmentArea`, `LightChannel`, `LightColorCommand`) are imported from the
-`hue-entertainment` library.
+The provider registers with the local protocol server as an **in-process external visualizer
+client**, with no socket involved, and its roles subscribe directly to the playing group's
+visualizer and colour roles to receive spectrum, onset peaks, a beat schedule and a colour palette.
 
-## Configuration
+The subtlety that shapes the whole design: in-process delivery follows the **audio push**, and audio
+is buffered seconds ahead of the playhead. Features therefore arrive well before the sound they
+describe.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `bridge_host` | String | — | Bridge IP (auto-discovered via mDNS) |
-| `brightness` | Integer | 100 | Overall light brightness (0-100) |
-| `color_mode` | String | smooth | Visualization mode (smooth / ambient / flashing / energetic) |
-| `hue_latency_ms` | Integer | 20 | Lead time lights render ahead of the playhead (0-3000) |
+So the analyzer queues everything by playback timestamp rather than acting on arrival, and a
+fixed-rate render loop samples it at the current server clock plus a configurable lead, sending one
+frame per tick. The lead exists because the lights themselves are not instantaneous.
 
-## Quick Setup
+Areas are enumerated when the plugin loads, and each gets its own client and session.
 
-1. Create an Entertainment Area in the Philips Hue app (Settings → Entertainment Areas)
-2. In Music Assistant, go to Settings → Providers → Add Provider → Hue Lights Sync
-3. Enter your Hue bridge IP address (or let mDNS discover it)
-4. Press the physical button on your Hue bridge, then click "Pair"
-5. Click Save — the entertainment area(s) appear as Light players
-6. Join a Hue light player to any playing group — the lights start reacting to music
+## Effect modes
 
-## Status
+| Mode | Does |
+|---|---|
+| Smooth | Spectrum-driven brightness with a slowly drifting palette. The default |
+| Ambient | Colour cycling only, no brightness modulation |
+| Flashing | A brightness pulse on every beat, stronger on downbeats |
+| Energetic | Large brightness swings on hits, plus fast palette rotation |
 
-Working and tested on Hue Bridge V2 and Hue Bridge Pro. The current implementation provides a solid foundation with four effect modes driven by the server's beat schedule. There is room for future improvements:
+Beyond the mode, the configurable settings are the bridge address, which discovery normally fills
+in, an overall brightness, and the lead time described above.
 
-- Genre/mood-aware effects using track metadata
-- Additional effect modes (strobe, rainbow, color wash)
-- Per-light position-aware effects using entertainment area spatial data
-- Cover art color extraction for mood-matched lighting
+## Setup
 
-## Known Limitations
+Create an entertainment area in the Hue app first, since the provider enumerates areas rather than
+creating them. Then add the provider, let discovery find the bridge or enter its address, press the
+physical button on the bridge and pair. The areas appear as light players; joining one to a playing
+group starts it reacting.
 
-- Beats come from the schedule the Sendspin visualizer pushes, which is derived from the `smart_fades` audio analysis. A track that has not been analyzed yet has no schedule, and the analyzer falls back to the visualizer's onset peaks until one arrives — less precise, and noticeably so on acoustic or vocal material.
-- Entertainment areas are discovered at plugin (re)load — adding a new area in the Hue app requires reloading the plugin.
-- The Hue bridge only allows one entertainment area active at a time.
+## Limitations
+
+**Beats depend on analysis that may not exist yet.** The schedule is derived from the audio analysis
+described in [controllers/streams/analysis.md](../../controllers/streams/analysis.md). A track
+nobody has analyzed has no schedule, and the analyzer falls back to onset peaks until one arrives,
+which is less precise and noticeably so on acoustic or vocal material.
+
+**Areas are enumerated at load**, so adding one in the Hue app requires reloading the plugin.
+
+**The bridge allows one active entertainment area at a time**, which is its limit rather than this
+provider's.
+
+Tested on the current bridge generations. Obvious directions from here are metadata-aware effects,
+more modes, per-light effects using the spatial data an area already carries, and palettes extracted
+from cover art.
 
 ## Related architecture docs
 
 - [Plugins](../../../docs/architecture/plugins.md) for the plugin provider model.
 - [Discovery](../../../docs/architecture/discovery.md) for how the bridge is found.
+- [Playback](../../../docs/architecture/playback.md) for the buffering that puts features ahead of
+  the playhead.

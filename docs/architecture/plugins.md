@@ -28,6 +28,9 @@ Classification is worth checking rather than guessing from a name: several thing
 plugins are music or player providers, and at least one bridge declares no features and never
 touches audio despite appearing in a player list.
 
+Each in-tree plugin has a README beside it covering what it actually does; the table in the
+[architecture index](README.md) lists them.
+
 ## Audio sources
 
 An audio source is a **media item**, not a special case. It subclasses the media item model, so it
@@ -102,6 +105,23 @@ session rather than causing a sample-rate mismatch mid-stream.
 **Targeting caches the queue rather than the player**, because some protocol players are ephemeral
 bridges whose id stops being valid once torn down.
 
+Not every receiver has every one of those problems, and the exceptions are instructive. One never
+sends volume outward, so it has no echo to suppress. One is fed by a passive protocol with no
+session on the far side, so it never stops a previous player. One fetches its own audio rather than
+having any pushed to it, so its capabilities change with whether a companion provider is loaded.
+
+## Guests listening together
+
+Two plugins host a group listening experience, and they share one abstraction for it: a session
+wrapping a player that owns the queue, either a real speaker playing out loud or a hidden virtual
+player that every guest's own device attaches to.
+
+The part worth knowing is that a guest joining is a **grouping operation, not a second stream**, so
+all the protocol translation in [grouping and volume](grouping-and-volume.md) applies unchanged.
+See [helpers/shared-playback.md](../../music_assistant/helpers/shared-playback.md).
+
+Guest accounts and join codes are a separate mechanism; see [api-and-auth.md](api-and-auth.md).
+
 ## Scrobblers
 
 Scrobblers touch no audio. The server hands every playback report to the plugins declaring the
@@ -130,6 +150,14 @@ outside that set surfaces as the bug it is.
 - [players.md](players.md) for live source sessions on a player.
 - [playback.md](playback.md) for how live audio bypasses the pipeline.
 - [ai-and-mcp.md](ai-and-mcp.md) for the AI-facing plugins.
-- [providers/sendspin_source](../../music_assistant/providers/sendspin_source/README.md) and
-  [providers/spotify_connect](../../music_assistant/providers/spotify_connect/README.md) for two
-  worked receiver examples.
+- [providers/vban_receiver](../../music_assistant/providers/vban_receiver/README.md) for the
+  simplest receiver, and
+  [providers/spotify_connect](../../music_assistant/providers/spotify_connect/README.md) and
+  [providers/airplay_receiver](../../music_assistant/providers/airplay_receiver/README.md) for two
+  that wrap an external daemon.
+- [providers/plex_connect](../../music_assistant/providers/plex_connect/README.md) and
+  [providers/yandex_smarthome](../../music_assistant/providers/yandex_smarthome/README.md) for
+  bridges that carry commands rather than audio.
+- [providers/radio_playlist](../../music_assistant/providers/radio_playlist/README.md) and
+  [providers/sonic_similarity](../../music_assistant/providers/sonic_similarity/README.md) for
+  plugins that implement music features.

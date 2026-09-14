@@ -75,6 +75,24 @@ An optional subnet-wide broadcast search is available and **off by default**, be
 traffic is problematic on large networks. It helps with routers that do not relay multicast
 properly.
 
+## Who subscribes to what
+
+Roughly fifteen providers declare a subscription, and the split is lopsided in a way worth seeing
+before debugging a missing device.
+
+| Mechanism | Providers |
+|---|---|
+| mDNS | AirPlay, AmpliPi, Bluesound, Bose SoundTouch, Chromecast, HEOS, MusicCast, Sonos, WiiM, Yandex Station, and the Hue lights plugin |
+| SSDP | DLNA, Roku, Samsung WAM |
+
+Read the manifests rather than this table when it matters; it will drift and the manifests cannot.
+
+Three entries explain the caveats in the prose above. The Hue plugin is the non-player subscriber.
+Roku searches a control protocol identifier rather than a media renderer target. Samsung searches
+a vendor-specific target. AirPlay is the extreme case, subscribing to four service types, because
+identifying an AirPlay device fully needs records that arrive independently, which is the race the
+on-demand lookup exists for.
+
 ## Advertising the server
 
 The server registers itself over Zeroconf, publishing its capabilities so clients and other

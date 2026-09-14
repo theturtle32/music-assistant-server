@@ -8,7 +8,7 @@ only produces the signals.
 
 ## How it works
 
-Beat This! is a transformer-based beat tracker that operates on log-mel spectrograms at 50 fps (frames per second). It was designed for offline use — process the entire audio file at once. This provider adapts it for **streaming** use inside Music Assistant's audio pipeline, where PCM arrives in 1-second chunks from the stream controller.
+Beat This! is a transformer-based beat tracker that operates on log-mel spectrograms at 50 fps (frames per second). It was designed for offline use, processing an entire audio file at once. This provider adapts it for **streaming** use inside Music Assistant's audio pipeline, where PCM arrives in 1-second chunks from the stream controller.
 
 ### Pipeline overview
 
@@ -64,13 +64,13 @@ The feature extractor aligns the start of each audio segment to a `hop_length` (
 
 #### 4. Windowed model inference at finalize
 
-Unlike the feature extraction (which runs incrementally per block), model inference runs on the concatenated features when the track ends. The Beat This! transformer (`small0` checkpoint, dynamically quantized to qint8) predicts a long track as fixed 30-second windows — the length it was trained on — overlapping by the 6 frames its predictions are unreliable on, which are then stitched back into one sequence. That windowing is Beat This!'s own (`split_piece` / `aggregate_prediction`); running the windows here rather than inside `Spect2Frames` gives identical results while keeping each offload short, so a finalize never holds the shared analysis slot for a whole track's inference. While a player is streaming, the provider also idles between windows for as long as the previous one took, so beat inference does not occupy a core continuously.
+Unlike the feature extraction (which runs incrementally per block), model inference runs on the concatenated features when the track ends. The Beat This! transformer (`small0` checkpoint, dynamically quantized to qint8) predicts a long track as fixed 30-second windows, the length it was trained on, overlapping by the 6 frames its predictions are unreliable on, which are then stitched back into one sequence. That windowing is Beat This!'s own (`split_piece` / `aggregate_prediction`); running the windows here rather than inside `Spect2Frames` gives identical results while keeping each offload short, so a finalize never holds the shared analysis slot for a whole track's inference. While a player is streaming, the provider also idles between windows for as long as the previous one took, so beat inference does not occupy a core continuously.
 
-The DBN postprocessor — a pure-numpy reimplementation of madmom's `DBNDownBeatTrackingProcessor` using Viterbi decoding over a bar-pointer HMM — then converts the stitched frame-level logits to beat/downbeat timestamps in a single offload; its Viterbi decoding needs the whole sequence and cannot be windowed.
+The DBN postprocessor, a pure-numpy reimplementation of madmom's `DBNDownBeatTrackingProcessor` using Viterbi decoding over a bar-pointer HMM, then converts the stitched frame-level logits to beat/downbeat timestamps in a single offload; its Viterbi decoding needs the whole sequence and cannot be windowed.
 
 #### 5. Musical key detection (S-KEY)
 
-Key detection runs in parallel with beat tracking. Each 1-second PCM chunk is independently resampled to 22050 Hz and passed through a Variable-Q Transform (VQT) to extract tonal features. At finalization, the accumulated VQT features are concatenated and fed into ChromaNet, which classifies the track into one of 24 keys (12 pitch classes x major/minor). Per-chunk VQT extraction uses stateless one-shot resampling because each chunk is processed independently — this cannot share the streaming resampler's session state.
+Key detection runs in parallel with beat tracking. Each 1-second PCM chunk is independently resampled to 22050 Hz and passed through a Variable-Q Transform (VQT) to extract tonal features. At finalization, the accumulated VQT features are concatenated and fed into ChromaNet, which classifies the track into one of 24 keys (12 pitch classes x major/minor). Per-chunk VQT extraction uses stateless one-shot resampling because each chunk is processed independently, so it cannot share the streaming resampler's session state.
 
 #### 6. RMS energy and spectral centroid
 

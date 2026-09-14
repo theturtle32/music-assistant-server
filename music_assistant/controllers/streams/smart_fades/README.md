@@ -168,3 +168,12 @@ overlap to fit the shorter input and quantizes it to a whole number of PCM frame
 **That frame quantization is load-bearing rather than cosmetic.** Buffers are sliced on frame
 boundaries, so a fractional overlap leaves the rendered buffer a fraction of a sample short of the
 requested duration, and FFmpeg then silently produces no output at all.
+
+## Related architecture docs
+
+- [Playback](../../../../docs/architecture/playback.md) for where crossfade sits in the pipeline.
+- [controllers/streams/processing.md](../processing.md) for the mixing stage this feeds.
+- [controllers/player_queues/continuation.md](../../player_queues/continuation.md) for the ordering
+  that uses the same analysis.
+- [providers/smart_fades](../../../providers/smart_fades/README.md) for where the analysis is
+  produced.

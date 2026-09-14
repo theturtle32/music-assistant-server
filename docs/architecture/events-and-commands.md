@@ -35,8 +35,9 @@ state rather than invoking a controller. Setting the connection's locale is one 
 ## Events
 
 An event carries a type, an optional object id and an optional payload. Signalling one is
-synchronous and non-blocking: subscribers are called in turn, and a subscriber that needs to do
-real work schedules a task rather than holding up the bus.
+synchronous: matching subscribers are walked in a single pass. A synchronous callback runs inline
+and holds up that pass, while an asynchronous one is wrapped in a task, so real work belongs in the
+latter.
 
 Subscribing takes a callback plus optional filters on event type and object id, and returns an
 unsubscribe callable. Filtering at subscription time rather than in the callback is what keeps a
@@ -94,6 +95,8 @@ plugin talk to its own frontend.
 
 - [api-and-auth.md](api-and-auth.md) for the transports and the scope model.
 - [overview.md](overview.md) for where registration sits in startup.
+- [music_assistant/events.md](../../music_assistant/events.md) for the bus mechanics, the registry
+  detail, and the enum members that look live but are not.
 - [controllers/webserver](../../music_assistant/controllers/webserver/README.md) for the dispatch
   and connection detail.
 - [operations.md](operations.md) for the task system.

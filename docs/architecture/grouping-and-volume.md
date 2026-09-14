@@ -100,10 +100,14 @@ an external change eventually becomes authoritative again.
 
 A group volume change scales all powered members proportionally, preserving their relative balance.
 
-The first adjustment snapshots the members' current levels, and the loudest member becomes the
-reference point. Raising the slider interpolates every member toward maximum; lowering it
-interpolates toward zero. The snapshot is invalidated when an individual member's volume is set
-directly or when membership changes.
+The first adjustment snapshots the members' levels, and the loudest of them becomes the reference
+point. Raising the slider interpolates every member toward maximum; lowering it interpolates toward
+zero. The snapshot is invalidated when an individual member's volume is set directly or when
+membership changes.
+
+**The snapshot reads last-commanded levels, not reported ones**, for the same reason nudges do. A
+member that has not yet confirmed a change would otherwise put the reference above the level being
+set, turning a step up into a step down.
 
 That approach is chosen over an additive delta for four reasons: every member reaches silence at
 zero and maximum at the top, relative balance survives the full range, returning the slider

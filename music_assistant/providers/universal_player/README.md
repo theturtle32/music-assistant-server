@@ -1,128 +1,77 @@
-# Universal Player Provider
+# Universal player
 
-## Overview
+A wrapper player standing in front of the protocol endpoints of one physical device, for devices
+with no native vendor support. An AV receiver reachable over three protocols appears as one player
+with three selectable outputs instead of three players the user has to guess between.
 
-The Universal Player provider creates virtual players that merge multiple protocol players (AirPlay, Chromecast, DLNA, Squeezelite, SendSpin) for the same physical device into a single unified player.
+These players are never created by hand. The player controller creates one when protocol endpoints
+match the same device and nothing native claims it, and this provider only owns the player model.
+The matching itself, and the linking flows around it, live in
+[controllers/players/protocol-linking.md](../../controllers/players/protocol-linking.md).
 
-## When is a Universal Player Created?
+## Module layout
 
-A Universal Player is automatically created by the PlayerController when:
+| Module | Role |
+|---|---|
+| `provider.py` | The provider, holding the registered wrappers |
+| `player.py` | The wrapper player: feature aggregation and state derivation |
+| `constants.py` | The id prefix and config keys |
 
-1. **One or more protocol players are detected for the same device** - Matching prefers MAC/serial/UUID-style identifiers and only falls back to IP as a last resort
-2. **No native player provider exists** - e.g., a Denon AVR with Chromecast, AirPlay, and DLNA but no native Denon integration
+A builtin provider with no features of its own, since it supports no manual creation.
 
-## Example Scenario
+## It derives everything
 
-Consider a Denon AVR receiver that supports:
-- Chromecast built-in
-- AirPlay 2
-- DLNA
+A wrapper starts with no capabilities and takes them from its linked protocols: volume from
+whichever protocol handles it best, power from any protocol that has it, transport from the active
+one.
 
-Without a native Denon provider in Music Assistant, the system would normally show three separate players:
-- "Living Room (Chromecast)"
-- "Living Room (AirPlay)"
-- "Living Room (DLNA)"
+**It deliberately cannot play media itself.** Starting playback selects an output protocol and
+routes there, which is what keeps one code path for "where does this player actually play" rather
+than giving the wrapper a fourth answer.
 
-With the Universal Player provider, these are merged into a single:
-- "Living Room" (Universal Player)
-  - Output protocols: Chromecast, AirPlay, DLNA
+Availability follows from whether any linked protocol is genuinely usable, meaning reachable **and**
+not awaiting setup, and the wrapper forwards the *reason* rather than just the fact, so a user sees
+"pairing required" on the player they can actually see.
 
-## How It Works
+## The id is minted once and never derived
 
-### Device Matching
+A wrapper id is opaque and random, created when the device is first wrapped, carrying no device
+information and never recomputed.
 
-Protocol players are matched to the same device using:
-1. **MAC address** - Most reliable, extracted from device info
-2. **Serial / UUID / protocol-specific IDs** - Used before any IP fallback
-3. **IP address** - Last resort when strong identifiers are missing or unreliable
+That is a correction of a real bug rather than a style choice. The player id is the identity API
+consumers bind their entities to, so it has to be stable for the device's lifetime. Deriving it from
+whatever identifiers happened to be available made it shift as the set of registered protocol
+players changed, from a hardware-address-based id to a unique-id-based one, which orphaned the
+consumer's entity.
 
-The controller will also try to validate or enrich reported MAC addresses with ARP before falling back to weaker matching.
+A wrapper is therefore always resolved through the parent id each of its protocol players persists,
+never by re-deriving one.
 
-### Player Creation Flow
+The consequence is a deliberate asymmetry in cleanup. A wrapper config is deleted only when the user
+removes the player, when a native player takes the device over, or when it is absorbed into another
+wrapper for the same device; the last two carry its settings across first. When its protocol players
+merely disappear it becomes unavailable and **keeps its config**, because an opaque id cannot be
+recreated from the device.
 
-```
-1. Chromecast player registers → No native parent → delayed evaluation is scheduled
-2. No native player appears → PlayerController creates a UniversalPlayer, even for this single unmatched protocol
-3. AirPlay player registers → Matches existing UniversalPlayer by identifiers → gets linked to it
-4. DLNA player registers → Matches existing UniversalPlayer → Added as linked protocol
-```
+## Handover to a native provider
 
-### Feature Aggregation
+If a native provider is installed later, the controller hands the device over: every protocol link
+is re-pointed, the user's configuration including name, values, processing and queue settings is
+carried across, group memberships are re-pointed, and the wrapper is removed.
 
-The Universal Player aggregates features from all linked protocols:
-- Volume control from the protocol that supports it best
-- Power control from any protocol that supports it
-- Pause/Play from active protocol
-
-### Playback Routing
-
-The Universal Player does NOT have `PLAY_MEDIA` capability. Instead:
-1. User selects "Living Room" and starts playback
-2. PlayerController uses `_select_best_output_protocol()` to choose best protocol
-3. Playback is routed to the selected protocol player (e.g., Chromecast)
-4. User can switch to different protocol in player settings
-
-### Derived Transports
-
-Some protocol players ride on top of another output rather than being an independent path to the device - a Sendspin bridge running inside an AirPlay or Chromecast session, for example. Those players declare an `underlying_player_id`, which the controller resolves deterministically instead of matching on device identifiers: `_try_link_derived_protocol()` attaches them to the parent of the player they ride on, and `_link_derived_protocols_of()` picks up any that registered before their underlying player got linked. Derived protocol players never seed a Universal Player of their own.
-
-The resulting `OutputProtocol` entry carries `derived_from`, set to the `output_protocol_id` of the base output it runs on - or `"native"` when it rides on the parent player itself.
+**The handover is not unconditional.** A protocol player may refuse the new link, most often because
+the native player already holds an active link from that protocol domain. If anything stays behind,
+the wrapper is **kept** and only the protocols that actually moved are handed over, so the refused
+ones are not orphaned. Both players then coexist until a later evaluation resolves the rest.
 
 ## Configuration
 
-Universal Players are auto-created and require no user configuration. However, users can:
-- Rename the player
-- Choose preferred output protocol
-- Disable/enable the player
-- Remove the universal player to wipe its config and restart protocol discovery from scratch
-
-## Cleanup
-
-When a Universal Player is permanently removed, all protocol parent links are cleared so discovery can start over cleanly.
-
-If a native provider is later installed (e.g., Denon integration), the controller tries to hand the device over: every protocol link is re-pointed at the native player, the user's configuration (name, config values, DSP and queue settings) is carried over, group memberships are re-pointed and the Universal Player is removed.
-
-The takeover is not unconditional. A protocol player may refuse the new link, for example when the native player already has an active link from that protocol domain. If any protocol stays behind, the Universal Player is **kept** and only the protocols that actually moved are handed over, so the refused ones are not orphaned. Both players then coexist until a later evaluation resolves the remaining links.
-
-## Technical Details
-
-### Player ID
-
-Universal players use the format `up{random}`, minted once when the device is first
-wrapped. The id carries no device information and is never recomputed.
-
-This matters because the player id is the identity API consumers (e.g. the Home
-Assistant integration) bind their entities to, so it has to stay stable for the
-lifetime of the device. A universal player is therefore always resolved through the
-`protocol_parent_id` that each of its protocol players persists, never by deriving an
-id from the identifiers that happen to be available at that moment. Deriving the id
-made it shift whenever a different set of protocol players was registered - from a
-MAC-based to a UUID-based id, for example - which orphaned the consumer's entity.
-
-As a consequence a universal player config is only ever deleted when the user removes
-the player, when a native player takes over the device, or when it is absorbed by
-another universal player of the same device in a merge. The latter two carry its
-settings over to the player that replaces it first. When the protocol players of a
-universal player merely disappear it becomes unavailable but keeps its config, because
-an opaque id cannot be recreated from the device.
-
-### File Structure
-
-```
-universal_player/
-├── __init__.py      # Provider setup
-├── provider.py      # UniversalPlayerProvider class
-├── player.py        # UniversalPlayer class
-├── constants.py     # Constants (prefix, etc.)
-├── manifest.json    # Provider manifest (builtin)
-└── README.md        # This file
-```
-
-### Provider Features
-
-The Universal Player provider has no special provider features - it doesn't support manual player creation via the UI. Players are only created automatically by the PlayerController.
+Nothing is required. A user can rename the player, choose a preferred output protocol, disable it,
+or remove it, which wipes its config and restarts protocol discovery from scratch.
 
 ## Related architecture docs
 
-- [Protocol linking](../../../docs/architecture/protocol-linking.md) for why wrappers exist and how they are built.
+- [Protocol linking](../../../docs/architecture/protocol-linking.md) for why wrappers exist, how
+  endpoints are matched, and how an output is chosen.
 - [Players](../../../docs/architecture/players.md) for the player model and command routing.
+- [Discovery](../../../docs/architecture/discovery.md) for how the endpoints are found.

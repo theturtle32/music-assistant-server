@@ -18,7 +18,9 @@ unavailable when no AI plugin is loaded. **It therefore does not appear as an op
 failing when selected.** The same check shapes configuration: the AI distractors setting is marked
 read-only with an explanatory alert when no AI provider is present.
 
-Playback is hosted by a shared playback session in either venue or remote mode, chosen per game.
+Playback is hosted by a [shared playback session](../../helpers/shared-playback.md) in either
+venue or remote mode, chosen per game rather than once in config, which is where it differs from
+[party](../party/README.md).
 
 ## Guest-safe state by construction
 
@@ -46,5 +48,6 @@ they group a real player.
 ## Related architecture docs
 
 - [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the AI provider-feature contract.
-- [Plugins](../../../docs/architecture/plugins.md) for shared playback sessions.
+- [Plugins](../../../docs/architecture/plugins.md) for the plugin categories.
+- [helpers/shared-playback.md](../../helpers/shared-playback.md) for the session abstraction.
 - [API and auth](../../../docs/architecture/api-and-auth.md) for guest access and join codes.
