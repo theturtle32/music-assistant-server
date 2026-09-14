@@ -1,30 +1,35 @@
-# Music Assistant Architecture Guide
+# Architecture
 
-## Getting Started
+Music Assistant is a single-process async Python server. It aggregates music from streaming
+services and local files into one library, and streams audio to speakers of many different
+protocols. It integrates with Home Assistant but also runs standalone.
 
-Music Assistant is a single-process async Python server that aggregates music from streaming services (Spotify, Tidal, Qobuz, local files) into a unified library and streams audio to speakers (Chromecast, AirPlay, DLNA, Sonos, and more). It integrates with Home Assistant but also runs standalone. The server is built on `asyncio` and `aiohttp`, with 13 controllers orchestrated by a central `MusicAssistant` hub, and a modular provider system for all external integrations.
+These documents are the big picture. Detail that belongs to one package lives in that package's
+own README next to the code, and each page here links out to the ones it hands off to. If you want
+to know what a function does, read the function; these pages are for understanding why the pieces
+are arranged the way they are.
 
 ```mermaid
 graph TB
-    Clients["Clients<br/>Web UI · Home Assistant · Apps"]
+    Clients["Clients<br/>Web UI · Home Assistant · Apps · Agents"]
 
-    subgraph "Media sources"
-        MP["Music Providers<br/>Spotify · Tidal · Qobuz · Filesystem"]
-        MDP["Metadata Providers<br/>TheAudioDB · MusicBrainz · Fanart.tv"]
-        PLG["Plugins<br/>Spotify Connect · Party · Scrobblers"]
+    subgraph sources [Media sources]
+        MP["Music providers<br/>streaming services · filesystem"]
+        MDP["Metadata providers<br/>art · lyrics · biographies"]
+        PLG["Plugins<br/>live sources · scrobblers · extras"]
     end
 
-    subgraph "Core controllers"
-        Web["Webserver & API<br/>JSON-RPC · WebSocket · Auth"]
-        Meta["Metadata<br/>Art · Lyrics · Palettes"]
-        Music["Music Controller<br/>Library · Search · Sync"]
-        Queues["Player Queues<br/>Playback · Transitions"]
-        Streams["Streams Controller<br/>Audio Pipeline · DSP · Crossfade"]
-        Players["Player Controller<br/>State · Commands · Protocol Linking"]
+    subgraph core [Core controllers]
+        Web["Webserver<br/>API · auth"]
+        Meta[Metadata]
+        Music["Music<br/>library · search · sync"]
+        Queues["Player queues<br/>playback progression"]
+        Streams["Streams<br/>audio pipeline"]
+        Players["Players<br/>state · commands"]
     end
 
-    subgraph "Player providers"
-        PP["Chromecast · AirPlay · DLNA<br/>Sonos · Sendspin · Snapcast"]
+    subgraph targets [Player providers]
+        PP["Speakers of every protocol"]
     end
 
     Clients --> Web
@@ -43,120 +48,104 @@ graph TB
     PLG -. "live audio" .-> Streams
 ```
 
-Config, cache and the event bus are deliberately absent: every box above depends on them, so they have no honest place in a dataflow diagram. [00-overview.md](00-overview.md#component-map) has the full controller map, and [02-configuration.md](02-configuration.md) covers persistence.
+Config, cache and the event bus are deliberately absent from that diagram: everything above
+depends on them, so they have no honest place in a dataflow drawing. See
+[overview.md](overview.md) for the full controller map.
 
-### Recommended Reading Paths
+## Where to start
 
-- **I want to build a music provider** — Start with [00-overview.md](00-overview.md) for the big picture, then [15-provider-lifecycle.md](15-provider-lifecycle.md) for loading/unloading, [08-media-library.md](08-media-library.md) for the library sync pattern, and [02-configuration.md](02-configuration.md) for config entries. Also see the `_demo_music_provider` directory for an annotated template.
+**I want to build a music provider.** Read [overview.md](overview.md), then
+[providers.md](providers.md) for the lifecycle and manifest, [media-library.md](media-library.md)
+for how your items are matched and stored, and [configuration.md](configuration.md) for config
+entries and setup flows. The `_demo_music_provider` directory is an annotated template.
 
-- **I want to build a player provider** — Read [00-overview.md](00-overview.md), then [03-player-model.md](03-player-model.md) for the `Player` class, [04-player-controller.md](04-player-controller.md) for command routing, [05-protocol-linking.md](05-protocol-linking.md) for multi-protocol device merging, and [15-provider-lifecycle.md](15-provider-lifecycle.md) for the loading lifecycle. See `_demo_player_provider` for a template.
+**I want to build a player provider.** Read [overview.md](overview.md), then
+[players.md](players.md) for the player model and command routing,
+[protocol-linking.md](protocol-linking.md) if your devices also speak another protocol,
+[discovery.md](discovery.md) for being found on the network, and [providers.md](providers.md) for
+the lifecycle. See `_demo_player_provider`.
 
-- **I want to understand player behavior and grouping** — Read [03-player-model.md](03-player-model.md), [06-grouping.md](06-grouping.md) for the three grouping models (sync groups, universal groups, ad-hoc sync), and [07-volume.md](07-volume.md) for volume routing and group volume.
+**I want to build a plugin.** Read [plugins.md](plugins.md) for live audio sources, the selection
+lifecycle and the receiver and scrobbler patterns. See `_demo_plugin_provider`.
 
-- **I want to understand the streaming pipeline** — Read [09-player-queues.md](09-player-queues.md) for queue management, the playback flow, and the pre-warm/enqueue-next hand-off, then [10-streaming-pipeline.md](10-streaming-pipeline.md) for audio decoding, buffering, normalization, crossfade, and output encoding.
+**I want to understand playback.** Read [playback.md](playback.md) for the path from a play request
+to audio on a speaker, then [grouping-and-volume.md](grouping-and-volume.md) for what changes when
+more than one speaker is involved.
 
-- **I want to build a plugin** — Read [11-plugin-system.md](11-plugin-system.md) for the `AudioSource` media-item model, the selection lifecycle hooks, and the receiver/scrobbler/bridge patterns. See `_demo_plugin_provider` for a template.
+**I want to understand the API.** Read [api-and-auth.md](api-and-auth.md) for the surface, the
+transports, scopes and users, plus [events-and-commands.md](events-and-commands.md) for how
+commands and events relate.
 
-- **I want to work with AI, or connect an LLM agent** — Read [18-ai-and-mcp.md](18-ai-and-mcp.md) for the `AI_QUERY`/`TTS` provider-feature contract and its consumers, and for the MCP server that exposes MA to external agents.
+**I want to connect an agent, or use AI features.** Read [ai-and-mcp.md](ai-and-mcp.md).
 
-- **I want to understand the API** — Read [12-webserver-api.md](12-webserver-api.md) for JSON-RPC, WebSocket, routes, and remote access, plus [01-event-system.md](01-event-system.md) for the event/command duality. For who is allowed to call what, read [19-authentication.md](19-authentication.md).
+**I am debugging a running server.** Read [operations.md](operations.md) for background jobs, the
+diagnostics report and where the logs are, and [discovery.md](discovery.md) for why a device is or
+is not being found.
 
-- **I am operating or debugging a running server** — Read [20-background-tasks.md](20-background-tasks.md) for the job system and the diagnostics report, [13-discovery.md](13-discovery.md) for why a device is or isn't being found, and [02-configuration.md](02-configuration.md) for where settings and databases live.
+**I am adding user-facing text.** Read [localization.md](localization.md).
 
-- **I am adding user-facing text** — Read [21-localization.md](21-localization.md) for the `strings.json` authoring pipeline and how a translation key reaches the client already localized.
+**I want the whole picture.** Read [overview.md](overview.md),
+[events-and-commands.md](events-and-commands.md) and [configuration.md](configuration.md) first,
+since everything else assumes them, then follow whichever path above interests you.
 
-- **I just want a complete picture** — Read the documents in order, 00 through 21. They are structured to build understanding incrementally: core framework (00–02), players (03–07), media and playback (08–11), interfaces (12–15), audio analysis (16–17), and the newer subsystems (18–21).
+## All pages
 
----
+| Page | Covers |
+|---|---|
+| [overview.md](overview.md) | The hub, the controllers, startup and shutdown, data directories |
+| [events-and-commands.md](events-and-commands.md) | The event bus, the command registry, and how they relate |
+| [configuration.md](configuration.md) | Config scopes, persistence, setup flows |
+| [providers.md](providers.md) | Provider types, manifests, loading, features, errors |
+| [players.md](players.md) | The player model and how a command reaches a device |
+| [protocol-linking.md](protocol-linking.md) | Merging one physical device that speaks several protocols |
+| [grouping-and-volume.md](grouping-and-volume.md) | The grouping models and volume routing |
+| [media-library.md](media-library.md) | Aggregating providers into one library, and enriching it |
+| [playback.md](playback.md) | From a play request to audio on a speaker |
+| [plugins.md](plugins.md) | Live audio sources and the other plugin patterns |
+| [api-and-auth.md](api-and-auth.md) | The API surface, users, scopes, remote access |
+| [discovery.md](discovery.md) | Finding devices on the network |
+| [operations.md](operations.md) | Background tasks, diagnostics, debugging |
+| [localization.md](localization.md) | Authoring translatable text |
+| [ai-and-mcp.md](ai-and-mcp.md) | AI provider features, and this server as an MCP server |
 
-## Complete Documentation Catalog
+## Package documentation
 
-### Architecture Docs (`docs/architecture/`)
+Every controller and every non-trivial provider has a README beside its code, and larger ones have
+sibling deep dives. Those own the detail; start from the architecture page above and follow the
+link.
 
-| Document | Description |
-|----------|-------------|
-| [00-overview.md](00-overview.md) | Central hub, controller map, startup/shutdown lifecycle, task management |
-| [01-event-system.md](01-event-system.md) | Pub/sub events and the `EventType` set, subscription internals and dispatch, `mass.create_task`, command handlers and the `@api_command` decorator |
-| [02-configuration.md](02-configuration.md) | JSON config, `ConfigEntry` schema, encryption, SQLite databases, caching |
-| [03-player-model.md](03-player-model.md) | `Player` class, `_attr_*` pattern, `__final_*` computed properties, `PlayerState` snapshots |
-| [04-player-controller.md](04-player-controller.md) | Command routing, registration, power/volume management, announcements, polling |
-| [05-protocol-linking.md](05-protocol-linking.md) | Multi-protocol device merging, identifier matching, Universal Player, output selection |
-| [06-grouping.md](06-grouping.md) | Sync groups, universal groups, ad-hoc sync, `set_members` pipeline |
-| [07-volume.md](07-volume.md) | Individual/group volume routing, interpolation-based scaling, volume limits, mute lock, announcement volume |
-| [08-media-library.md](08-media-library.md) | Music controller package, media sub-controllers, match-and-store pattern, search and FTS indexing, library sync, schema, recommendations, recency engine |
-| [09-player-queues.md](09-player-queues.md) | `PlayerQueue`/`PlayerQueueData` split, playback flow, dynamic playlists and the managed pool, autoplay, smart shuffle, queue persistence |
-| [10-streaming-pipeline.md](10-streaming-pipeline.md) | Audio decoding, buffering, normalization, crossfade, audio overlay, DSP and output plans, bit-perfect fidelity, HTTP delivery |
-| [11-plugin-system.md](11-plugin-system.md) | `AudioSource` media items, `PluginProvider` hooks, selection lifecycle and ownership, receiver/scrobbler/bridge plugins |
-| [12-webserver-api.md](12-webserver-api.md) | Routes, dynamic routes, the command registry and dispatch, WebSocket lifecycle and event filtering, remote access via WebRTC, the dashboard/diagnostics/MCP namespaces |
-| [13-discovery.md](13-discovery.md) | Shared Zeroconf, aggregated mDNS browser, exact-match on-demand lookup, SSDP/UPnP, multi-address server advertisement, the provider discovery matrix |
-| [14-metadata.md](14-metadata.md) | Metadata enrichment, provider priorities, opaque image proxy, thumbnail and source caches, colour palettes, radio artwork, genre system |
-| [15-provider-lifecycle.md](15-provider-lifecycle.md) | Provider taxonomy, manifest system, loading/unloading, dependency management |
-| [16-audio-analysis.md](16-audio-analysis.md) | Audio analysis subsystem: passive buffer observer, `AudioAnalysisProvider` ABC, `AudioAnalysisData`, CPU throttling, the loudness/smart-fades/sonic/AcoustID providers, background scan, failure tracking |
-| [17-smart-fades.md](17-smart-fades.md) | Smart fades execution: candidate/policy transition planner, `TransitionPlan`, band EQ, vocal awareness, renderer and filter chain |
-| [18-ai-and-mcp.md](18-ai-and-mcp.md) | The `AI_QUERY`/`TTS` provider-feature pattern, `hass` as the reference backend, AI Radio's generation pipeline, Music Quiz and Smart Playlist consumers, the FastMCP server and its tool surface |
-| [19-authentication.md](19-authentication.md) | Scope-based authorization, roles, impersonation, token lifecycle, join codes and guest access, the two OAuth flows, ingress auto-provisioning, multi-user filtering |
-| [20-background-tasks.md](20-background-tasks.md) | `TasksController` job model, scheduling, concurrency, contextvar log capture, per-user visibility; plus the diagnostics report, always-on capture and sanitization |
-| [21-localization.md](21-localization.md) | The `strings.json` → Lokalise → locale-file pipeline, key namespaces and the candidate chain, `translation_owner`, resolution during serialization, reverse media-name lookup |
+| Package | Covers |
+|---|---|
+| [controllers/cache](../../music_assistant/controllers/cache/README.md) | The SQLite cache and the caching decorator |
+| [controllers/config](../../music_assistant/controllers/config/README.md) | Settings storage, scopes, setup flows, migrations |
+| [controllers/diagnostics](../../music_assistant/controllers/diagnostics/README.md) | The diagnostics report and its sanitization |
+| [controllers/discovery](../../music_assistant/controllers/discovery/README.md) | Zeroconf and SSDP |
+| [controllers/metadata](../../music_assistant/controllers/metadata/README.md) | Enrichment, the image proxy, genres |
+| [controllers/music](../../music_assistant/controllers/music/README.md) | The library, search, sync, schema, recommendations |
+| [controllers/music/media](../../music_assistant/controllers/music/media/README.md) | The per-media-type sub-controllers and matching |
+| [controllers/player_queues](../../music_assistant/controllers/player_queues/README.md) | Queues, state, continuation |
+| [controllers/players](../../music_assistant/controllers/players/README.md) | The player controller internals |
+| [controllers/streams](../../music_assistant/controllers/streams/README.md) | Buffering, processing, output, analysis |
+| [controllers/streams/smart_fades](../../music_assistant/controllers/streams/smart_fades/README.md) | Transition planning and rendering |
+| [controllers/tasks](../../music_assistant/controllers/tasks/README.md) | The background task manager |
+| [controllers/translations](../../music_assistant/controllers/translations/README.md) | Runtime translation resolution and authoring |
+| [controllers/webserver](../../music_assistant/controllers/webserver/README.md) | The API, auth, remote access |
+| [providers/ai_radio](../../music_assistant/providers/ai_radio/README.md) | The AI radio orchestrator |
+| [providers/airplay](../../music_assistant/providers/airplay/README.md) | AirPlay playback |
+| [providers/fastmcp_server](../../music_assistant/providers/fastmcp_server/README.md) | This server as an MCP server |
+| [providers/hue_entertainment](../../music_assistant/providers/hue_entertainment/README.md) | Light sync |
+| [providers/music_quiz](../../music_assistant/providers/music_quiz/README.md) | The multiplayer quiz |
+| [providers/sendspin](../../music_assistant/providers/sendspin/README.md) | The native synchronized protocol |
+| [providers/sendspin_source](../../music_assistant/providers/sendspin_source/README.md) | Line-in and microphone sources |
+| [providers/smart_fades](../../music_assistant/providers/smart_fades/README.md) | The audio analysis behind smart crossfades |
+| [providers/smart_playlist](../../music_assistant/providers/smart_playlist/README.md) | Rule-based playlists |
+| [providers/spotify_connect](../../music_assistant/providers/spotify_connect/README.md) | Spotify Connect and its backends |
+| [providers/sync_group](../../music_assistant/providers/sync_group/README.md) | Sync group players |
+| [providers/universal_player](../../music_assistant/providers/universal_player/README.md) | Universal players |
 
-### Root Documentation
+## Elsewhere
 
-| Document | Description |
-|----------|-------------|
-| [`CLAUDE.md`](../../CLAUDE.md) | AI assistant instructions: dev commands, code style, branching conventions |
-| [`DEVELOPMENT.md`](../../DEVELOPMENT.md) | Developer setup: prerequisites, venv, running locally, testing |
-| [`README.md`](../../README.md) | Project overview, installation, Home Assistant integration |
-
-### Controller Documentation (`music_assistant/controllers/`)
-
-All nine in-tree controller READMEs. These own module inventories and config-key lists; the architecture docs above own the cross-cutting flows and design rationale.
-
-| Document | Description |
-|----------|-------------|
-| [`cache/README.md`](../../music_assistant/controllers/cache/README.md) | Cache controller: SQLite-backed cache, categories, SWR refresh, maintenance |
-| [`discovery/README.md`](../../music_assistant/controllers/discovery/README.md) | Discovery controller: shared Zeroconf, mDNS/UPnP patterns |
-| [`metadata/README.md`](../../music_assistant/controllers/metadata/README.md) | Metadata controller package: module layout, image proxy, provider priorities |
-| [`music/README.md`](../../music_assistant/controllers/music/README.md) | Music controller package: sub-controllers, sync, search, recommendations |
-| [`player_queues/README.md`](../../music_assistant/controllers/player_queues/README.md) | Player queues controller internals: module layout, mixin boundaries, invariants, config inventory |
-| [`players/README.md`](../../music_assistant/controllers/players/README.md) | Player controller internals: Player/PlayerState model, protocol linking, universal players |
-| [`streams/README.md`](../../music_assistant/controllers/streams/README.md) | Streams controller internals: audio buffering, streaming pipeline, smart fades |
-| [`tasks/README.md`](../../music_assistant/controllers/tasks/README.md) | Background task manager: scheduling, progress tracking, recurring jobs |
-| [`webserver/README.md`](../../music_assistant/controllers/webserver/README.md) | Webserver architecture: auth system, WebSocket API, remote access |
-
-### Provider Documentation (`music_assistant/providers/`)
-
-| Document | Description |
-|----------|-------------|
-| [`spotify_connect/README.md`](../../music_assistant/providers/spotify_connect/README.md) | Spotify Connect: module layout and the backend-agnostic provider surface |
-| [`spotify_connect/soloist/README.md`](../../music_assistant/providers/spotify_connect/soloist/README.md) | Soloist backend (recommended): Spotify's official headless client, managed binary, PulseAudio capture |
-| [`spotify_connect/go_librespot/README.md`](../../music_assistant/providers/spotify_connect/go_librespot/README.md) | go-librespot backend: community client, HTTP + WebSocket API, event flow |
-| [`sendspin_source/README.md`](../../music_assistant/providers/sendspin_source/README.md) | Sendspin source plugin: line-in/turntable/microphone inputs as AudioSources |
-| [`sync_group/README.md`](../../music_assistant/providers/sync_group/README.md) | Sync group player: sync leader delegation, formation/dissolution |
-| [`universal_player/README.md`](../../music_assistant/providers/universal_player/README.md) | Universal player: protocol merging, virtual player lifecycle |
-| [`sendspin/README.md`](../../music_assistant/providers/sendspin/README.md) | Sendspin protocol: native MA playback, synchronized audio |
-| [`airplay/README.md`](../../music_assistant/providers/airplay/README.md) | AirPlay provider: RAOP/AirPlay 2, device discovery, streaming |
-| [`itunes_podcasts/README.md`](../../music_assistant/providers/itunes_podcasts/README.md) | iTunes podcast data: country code attribution |
-| [`gpodder/README.md`](../../music_assistant/providers/gpodder/README.md) | gPodder icon attribution |
-| [`airplay_receiver/bin/README.md`](../../music_assistant/providers/airplay_receiver/bin/README.md) | AirPlay receiver binary attribution |
-| [`apple_music/bin/README.md`](../../music_assistant/providers/apple_music/bin/README.md) | Apple Music binary attribution |
-
-### GitHub and CI (`/.github/`)
-
-| Document | Description |
-|----------|-------------|
-| [`copilot-instructions.md`](../../.github/copilot-instructions.md) | PR review standards and coding guidelines for AI assistants |
-| [`workflows/RELEASE_WORKFLOW_GUIDE.md`](../../.github/workflows/RELEASE_WORKFLOW_GUIDE.md) | Release workflow: tagging, channels, automation |
-| [`workflows/RELEASE_NOTES_GENERATION.md`](../../.github/workflows/RELEASE_NOTES_GENERATION.md) | Release notes: channel-specific generation behavior |
-| [`actions/generate-release-notes/README.md`](../../.github/actions/generate-release-notes/README.md) | Custom release notes action: commit ranges, PR categorization |
-
-### Tests
-
-| Document | Description |
-|----------|-------------|
-| [`tests/providers/nicovideo/README.md`](../../tests/providers/nicovideo/README.md) | Niconico provider test suite: fixtures, running instructions |
-
-### External Resources
-
-| Resource | Description |
-|----------|-------------|
-| [developers.music-assistant.io](https://developers.music-assistant.io/) | Official developer documentation site |
-| [music-assistant.io](https://music-assistant.io/) | Project website with user guides and the audio pipeline concept page |
+- [DEVELOPMENT.md](../../DEVELOPMENT.md) for setting up a development environment.
+- [AGENTS.md](../../AGENTS.md) for the conventions this codebase expects, human or otherwise.
+- [developers.music-assistant.io](https://developers.music-assistant.io/) renders these pages and
+  the package docs alongside the provider authoring guides.

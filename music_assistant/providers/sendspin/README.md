@@ -73,7 +73,7 @@ Sendspin player.
 Because both paths reuse the webserver's own authentication and (for remote access) its
 WebRTC stack, this provider registers **no** signalling API commands and pulls in no WebRTC
 dependency of its own. See
-[12-webserver-api.md](../../../docs/architecture/12-webserver-api.md) for the proxy and the
+[api-and-auth.md](../../../docs/architecture/api-and-auth.md) for the proxy and the
 remote-access gateway.
 
 ## Implementing a Sendspin Client

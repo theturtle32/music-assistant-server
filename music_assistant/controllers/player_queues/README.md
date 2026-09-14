@@ -120,6 +120,6 @@ See [controllers/config](../config/README.md).
 ## Related architecture docs
 
 - [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to audio on a speaker.
-- [Player control](../../../docs/architecture/player-control.md) for command routing and the playback lock.
+- [Players](../../../docs/architecture/players.md) for command routing and the playback lock.
 - [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for which player a group's queue belongs to.
 - [Plugins](../../../docs/architecture/plugins.md) for audio sources and dynamic playlists.
