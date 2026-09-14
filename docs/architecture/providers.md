@@ -64,6 +64,11 @@ works.
 **The post-load hooks run as a background task**, which is what lets loading announce itself and
 return without waiting for device discovery. Internally those steps are still awaited in order.
 
+**Importing a provider module happens off the event loop**, including the imports a provider defers
+until first use. Importing is blocking work, and a heavy dependency stack, a machine-learning
+runtime being the extreme case, takes many seconds. On the loop that is the whole server stalled,
+so deferred imports go to the import thread like any other module rather than running inline.
+
 Load failures are non-fatal. The error is persisted, a status is derived from it, and
 `MusicAssistantError` subclasses are retried on a backoff.
 

@@ -86,6 +86,11 @@ modes and gains for radio and tracks separately, the global target loudness, whe
 album tracks may crossfade, the bind address and port and the IP published to players in stream
 URLs, and the concurrency of the nightly analysis scan.
 
+**The published address must be an IP literal, not a hostname.** It is handed on to protocols that
+accept only literals, so a hostname does not fail at the setting, it fails later as silence from a
+player. The entry validates it, and a stored hostname surviving from an earlier version is reset to
+automatic once, with a warning, rather than being resolved.
+
 ## Related architecture docs
 
 - [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to

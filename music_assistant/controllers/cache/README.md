@@ -38,6 +38,12 @@ explicit clear unless the caller asks to include persistent entries. An entry fl
 reuse survives the daily cleanup after it expires, so it stays available as fallback data. Those
 rows are dropped once they are far enough past expiry that nothing is asking for the key anymore.
 
+A checksum stored alongside an entry invalidates it on a mismatch, independently of expiry. The
+common use is a provider caching items it has **parsed**: when the parsing changes shape, a
+checksum the provider bumps discards every cached item at once, rather than leaving weeks-old
+entries to be read back into a model that no longer matches them. Expiry alone cannot express
+that, since the data did not get older, the code did.
+
 ### Shared fetches and stale-while-revalidate
 
 On a miss, the decorator shares one execution of the wrapped method between concurrent callers on

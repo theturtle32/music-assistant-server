@@ -105,6 +105,12 @@ session rather than causing a sample-rate mismatch mid-stream.
 **Targeting caches the queue rather than the player**, because some protocol players are ephemeral
 bridges whose id stops being valid once torn down.
 
+**"The player" is several players.** The one a source was selected on, the one actually consuming
+the stream, which may be a protocol player or a sync leader, and the one a new session should land
+on are routinely different. Releasing a source has to name the first and stopping playback the
+second; getting that backwards leaves a source claimed forever or tears down a group that should
+only pause.
+
 Not every receiver has every one of those problems, and the exceptions are instructive. One never
 sends volume outward, so it has no echo to suppress. One is fed by a passive protocol with no
 session on the far side, so it never stops a previous player. One fetches its own audio rather than

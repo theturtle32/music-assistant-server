@@ -50,8 +50,12 @@ impersonation, whole-library management, provider and core config writes and sys
 stay with the builtin admin role and cannot be granted to a custom one.
 
 Changing a user's role, or changing the scopes of the custom role it holds, closes that user's live
-sessions so its clients reconnect with the new scopes. The last enabled admin cannot lose the admin
-role.
+sessions so its clients reconnect with the new scopes.
+
+Two role changes are refused outright. The last enabled admin cannot lose the admin role. And a
+user who **owns music sources cannot be demoted to guest**, because a guest may not own one; the
+sources have to be reassigned or removed first. That second rule is where the role model and the
+ownership model below meet, and it is the only place they constrain each other.
 
 Two of the builtin roles deserve explanation.
 
@@ -65,23 +69,64 @@ integration token can act on behalf of whichever user triggered an automation, a
 the user list, because impersonating a user is not useful without being able to enumerate them. It
 deliberately owns no music sources of its own.
 
+The integration's account is a **system user**, and it is deliberately visible rather than hidden.
+It appears in the user list carrying the service role, so an administrator can see what is acting
+on the household's behalf, but it cannot be disabled or deleted. Hiding it made the integration's
+access invisible; letting it be removed broke the integration with no obvious way back.
+
 Reading users is a separate scope from managing them precisely because it is a far weaker
 capability, and forcing every caller that needs to see users to hold full user management would be
 wrong.
 
 ## Who can see which music source
 
-Visibility of a music source is **not** a per-user setting. Each source carries an owner and a
-sharing setting, and what a user sees follows from those. Playback uses the listener's own accounts
-first and never an account that was not shared with them, and attribution follows the owner.
+Visibility of a music source is **not** a per-user setting. Each source carries an access record,
+and what a user sees follows from that rather than from an allow-list on the user.
+
+The record holds an owner, a sharing level and, for one of those levels, an explicit list of
+members.
+
+| Sharing | Reachable by |
+|---|---|
+| Private | Its owner alone |
+| Selected | Its owner plus the members named on the record |
+| Members | Its owner plus every household member, meaning everyone who is not a guest |
+| Everyone | Anybody, including anonymous playback |
+
+An owner of nobody means the source is administrator-managed, and then the sharing level alone
+decides. Anonymous playback, which has no user at all, reaches only the last level, so a source is
+never exposed to an unauthenticated caller by accident.
+
+**The default is the most restrictive value**, and a record that cannot be read is treated as
+private rather than as absent. Both choices are deliberate: a half-written or unreadable record
+hides its source instead of exposing it.
+
+Playback never goes through an account the listener may not use. Where the item was found on
+somebody else's account of a streaming service, the listener's own account of that service stands
+in; where they have none, it does not play for them. Attribution follows the owner. See
+[The media library](media-library.md).
 
 Players are the exception and still work the other way round: a user can be restricted to specific
 players on the user record itself.
+
+That restriction has one carve-out. A **private** client player, the browser tab or app the caller
+is connected on, is always usable by whoever announced it, whatever their player filter says.
+Otherwise a restricted member could not play to their own phone. It applies only to private
+players, so announcing a shared speaker's id does not claim it.
 
 A member can connect their own account for a service that allows more than one, and can
 reconfigure, reload, remove and share what they own. A provider declares whether that is allowed
 through its manifest, and a source whose setup reaches into the server itself, such as a folder on
 its local disk, stays admin-only.
+
+A share that nobody could use is refused rather than saved, and a refusal says which rule it hit,
+so a member is not left guessing why a source they can see cannot be given away.
+
+Playlists this server owns carry the same record with one addition: a collaborative flag deciding
+whether everyone it is shared with may add and remove items, or only the owner. They are private by
+default. A playlist that came from a provider has no record of its own and follows the sharing of
+its source, so there is only ever one answer to who may see it. See
+[Media sub-controllers](../../music_assistant/controllers/music/media/README.md).
 
 ## Enforcement
 

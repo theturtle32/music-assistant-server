@@ -78,9 +78,22 @@ It is a plugin-side loop that enqueues on a schedule of its own. The two mechani
 a queue but do not cooperate. A station's source playlist may be a dynamic playlist only in the
 sense that any playlist URI works as a source.
 
+## Listening and authoring are different permissions
+
+The commands split along a deliberate line: **playing** a station takes the scopes that playing
+anything takes, while **creating or editing** one takes the scopes that configuring the plugin
+takes.
+
+Listing stations, reading their sections, starting and stopping one and reading its status are
+therefore available to any household member who can control a queue. Stations are part of what
+everyone browses, so gating playback behind provider configuration would have made them visible but
+unusable to most of the household.
+
 ## Related architecture docs
 
 - [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the provider-feature contract this
   consumes.
+- [The API and authentication](../../../docs/architecture/api-and-auth.md) for the scope model
+  these commands declare.
 - [Playback](../../../docs/architecture/playback.md) for how enqueued items reach a speaker.
 - [Plugins](../../../docs/architecture/plugins.md) for the plugin provider model.

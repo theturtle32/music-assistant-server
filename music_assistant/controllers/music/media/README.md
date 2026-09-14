@@ -89,6 +89,12 @@ completes.
 artist listing does not mix them. Removing an artist cascades to albums and tracks that have no
 other artist references.
 
+**Albums** assemble their tracklist across every provider holding the album, and where the same
+track is offered by more than one, **a playable copy displaces an unplayable one**. Services grey
+out individual tracks on an otherwise available album, so without that the tracklist a user sees
+depends on which provider happened to be read first. Each track keeps its position in the result
+while its content is replaced, so the running order does not shuffle as copies are substituted.
+
 **Audiobooks** treat authors and narrators as first-class artists, while keeping the plain string
 columns for providers that only supply names. Reads prefer the linked artists and fall back to the
 strings, and the sync snapshot records which shape is stored so a sync can tell when an upgrade is
@@ -106,6 +112,20 @@ provider-supplied name can carry a translation key and parameters so it survives
 trip localized, and updates adopt a synced item's key and parameters as a unit rather than mixing
 an old key with new parameters. Migration copies a playlist onto another provider or into managed
 storage, matching each track through the graded comparison and reporting what was approximated.
+
+Only a playlist **this server owns** carries its own access record. A provider's playlist follows
+the sharing of the music source it came from, and trying to share one directly is refused saying
+so, because two answers to "who may see this" would inevitably disagree.
+
+Sharing one is the owner's call: another member cannot, and changing the owner needs the
+library-management scope, which is also what lets an administrator repair a playlist they cannot
+themselves see. A playlist with no owner is a playlist of the whole home, and must therefore be
+shared with somebody, since a private one nobody owns would be reachable by nobody at all.
+
+Two rules exist because accounts change. Owners and shared members **keep their place while their
+account is disabled**, so disabling somebody does not quietly rewrite everyone else's sharing. And
+when a user is deleted, the playlists it owned become playlists of the whole home rather than
+vanishing, while it is dropped from the share list of every other playlist.
 
 **Genres** are the only editable taxonomy here, and the largest sub-controller. Spoken-word
 taxonomies are namespaced separately from music, so a podcast "Comedy" never merges into the music

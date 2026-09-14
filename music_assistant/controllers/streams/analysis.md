@@ -51,6 +51,18 @@ provider that exceeds the per-chunk hang guard is evicted from the session.
 Results are persisted per item and provider, so a track is analyzed once and reused on later
 playback.
 
+## Recording a failure
+
+A provider that gives up on a track records why, per provider and item, and that reason surfaces in
+the failures overview so a user can see which tracks were skipped rather than wondering why one
+never gets a crossfade.
+
+The distinction that matters is **whose fault it was**. A provider judging a track unanalyzable
+records its own wording, optionally with a time to retry after. Any other exception is recorded
+generically. But a timeout records **nothing** and leaves the track pending for the next run,
+because a timeout measures how loaded the server was, not anything about the audio, and writing it
+down would permanently blame a track for one busy night.
+
 ## The background scan
 
 The same provider interface backs a nightly scan that analyzes tracks with no current analysis yet,

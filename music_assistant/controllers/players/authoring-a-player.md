@@ -54,3 +54,13 @@ that rather than assuming a command arrives only when ready.
 
 Do not assume your player is the audio path. Once linked, the audio may go out over a protocol
 player instead, and group commands may be translated onto it.
+
+Say whether your reported source can be trusted. A player reporting a source other than this
+server's stream may have been taken over by something else, but most devices report their active
+source too unreliably to act on, so by default only a short list of recognizable inputs such as
+line-in or a TV counts. A provider whose device **does** name the service it is playing can opt in,
+and then any entry on its own source list counts as a takeover too, which is what lets a service
+this server has no name of its own for be recognized.
+
+Leave the opt-in off if your device also lists the transport our own stream arrives on. It would
+otherwise report our own playback as somebody else taking the player over.

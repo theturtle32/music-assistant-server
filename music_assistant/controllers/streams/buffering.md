@@ -60,5 +60,10 @@ The profile follows what is being served rather than the player receiving it:
 | Near realtime | The flow stream, radio, and providers that deliver just in time | Such a source delivers barely above playback pace, and what it banks ahead is all its end-of-track crossfade has |
 | Low latency | Live audio sources | Whatever the burst hands over sits in the player's buffer as listening delay |
 
+The universal group stream takes the near-realtime profile, and it is the **only** thing pacing
+that route. Its source is the raw queue flow, which carries no pacing of its own, so without this
+the members would all run far ahead of playback. A group fan-out is therefore not a place where
+pacing can be treated as an optimization.
+
 This pacing is load-bearing and intentional. Do not remove it to make buffering look faster; the
 constant in the code carries the same warning. The live decode side is separate and stricter.

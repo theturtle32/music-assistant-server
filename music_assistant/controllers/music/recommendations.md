@@ -32,6 +32,12 @@ Rows cover in-progress items, recently played, recently added, favorites, random
 and rarely played items, and most played. Rows that are interesting to some libraries and noise in
 others ship disabled by default.
 
+**The random row is not uniformly random.** It draws least-played first and shuffles only within
+equal play counts, so a large library surfaces what the user has been missing rather than the same
+handful of well-known records. The bias is applied in the candidate selection rather than only in
+the final sort, because sorting a uniformly drawn sample would bias the order of that sample
+without changing which tracks were in it.
+
 Library rows support provider filtering through the reachable-via listing filter, which is what
 lets a user restrict "recently added" to a single service. A provider's own rows cannot offer that.
 

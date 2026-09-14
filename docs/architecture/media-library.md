@@ -113,10 +113,22 @@ See
 ## Per-user by construction
 
 Which music sources a user can see follows from **ownership and sharing on each source**, not from
-an allow-list on the user. A source carries an owner and a sharing setting, and the resulting set
-is applied to the provider lists, browse, recommendations and every library listing. It also steers
-which mapping an item's details are fetched from, so playback uses the listener's own accounts
-first and never an account that was not shared with them. Plugin providers are never restricted.
+an allow-list on the user. A source carries an owner and a sharing level, and the resulting set is
+applied to the provider lists, browse, recommendations and every library listing. Plugin providers
+are never restricted. The levels themselves are in
+[The API and authentication](api-and-auth.md).
+
+It also decides which account an item actually plays through, and that is a substitution rather
+than a preference. A library item's mapping records the account it was found on, which may belong
+to another member. Playing it resolves to **an account of the same service that this listener may
+use**, because two accounts of one streaming service resolve the same item ids. If the listener has
+no account of that service, the item does not play for them rather than playing through somebody
+else's.
+
+That trick is available only for streaming services. A local or library-style provider's item ids
+mean nothing on another instance, so there is no equivalent stand-in. And only a loaded, available
+account can stand in, since the permitted set is read from stored config and still lists accounts
+that are disabled.
 
 Play history, resume positions and recency are scoped by user. An explicit provider request is
 intersected with what the user can reach, and an empty intersection raises rather than quietly

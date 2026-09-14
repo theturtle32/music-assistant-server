@@ -134,6 +134,18 @@ Resolved stream details deliberately **outlive** the stream, because a paused ex
 the player while its stream is torn down, and clearing them would lose the session's identity
 across an ordinary pause.
 
+### Recognizing a takeover
+
+A device switching to something else on its own has to be noticed, so the queue stops believing it
+still owns the player. That is harder than reading the reported source, because most devices report
+it unreliably enough that acting on it would produce constant false takeovers.
+
+So a short list of recognizable inputs, line-in and TV among them, always counts, and a provider
+whose device genuinely names the service it is playing can opt in to having its **own** source list
+trusted as well. That opt-in is what lets a service this server has no name for be recognized, and
+it is deliberately off by default because a device that also lists the transport our stream arrives
+on would otherwise report our own playback as a takeover.
+
 See [Plugins](plugins.md) for the audio source model itself.
 
 ## Related

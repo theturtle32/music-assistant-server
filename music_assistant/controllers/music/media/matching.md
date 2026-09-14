@@ -9,6 +9,14 @@ Adding an item to the library is a match-first operation, and the whole insert r
 deferred commit so the entity row, provider mappings, external ids, junction rows and genre
 mappings land in a single commit.
 
+**The item stored is re-fetched from its provider, not the object the caller passed in.** Only a
+manually added URL track or radio station is taken as given, because those carry user edits, such
+as a name and artwork, that exist nowhere else yet.
+
+That is a security boundary rather than a freshness optimization. Trusting the caller's object
+would let a crafted item carry a forged access record, claim another item's provider mapping, or
+name an item the caller cannot see, and the add path would write all three without question.
+
 ```mermaid
 flowchart TD
     incoming[Incoming provider item] --> mappings{Shares a provider mapping?}
