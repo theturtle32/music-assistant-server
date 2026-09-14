@@ -110,49 +110,9 @@ first, since everything else assumes them, then follow whichever path above inte
 
 ## Package documentation
 
-Every controller and every non-trivial provider has a README beside its code, and larger ones have
-sibling deep dives. Those own the detail; start from the architecture page above and follow the
-link.
-
-| Package | Covers |
-|---|---|
-| [music_assistant](../../music_assistant/README.md) | The package root: the hub, the event bus, the command registry |
-| [controllers/cache](../../music_assistant/controllers/cache/README.md) | The SQLite cache and the caching decorator |
-| [controllers/config](../../music_assistant/controllers/config/README.md) | Settings storage, scopes, setup flows, migrations |
-| [controllers/diagnostics](../../music_assistant/controllers/diagnostics/README.md) | The diagnostics report and its sanitization |
-| [controllers/discovery](../../music_assistant/controllers/discovery/README.md) | Zeroconf and SSDP |
-| [controllers/metadata](../../music_assistant/controllers/metadata/README.md) | Enrichment, the image proxy, genres |
-| [controllers/music](../../music_assistant/controllers/music/README.md) | The library, search, sync, schema, recommendations |
-| [controllers/music/media](../../music_assistant/controllers/music/media/README.md) | The per-media-type sub-controllers and matching |
-| [controllers/player_queues](../../music_assistant/controllers/player_queues/README.md) | Queues, state, continuation |
-| [controllers/players](../../music_assistant/controllers/players/README.md) | The player controller internals |
-| [controllers/streams](../../music_assistant/controllers/streams/README.md) | Buffering, processing, output, analysis |
-| [controllers/streams/smart_fades](../../music_assistant/controllers/streams/smart_fades/README.md) | Transition planning and rendering |
-| [controllers/tasks](../../music_assistant/controllers/tasks/README.md) | The background task manager |
-| [controllers/translations](../../music_assistant/controllers/translations/README.md) | Runtime translation resolution and authoring |
-| [controllers/webserver](../../music_assistant/controllers/webserver/README.md) | The API, auth, remote access |
-| [providers/ai_radio](../../music_assistant/providers/ai_radio/README.md) | The AI radio orchestrator |
-| [providers/airplay](../../music_assistant/providers/airplay/README.md) | AirPlay playback |
-| [providers/airplay_receiver](../../music_assistant/providers/airplay_receiver/README.md) | Receiving AirPlay into the server |
-| [providers/ariacast_receiver](../../music_assistant/providers/ariacast_receiver/README.md) | A natively implemented receiver protocol |
-| [providers/fastmcp_server](../../music_assistant/providers/fastmcp_server/README.md) | This server as an MCP server |
-| [providers/hass](../../music_assistant/providers/hass/README.md) | The Home Assistant connection, engines and control entities |
-| [providers/hue_entertainment](../../music_assistant/providers/hue_entertainment/README.md) | Light sync |
-| [providers/music_quiz](../../music_assistant/providers/music_quiz/README.md) | The multiplayer quiz |
-| [providers/party](../../music_assistant/providers/party/README.md) | Guest queueing at a gathering |
-| [providers/plex_connect](../../music_assistant/providers/plex_connect/README.md) | Appearing as a player in the Plex apps |
-| [providers/radio_playlist](../../music_assistant/providers/radio_playlist/README.md) | Endless mixes generated from a seed item |
-| [providers/sendspin](../../music_assistant/providers/sendspin/README.md) | The native synchronized protocol |
-| [providers/sendspin_source](../../music_assistant/providers/sendspin_source/README.md) | Line-in and microphone sources |
-| [providers/smart_fades](../../music_assistant/providers/smart_fades/README.md) | The audio analysis behind smart crossfades |
-| [providers/smart_playlist](../../music_assistant/providers/smart_playlist/README.md) | Rule-based playlists |
-| [providers/sonic_similarity](../../music_assistant/providers/sonic_similarity/README.md) | Finding tracks that sound alike |
-| [providers/spotify_connect](../../music_assistant/providers/spotify_connect/README.md) | Spotify Connect and its backends |
-| [providers/sync_group](../../music_assistant/providers/sync_group/README.md) | Sync group players |
-| [providers/universal_player](../../music_assistant/providers/universal_player/README.md) | Universal players |
-| [providers/vban_receiver](../../music_assistant/providers/vban_receiver/README.md) | Raw PCM over UDP, the simplest receiver |
-| [providers/yandex_smarthome](../../music_assistant/providers/yandex_smarthome/README.md) | Voice control of players from Alice |
-| [providers/yandex_ynison](../../music_assistant/providers/yandex_ynison/README.md) | Appearing as a device in the Yandex Music app |
+Every controller and every non-trivial provider has a `README.md` beside its code, and larger ones
+have sibling deep dives. Those own the detail, and the architecture page for a subsystem links to
+the ones it hands off to, so follow the page rather than hunting for a package by name.
 
 ## Elsewhere
 
