@@ -14,7 +14,7 @@ declares it gets a harmless empty result.
 | Category | Does |
 |---|---|
 | Receiver | Exposes live audio sources; audio flows into the server from an external app or device |
-| Scrobbler | Subscribes to play events and reports plays outward. Touches no audio |
+| Scrobbler | Receives playback reports and reports plays outward. Touches no audio |
 | External control bridge | Advertises this server's players on a foreign protocol and translates inbound commands |
 | AI and speech backend | Answers the query and speech provider features by exposing selectable engines |
 | Guest and social | Guest access, join codes, shared playback sessions |
@@ -104,14 +104,21 @@ bridges whose id stops being valid once torn down.
 
 ## Scrobblers
 
-Scrobblers are event-driven and touch no audio. They share a helper base class, subscribe to the
-played event, and implement two methods: one for playback starting and one for the play qualifying
-as a scrobble.
+Scrobblers touch no audio. The server hands every playback report to the plugins declaring the
+scrobble feature, through a plugin hook, rather than each of them subscribing to the event bus and
+filtering on its own.
 
-The shared decision-making is more than it looks. It filters by media type, by user and by player,
-so a household can scrobble only certain users or rooms. It refuses a repeat of the last scrobble
-and requires a full play, while reading a not-fully-played report for the same item as a restart,
-which is what keeps a song on loop scrobbling.
+The hook fires for every queue, periodically while an item plays and whenever playback state or
+the current item changes, so it also fires on pause, at the end and on a skip. Flags on the report
+tell those apart. It can fire before the plugin has finished loading, so a plugin ignores reports
+until it is ready. The report names the playing user and the player, so a plugin recording for only
+some of them filters on those.
+
+A shared helper builds the usual now-playing and scrobble handling on top of that hook, and its
+decision-making is more than it looks. It filters by media type, by user and by player, so a
+household can scrobble only certain users or rooms. It refuses a repeat of the last scrobble and
+requires a full play, while reading a not-fully-played report for the same item as a restart, which
+is what keeps a song on loop scrobbling.
 
 Error containment is explicit: each subclass names its client library's error hierarchy, and those
 errors are logged and swallowed, because a network blip must not break the event bus. Anything

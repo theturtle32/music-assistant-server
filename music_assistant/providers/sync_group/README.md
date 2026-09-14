@@ -175,7 +175,7 @@ In this scenario, the Denon AVR has three output protocols available. Since the 
 - **Protocol-aware syncing**: Members sync using their native protocol (Sonos-to-Sonos, AirPlay-to-AirPlay)
 - **Fallback support**: If native protocol unavailable, linked protocols provide alternatives
 
-For detailed information on protocol linking, output protocol selection, and how devices with multiple protocols are handled, see the [Player Controller README](../../controllers/players/README.md#multi-protocol-player-system).
+For detailed information on protocol linking, output protocol selection, and how devices with multiple protocols are handled, see [the player controller's protocol linking notes](../../controllers/players/protocol-linking.md).
 
 ## Group Lifecycle
 
