@@ -216,6 +216,52 @@ def test_report_ignores_files_outside_the_package() -> None:
     assert main(["--report", "scripts/check_doc_references.py"]) == 0
 
 
+def test_report_names_each_document_once(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A document covering many files is listed once, not repeated under each of them."""
+    _write(repo, "music_assistant/controllers/players/README.md", "# Players")
+    sources = [f"music_assistant/controllers/players/{name}.py" for name in ("a", "b", "c")]
+    for source in sources:
+        _write(repo, source)
+    assert main(["--report", *sources]) == 0
+    out = capsys.readouterr().out
+    assert out.count("music_assistant/controllers/players/README.md") == 1
+    assert "a.py, b.py, c.py" in out
+
+
+def test_report_groups_documents_sharing_a_file_set(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Sibling docs describing the same files name that file set once between them."""
+    _write(repo, "music_assistant/controllers/players/README.md", "# Players")
+    _write(repo, "music_assistant/controllers/players/volume.md", "# Volume")
+    _write(repo, "music_assistant/controllers/players/controller.py")
+    assert main(["--report", "music_assistant/controllers/players/controller.py"]) == 0
+    out = capsys.readouterr().out
+    assert "README.md" in out
+    assert "volume.md" in out
+    assert out.count("controller.py") == 1
+
+
+def test_report_skips_directories_and_build_artefacts(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Expanding a glob passes directories and caches, and neither is a documented source."""
+    _write(repo, "music_assistant/controllers/players/README.md", "# Players")
+    _write(repo, "music_assistant/controllers/players/__pycache__/controller.pyc")
+    (repo / "music_assistant/controllers/players/helpers").mkdir(parents=True, exist_ok=True)
+    assert (
+        main(
+            [
+                "--report",
+                "music_assistant/controllers/players/__pycache__",
+                "music_assistant/controllers/players/helpers",
+            ]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out == ""
+
+
 def test_main_returns_one_when_a_link_is_broken(repo: Path) -> None:
     """Link validation is the failing mode of the check."""
     _write(repo, "docs/architecture/overview.md", "[gone](../../music_assistant/nope.py)")

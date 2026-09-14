@@ -145,24 +145,92 @@ def main(argv: list[str] | None = None) -> int:
 
 def _report(sources: list[str]) -> int:
     """
-    Print the documents describing each source file; always succeeds.
+    Print the documents describing the given source files; always succeeds.
+
+    Grouped by document rather than by file: the document is what the reader has to go and
+    update, and a package whose whole directory was touched would otherwise repeat its README
+    once per file.
 
     :param sources: Repo-relative paths of the source files being committed.
     """
-    interesting = [src for src in sources if src.startswith(PACKAGE_PREFIX)]
+    interesting = [src for src in sources if _is_reportable(src)]
     if not interesting:
         return 0
     index = build_reference_index()
-    described = {src: docs_for_source(src, index) for src in sorted(interesting)}
-    described = {src: docs for src, docs in described.items() if docs}
+    described: dict[str, list[str]] = {}
+    for src in sorted(set(interesting)):
+        for doc in docs_for_source(src, index):
+            described.setdefault(doc, []).append(src)
     if not described:
         return 0
-    print("These files are described by documentation; update it if the behaviour changed:")
-    for src, docs in described.items():
-        print(f"  {src}")
-        for doc in docs:
-            print(f"      {doc}")
+    # sibling docs in one package all describe the same files, so documents covering an
+    # identical set are listed together rather than repeating that set under each of them
+    grouped: dict[tuple[str, ...], list[str]] = {}
+    for doc, srcs in described.items():
+        grouped.setdefault(tuple(srcs), []).append(doc)
+    print("These documents describe the files being committed; update them if behaviour changed:")
+    # most-affected group first, so the documents to start with are at the top
+    for srcs, docs in sorted(grouped.items(), key=lambda kv: (-len(kv[0]), kv[1][0])):
+        for doc in sorted(docs):
+            print(f"  {doc}")
+        for index, line in enumerate(_describe_sources(list(srcs))):
+            print(f"      {'for ' if index == 0 else '    '}{line}")
     return 0
+
+
+def _is_reportable(source: str) -> bool:
+    """
+    Return whether a path is a package source file worth reporting on.
+
+    Directories and build artefacts are skipped: a caller expanding a glob passes them in, and
+    neither is something a document describes.
+
+    :param source: Repo-relative path handed to the report.
+    """
+    if not source.startswith(PACKAGE_PREFIX) or "__pycache__" in source.split("/"):
+        return False
+    return (REPO_ROOT / source).is_file()
+
+
+def _describe_sources(sources: list[str]) -> list[str]:
+    """
+    Return display lines for the source files a document describes, folded by directory.
+
+    :param sources: Repo-relative paths, already sorted.
+    """
+    by_directory: dict[str, list[str]] = {}
+    for src in sources:
+        directory, _, name = src.rpartition("/")
+        by_directory.setdefault(directory, []).append(name)
+    lines = []
+    for directory, names in by_directory.items():
+        if len(names) == 1:
+            lines.append(f"{directory}/{names[0]}")
+            continue
+        lines.append(f"{directory}/")
+        lines += [f"  {chunk}" for chunk in _wrap(names)]
+    return lines
+
+
+def _wrap(names: list[str], width: int = 88) -> list[str]:
+    """
+    Return comma-separated names packed into lines no wider than ``width``.
+
+    :param names: File names to join.
+    :param width: Maximum line length before wrapping.
+    """
+    lines: list[str] = []
+    current = ""
+    for name in names:
+        candidate = f"{current}, {name}" if current else name
+        if current and len(candidate) > width:
+            lines.append(f"{current},")
+            current = name
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
 
 
 def _iter_links(doc: Path) -> list[tuple[int, str]]:
