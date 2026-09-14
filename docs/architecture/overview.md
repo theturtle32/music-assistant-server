@@ -50,7 +50,7 @@ is the one object you cannot avoid knowing about.
 | Webserver | The HTTP server, the API, WebSocket connections, auth |
 | Translations | Loading and resolving translatable strings |
 | Diagnostics | On-demand privacy-safe troubleshooting reports |
-| Dashboard | Casting dashboards to display devices |
+| [Dashboard](../../music_assistant/controllers/dashboard/README.md) | Casting dashboards to display devices |
 
 All but one inherit a common base giving them the same lifecycle hooks: setup, post-setup, close,
 reload and config update. Nine of them are also configurable settings modules that appear in the

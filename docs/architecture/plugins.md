@@ -28,8 +28,9 @@ Classification is worth checking rather than guessing from a name: several thing
 plugins are music or player providers, and at least one bridge declares no features and never
 touches audio despite appearing in a player list.
 
-Each in-tree plugin has a README beside it covering what it actually does; the table in the
-[architecture index](README.md) lists them.
+Where a plugin does something a reader would not guess from its name, there is a `README.md` beside
+it. Several of the simplest ones have none, and that is not an oversight: a scrobbler that
+implements the shared helper and nothing else is fully described by the section on scrobblers below.
 
 ## Audio sources
 

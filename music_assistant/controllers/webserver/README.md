@@ -39,7 +39,8 @@ The WebSocket carries events as well as commands, so a client that needs to reac
 uses it; the HTTP endpoint exists for simple request and response callers. See
 [events and commands](../../../docs/architecture/events-and-commands.md).
 
-Some subsystems expose commands but no routes of their own. The dashboard controller is one, and
+Some subsystems expose commands but no routes of their own. The
+[dashboard controller](../dashboard/README.md) is one, and
 its registration is deliberately WebSocket-only: a registration is owned by a connection, so a
 display that drops off the network takes its registration and session with it instead of lingering
 as a phantom endpoint.
