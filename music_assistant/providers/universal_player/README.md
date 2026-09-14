@@ -121,3 +121,8 @@ universal_player/
 ### Provider Features
 
 The Universal Player provider has no special provider features - it doesn't support manual player creation via the UI. Players are only created automatically by the PlayerController.
+
+## Related architecture docs
+
+- [Protocol linking](../../../docs/architecture/protocol-linking.md) for why wrappers exist and how they are built.
+- [Players](../../../docs/architecture/players.md) for the player model and command routing.

@@ -97,3 +97,8 @@ Working and tested on Hue Bridge V2 and Hue Bridge Pro. The current implementati
 - Beats come from the schedule the Sendspin visualizer pushes, which is derived from the `smart_fades` audio analysis. A track that has not been analyzed yet has no schedule, and the analyzer falls back to the visualizer's onset peaks until one arrives — less precise, and noticeably so on acoustic or vocal material.
 - Entertainment areas are discovered at plugin (re)load — adding a new area in the Hue app requires reloading the plugin.
 - The Hue bridge only allows one entertainment area active at a time.
+
+## Related architecture docs
+
+- [Plugins](../../../docs/architecture/plugins.md) for the plugin provider model.
+- [Discovery](../../../docs/architecture/discovery.md) for how the bridge is found.

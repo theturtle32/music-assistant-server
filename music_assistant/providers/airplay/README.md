@@ -735,3 +735,10 @@ The binary diagnoses a stall deliberately more slowly than it projects readiness
 | File | Description |
 |------|-------------|
 | `sendspin_bridge.py` | Bridge implementation for Sendspin to AirPlay integration |
+
+## Related architecture docs
+
+- [Players](../../../docs/architecture/players.md) for the player model and command routing.
+- [Protocol linking](../../../docs/architecture/protocol-linking.md) for how AirPlay endpoints merge into one device.
+- [Playback](../../../docs/architecture/playback.md) for where AirPlay sits in the audio pipeline.
+- [Discovery](../../../docs/architecture/discovery.md) for how these devices are found.

@@ -358,3 +358,9 @@ The SyncGroupPlayer reads most state from the sync leader's **raw** attributes (
 
 - [Player Controller README](../../controllers/players/README.md) - For understanding player management, protocol linking, and sync coordination
 - [Universal Player README](../universal_player/README.md) - For understanding how protocol players are merged
+
+## Related architecture docs
+
+- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for the three grouping models and volume routing.
+- [Players](../../../docs/architecture/players.md) for the player model these delegate through.
+- [Playback](../../../docs/architecture/playback.md) for how group audio is delivered.

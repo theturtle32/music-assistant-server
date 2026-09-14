@@ -222,3 +222,9 @@ at startup once the owner provider no longer exists.
 
 - [Sendspin Protocol Specification](https://github.com/Sendspin/spec)
 - [Music Assistant Remote Access](../../controllers/webserver/README.md)
+
+## Related architecture docs
+
+- [Playback](../../../docs/architecture/playback.md) for where this protocol sits in the audio pipeline.
+- [Protocol linking](../../../docs/architecture/protocol-linking.md) for bridges as derived transports.
+- [API and auth](../../../docs/architecture/api-and-auth.md) for the authenticated proxy and remote access.
