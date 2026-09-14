@@ -2,6 +2,10 @@
 
 Audio analysis provider that detects **beats**, **downbeats**, **musical key**, **RMS energy**, **spectral centroid**, and **vocal activity** in real time using the [Beat This!](https://github.com/CPJKU/beat_this) neural network (CPJKU, ISMIR 2024), the S-KEY key detection model, and [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD). The detected timing, tonal, and vocal information drives smart crossfade positioning in Music Assistant's playback queue.
 
+The transition planning and rendering that consumes this analysis lives in
+[controllers/streams/smart_fades](../../controllers/streams/smart_fades/README.md). This provider
+only produces the signals.
+
 ## How it works
 
 Beat This! is a transformer-based beat tracker that operates on log-mel spectrograms at 50 fps (frames per second). It was designed for offline use — process the entire audio file at once. This provider adapts it for **streaming** use inside Music Assistant's audio pipeline, where PCM arrives in 1-second chunks from the stream controller.
@@ -77,3 +81,8 @@ Per-block RMS energy (100ms windows) and spectral centroid (per-hop-frame via to
 A dedicated stateful soxr stream resamples source PCM to 16kHz for FireRed AED. Online Kaldi fbank extraction uses the reference 80-bin, 25ms frame, 10ms shift configuration with fixed CMVN. The bundled model has 588,931 parameters and is about 2.3MB. FireRed inference runs concurrently with the sequential beat-then-key branch through the shared analysis worker limits. Long inputs are processed in bounded chunks with model context.
 
 FireRed's `max(speech, singing)` probabilities are averaged at 100ms resolution, then resampled to 1800 fixed bins spanning the track duration for `extra_data["vocal_activity"]`. FireRedVAD source and AED model weights are Apache-2.0 licensed; attribution is recorded in the project `NOTICE`.
+
+## Related architecture docs
+
+- [Playback](../../../docs/architecture/playback.md) for where analysis sits in the pipeline.
+- [Providers](../../../docs/architecture/providers.md) for the audio analysis provider type.
