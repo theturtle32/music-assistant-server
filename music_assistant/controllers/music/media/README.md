@@ -5,6 +5,10 @@ over its item class and owns the library interaction pattern; each subclass adds
 queries and relations. Subclasses never import `MusicController` back, which keeps the dependency
 direction one way.
 
+## Deep dives
+
+- [matching.md](matching.md): match and store, merging, external ids, and the comparison APIs.
+
 | Module | Media type |
 |---|---|
 | `base.py` | `MediaControllerBase`, shared by all of the below |
@@ -62,51 +66,14 @@ rows per collection name, and sorting is restricted to the subset of sort keys t
 aggregation. Collection item ids encode the media type and the collection name, which is how a
 fetch routes back to the owning sub-controller. Audiobooks are currently the only type wired up.
 
-## Match and store
+## Matching
 
-Adding an item to the library is a match-first operation, and the whole insert runs inside one
-deferred commit so the entity row, provider mappings, external ids, junction rows and genre
-mappings land in a single commit.
+Adding an item to the library is a match-first operation: an incoming provider item joins an
+existing row when it shares a mapping, an external id or a confident name match, and becomes a
+new row otherwise. The rules, the merge semantics and the three comparison APIs are in
+[matching.md](matching.md).
 
-```mermaid
-flowchart TD
-    incoming[Incoming provider item] --> mappings{Shares a provider mapping?}
-    mappings -->|yes| merge[Update the existing row]
-    mappings -->|no| extids{Known external id?}
-    extids -->|yes, and comparison confirms| merge
-    extids -->|no| name{Name match, strict comparison?}
-    name -->|yes| merge
-    name -->|no| insert[Insert a new library row]
-```
-
-A per-type lock serializes inserts so concurrent syncs cannot race. The deferred commit is a
-batching mechanism and not a transaction: it always commits on exit, including on error, because
-the connection is shared and rolling back would discard other tasks' acknowledged writes.
-
-Adding a mapping that already belongs to a different library item merges the two. That implicit
-merge is also available explicitly, and both paths go through the same code so there is one audited
-way for two library items to become one. The explicit target is the deterministic winner: its
-values stay authoritative wherever the normal non-overwrite update model would keep them, and the
-source is applied as if it were an incoming update.
-
-### External ids
-
-External id matching goes through a dedicated indexed table rather than a JSON column, because a
-JSON column needs a scan no index can serve. An empty set of ids is a no-op and never clears the
-stored ids. This mirrors the provider mapping policy: a sync that happens to return nothing must
-not strip an item of the identity evidence everything else matches on.
-
-An indexed lookup only works if both sides agree on spelling, and providers do not. The same
-barcode arrives as a UPC, an EAN or a GTIN, ISRCs turn up hyphenated, and MusicBrainz ids come
-wrapped in braces. [helpers/external_ids.py](../../../helpers/external_ids.py)
-centralizes that normalization so the write path and the read path cannot drift apart. It also
-completes a barcode that is missing its check digit, because at least one provider omits it.
-
-External ids are addressable from the API, and that path tries the library first before asking
-providers. Provider support is opt-in per media type, so a provider can implement track lookup by
-ISRC without claiming album or artist lookup.
-
-### Event suppression during bulk work
+## Event suppression during bulk work
 
 A context variable suppresses the per-item added and updated events. A full library sync would
 otherwise emit one event per touched item, serialized once per connected client. While suppressed,
@@ -114,35 +81,6 @@ an update also skips writing the change back to the provider, because during a s
 from that provider. Two callers set it: the provider sync handler and provider cleanup. Deletions
 are never suppressed. Clients follow progress through task events and refresh once when the sync
 completes.
-
-## Comparison
-
-[helpers/compare.py](../../../helpers/compare.py)
-holds three related comparison APIs. One is boolean and answers "are these the same item". Two are
-graded and answer "how confident are we, and would more data help". That distinction matters
-because the boolean form has to guess when metadata is thin, while a caller that can fetch a
-tracklist would rather be told the question is still open.
-
-**Boolean comparison** dispatches by type. For tracks it checks provider identity, then primary
-external ids which are definitive in both directions, then secondary external ids where only a
-positive match counts, then a sequence of text filters that can each reject early, and finally
-duration within tolerance.
-
-**Album evidence is tri-state.** Albums are the hard case, because two providers' copies of the
-same record routinely differ only by an edition or a retail suffix, and the album's own fields
-cannot settle it. Alongside match and no-match there is an explicit "insufficient", and that is the
-whole point of the API. The albums sub-controller escalates rather than guessing: it fetches
-ordered tracklists for both sides and re-runs the comparison with them, so a fingerprint resolves
-the ambiguity, and a conflicting fingerprint overrides an otherwise nominally matching album. Only
-then does it fall back to MusicBrainz. A mapping is accepted on a match and nothing weaker. The
-candidate tracklist is fetched from the exact provider instance the album was matched on, so a
-same-domain fallback can never fingerprint against a different account or server.
-
-**Track confidence is graded** for the separate problem of finding a track on another provider,
-where the caller decides how good a substitute is acceptable. Release-level evidence outranks
-recording-level evidence, which outranks metadata agreement alone, and conflicting authoritative
-ids rank as no match. Playlist migration is the consumer: user intent maps onto a confidence floor,
-and the migration report labels each track with the confidence it matched at.
 
 ## Type-specific notes
 

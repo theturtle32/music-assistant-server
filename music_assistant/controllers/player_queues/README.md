@@ -8,6 +8,11 @@ A player's queue is normally its active source, but a player can also play somet
 an external or native source. The coupling is deliberately loose: the queue is the usual active
 source, not the only possible one.
 
+## Deep dives
+
+- [state.md](state.md): the server record, persistence, reconciling against the player, play counting.
+- [continuation.md](continuation.md): look-ahead and buffering, the managed pool, autoplay, ordering.
+
 ## Module layout
 
 | Module | Role |
@@ -86,21 +91,6 @@ their original order rather than leaving them shuffled behind a queue that now r
 options that only stage items for later leave shuffle alone. A dynamic queue is exempt and forces
 shuffle on, because it is an always-on smart mix.
 
-## State and persistence
-
-All live state is in memory, one record per queue. Durable state goes to the cache controller under
-two categories, queue state and queue items, keyed by queue id. The state entry is a versioned
-envelope, so an incompatible format is discarded rather than misread.
-
-Writes are debounced, marked persistent, and issued per category only when that category's content
-actually changed. Volatile progress fields such as elapsed time do not count as a change, so
-neither category is re-serialized on every state tick.
-
-Restore is deliberately resilient. A queue's settings survive even when some of its media items no
-longer deserialize. On registration both entries are restored, the dynamic-source flag is
-recomputed, and the play-action flag is reset in case the server was killed mid-action. Permanent
-player removal drops the record and both cache entries.
-
 ## Concurrency
 
 Transport and playback actions on a queue are serialized through the player's shared playback lock,
@@ -111,88 +101,6 @@ Background and delayed work, meaning next-item preloading, buffer preparation, r
 resume-on-idle and delayed clear or resume, is dispatched as tasks or timers rather than run inline.
 Those are cancelled on player removal and on stop, so stale work cannot enqueue after a queue has
 stopped. Long passes such as a full shuffle yield to the event loop while running.
-
-## Reconciling against the player
-
-The controller consumes player lifecycle and per-update callbacks. From what the player reports it
-decides whether the queue is active, derives the current index and item, and recomputes elapsed
-time. It diffs the incoming state against the previous snapshot to detect transitions, such as a
-track played to completion or the end of the queue, and emits queue and time events.
-
-Flow mode is the special case. Instead of one stream per track the whole queue is a single
-continuous stream of concatenated items, so the player's cumulative index and position have to be
-mapped back to a per-track index and per-track elapsed time.
-
-## Look-ahead and buffering
-
-For gapless playback and crossfades the controller anticipates the upcoming item: it computes the
-next index, pre-resolves that item's stream details, and hands the next item to the player ahead of
-time. Warming the next track's audio buffer is not part of this path. The streams controller
-triggers it near the end of the current track through a callback into this controller.
-
-Every buffer records the session that claimed it. A stop leaves alone only what the session playing
-now claimed, so playback that restarted before the stop got that far keeps its audio. Everything
-else goes, including what earlier sessions left behind, because sessions rotate without a stop and a
-claim that is no longer current marks audio nobody will come back for. A clear or a replace drops
-the items themselves, so their audio goes with them.
-
-## Keeping a queue going
-
-Two refill paths share the same "running low" trigger.
-
-A queue with **dynamic sources** is kept as a small bounded managed pool. Each source contributes
-candidates by its fill mode: a dynamic playlist yields its own self-managing batch, while a finite
-item mixed into the pool rotates its own unplayed tracks. Each top-up apportions slots across the
-sources by weight, recency-gates every candidate, prefers the least recently played, nudges
-recently heard artists back, and then best-effort spaces the assembled batch so adjacent tracks
-avoid sharing an artist, seam-aware against the current tail. A radio is just a dynamic playlist
-from the radio playlist provider.
-
-**Autoplay** is the single "keep going" switch, and what it appends is dispatched on the media type
-of the queue's last item, because that is the item the appended ones follow. Music continues with
-the per-queue configured mode: similar tracks seeded from the enqueued items, an infinite
-genre-biased library mix, a chosen playlist, or an automatic mode that tries similar first and falls
-back to the library mix. A podcast episode or audiobook instead continues with its own successor,
-the next episode or the next book in the collection, and simply ends the queue when there is none.
-Live sources have no natural end, so autoplay does not apply to them at all.
-
-Repeat masks the effective autoplay flag off while it is on. The queue keeps its saved preference,
-either a pinned per-queue override or the current global default, so turning repeat off restores
-that preference instead of changing it. Already-queued items stay put; only future autoplay
-additions are blocked, and dynamic mode keeps its own refill behaviour.
-
-## Ordering with smart fades analysis
-
-When the option is on and smart crossfade is active, ordering can use the analysis smart fades
-already has to improve the order of upcoming tracks. Recency stays in charge and no new tracks are
-selected.
-
-In normal mode the current and buffered part of the queue is left alone and only the future part
-already considered safe to move is reordered, with the last fixed track as the starting point.
-Within each recency tier the full movable population can be considered.
-
-In dynamic mode the managed pool still picks the refill tracks, and ordering then sorts that
-accepted batch from the existing queue tail. Both modes consider every remaining track in the run
-being ordered; dynamic mode simply orders one refill batch at a time.
-
-No analysis is started for this. Unknown data stays neutral. The score uses tempo, graded Camelot
-key affinity and end-to-start energy, and those are ranking signals rather than filters. A silent
-outgoing tail is ignored for the energy part. Close choices keep some randomness, and smart fades
-still decides the actual transition.
-
-## Resolving media into items
-
-Non-track media has to be expanded into the tracks or episodes to enqueue. Each source type
-resolves into a concrete track list, applying the configured selection rules, resolving library
-versus provider variants, and optionally ordering the result. The same concern builds the playback
-payload handed to the player, using the metadata controller for images.
-
-## Play counting and resume
-
-The controller decides when a track counts as played and reports it to the music controller. Plays
-are deduplicated through a last-counted marker, with album-level handling, so a track is not
-double-counted on the end-of-queue idle transition. It also computes and applies resume positions
-for audiobooks and podcast episodes, and can restore a previously playing queue from the playlog.
 
 ## Configuration
 

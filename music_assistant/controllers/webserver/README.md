@@ -4,6 +4,10 @@ Hosts the API, the frontend, and the authentication system, and owns remote acce
 port 8095 by default. Audio is deliberately not served from here; see
 [controllers/streams](../streams/README.md) for why that is a separate server.
 
+## Deep dives
+
+- [remote-access.md](remote-access.md): the WebRTC gateway, data channels, and their framing.
+
 ## Module layout
 
 | Module | Role |
@@ -84,51 +88,10 @@ off progressively.
 
 ## Remote access
 
-Remote access reaches an instance from anywhere without port forwarding or a VPN. A cloud signaling
-server exchanges the WebRTC handshake, and a local gateway bridges data channel messages to the
-local WebSocket API, so authentication and authorization work exactly as they do locally. Traffic
-is encrypted end to end and the signaling server only routes handshake messages.
-
-The remote id identifies an instance. It is derived from the fingerprint of the instance's
-persisted WebRTC certificate rather than stored separately, so it is stable for as long as the
-certificate is, and it can be derived without loading the native WebRTC library, which is what lets
-it be reported while remote access is off.
-
-Two modes. The basic mode uses public STUN servers, needs no subscription, and works in most
-networks, though it can fail behind symmetric NAT or a firewall that blocks UDP. The optimized mode
-uses Home Assistant Cloud STUN and TURN servers, which relay when a direct connection is impossible.
-The mode switches automatically when the cloud subscription status changes.
-
-### Data channels
-
-One remote session multiplexes several data channels over one peer connection, routed by label. A
-bridged channel is pumped both ways to a local WebSocket, which is how the Sendspin player and live
-announcements work. A channel served in the gateway itself handles proxied HTTP requests for album
-art and other assets. Closing one of those tears down only that channel.
-
-The client's API channel has no fixed label. The first channel with an unrecognised label becomes
-the API channel and is bridged to the WebSocket API; any later unrecognised label is refused,
-because taking it for a second API channel would replace the live bridge and break the session. The
-API channel shares the session's lifetime.
-
-Proxied HTTP replies go back on the channel they arrived on, which is what keeps older clients
-working without version negotiation. The framing differs by channel: on the API channel the body is
-hex-encoded into one JSON message, which costs several times the image's size once chunking is
-applied, while the dedicated proxy channel sends a JSON header followed by the body as raw binary
-messages, costing the image's own size and no more. Those binary messages carry no request id, so
-the gateway holds the channel for a whole reply rather than interleaving. A client that stops
-draining gets a bounded time per frame, after which the reply is abandoned where it stands, so a
-reply can end short of its announced size and the next header is what follows.
-
-Bulk frames are sized to the channel's maximum message size, which is the lower of our own ceiling
-and what the peer advertises, and one library assumes a small default when nothing is advertised. A
-client therefore has to expect chunking well below the ceiling.
-
-**Adding a new channel label is not backwards compatible on its own.** A server from before the
-routing table existed mistakes an unknown label for the API channel, which breaks the whole remote
-session rather than just the new feature. A client must feature-detect on the schema version from
-the server info before opening one, and adding a label means bumping that version and gating the
-client on the new value.
+Remote access reaches an instance from anywhere without port forwarding or a VPN, by bridging
+WebRTC data channels to the local WebSocket API. Authentication and authorization work exactly as
+they do locally. See [remote-access.md](remote-access.md) for the gateway, the channel framing and
+the compatibility rule for adding a channel label.
 
 ## Security posture
 

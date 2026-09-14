@@ -8,6 +8,12 @@ It is deliberately not a `CoreController`. Core controllers are handed a `CoreCo
 start, and only the config controller can produce one, so it needs a simpler lifecycle that runs
 before the core controller infrastructure exists.
 
+## Deep dives
+
+- [setup-flows.md](setup-flows.md): the interactive setup and reconfigure engine.
+- [migrations.md](migrations.md): the settings transforms and how to write one.
+- [scopes.md](scopes.md): setup data versus values, injected entries, global fallbacks.
+
 ## Package layout
 
 `controller.py` holds the base class and composes the rest as mixins. Each mixin owns one config
@@ -54,17 +60,9 @@ the host's total RAM.
 ## Settings migrations
 
 `migrations.py` transforms the raw settings dictionary right after load, before anything is parsed
-into config objects. There is no schema version counter. Each transform is independent and
-idempotent, gated on the shape of the data it repairs, and carries a marker naming the release
-after which it can be dropped. Transforms cover repairs such as an orphaned provider stub, renames,
-and moves between scopes such as the relocation of crossfade and volume normalization from the
-player to the queue.
-
-A second group runs later, from setup rather than load, because those transforms touch values that
-have to be encrypted at rest and the encryption callbacks do not exist yet during load.
-
-Migrations run once against data written by a version you cannot inspect. Keep them idempotent,
-let them survive missing and half-written values, and never let them raise.
+into config objects, with a second group running later for values that must be encrypted at rest.
+There is no schema version counter; each transform is independent and idempotent. See
+[migrations.md](migrations.md).
 
 ## The four config scopes
 
@@ -84,53 +82,15 @@ what resolves the entry's localized label and description when it is serialized.
 Provider status is computed on the API read path rather than stored, derived from whether the
 instance is disabled, loaded, or carries a persisted error.
 
-### Setup data is not config values
-
-Values hold ongoing options: the settings a user revisits in a provider's settings form, each one
-described by a `ConfigEntry`. Setup data holds one-time setup input such as credentials, OAuth
-tokens and pairing state. Only the setup flow engine writes it, its string values are encrypted at
-rest, and it is stripped from every API payload.
-
-Because a provider declares its entries from an instance method, the real entries only exist once
-the instance does. Two helpers bridge that gap during load: stored raw values are seeded as
-passthrough entries so early reads see them, and the config is re-parsed against the full entry set
-once the instance is constructed.
-
-### Injected entries
-
-A player's config surface is not only its own. Entries belonging to a linked protocol player are
-injected into the parent with a prefix so a client can configure a whole device from one endpoint,
-and they are never persisted on the parent. Plugins that bind their audio sources to individual
-players contribute a toggle to each eligible player, so "is this enabled on this speaker" is
-answered from the speaker's settings page.
-
-### Global values with per-queue overrides
-
-Queue settings are a tri-state select rather than a boolean. The `player_queues` core module holds
-the global value, and each queue's matching entry additionally offers `global`, which is also its
-default. Resolution falls through to the core value when the queue stores `global` or stores
-nothing. Numeric settings such as crossfade duration cannot carry the extra option, so they stay
-global only. The schemas for both sides are built in
-[controllers/player_queues](../player_queues).
+[scopes.md](scopes.md) covers the split between setup data and config values, the entries one
+scope injects into another, and how a per-queue setting falls back to its global default.
 
 ## Config entries
 
-Every setting is described by a `ConfigEntry` from the shared models package. The entry carries its
-type, default, options, range, UI category, visibility flags, dependencies on other entries, and
-whether changing it requires a reload.
-
-Labels and descriptions are never authored in code. They resolve from the translation catalog under
-the entry's translation owner, and a pre-commit hook fails the build when an entry hardcodes label
-or description text instead of using `strings.json`. See
-[controllers/translations](../translations/README.md).
-
-`music_assistant/constants.py` holds a library of pre-built entries that providers and players
-compose their config from, along with pre-derived variants for players that must pin or hide a
-setting. A provider's full entry list is the server defaults plus whatever the provider returns,
-and for music providers the library-sync toggles derived from its features.
-
-Action entries are one-shot buttons rather than stored values. Invoking one routes to the owner,
-which can report an outcome, report nothing, or return re-rendered entries.
+Every setting is described by a `ConfigEntry` from the shared models package, carrying its type,
+default, options, range, UI category, visibility flags, dependencies and whether a change requires
+a reload. Labels are never authored in code; they resolve from the translation catalog, and a
+pre-commit hook fails the build when an entry hardcodes one. See [scopes.md](scopes.md).
 
 ## DSP configuration
 
@@ -146,26 +106,8 @@ How the chain is compiled into FFmpeg parameters belongs to the streaming pipeli
 ## Setup flows
 
 Anything interactive, meaning credentials, OAuth logins and pairing, runs through the setup flow
-engine in `flows.py`. A flow is authored as one plain coroutine in the provider's `setup_flow.py`,
-and the session handle it receives publishes a step and suspends until the user responds. Steps
-render a form, send the user to an external URL and wait for the callback, show progress, or
-finish by persisting the collected values and creating or reloading the target. Authors signal
-outcomes with exceptions rather than return codes.
-
-The engine keeps one flow per target, so starting a new one aborts any lingering flow for the same
-provider or player. Aborting cancels the flow task first, so an author's cleanup runs before the
-terminal step is published. Idle flows are swept after fifteen minutes unless the current step
-advertises a longer countdown. A provider that ships no `setup_flow.py` needs no input, so creating
-it returns a synthesized finish step and clients keep one code path for every provider. A player
-whose own setup is a no-op but which wraps protocol children that need pairing delegates to the
-child's flow. Every finish handler snapshots the existing setup data and restores it when creating
-or reloading the target fails.
-
-Flow steps reach clients as events. Because a step can carry prefilled values and OAuth URLs, the
-WebSocket layer filters those events by scope instead of broadcasting them.
-
-The authoring guide for provider setup flows lives at
-[developers.music-assistant.io](https://developers.music-assistant.io/setup-flows/).
+engine in `flows.py`. A flow is one plain coroutine in the provider's `setup_flow.py` that
+publishes a step and suspends until the user responds. See [setup-flows.md](setup-flows.md).
 
 ## Encryption
 
