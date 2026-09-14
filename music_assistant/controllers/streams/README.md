@@ -1,249 +1,295 @@
-# Streams Controller Architecture
+# Streams controller
 
-This document provides an overview of the Music Assistant Streams Controller architecture, including audio buffering, streaming pipeline, and smart fades.
+Owns everything between a resolved media item and audio arriving at a player: decoding, buffering,
+normalization, crossfading, DSP, encoding and HTTP delivery. It also hosts the passive audio
+analysis readers that sit on the playback buffer.
 
-## Table of Contents
+## Module layout
 
-- [Overview](#overview)
-- [Network Architecture](#network-architecture)
-- [Inbound Audio](#inbound-audio)
-- [Core Components](#core-components)
-- [AudioBuffer](#audiobuffer)
-- [StreamsAudio](#streamsaudio)
-- [Streaming Pipeline](#streaming-pipeline)
-- [Audio Analysis](#audio-analysis)
-- [Smart Fades](#smart-fades)
-- [Audio Overlay](#audio-overlay)
-- [Stream Types](#stream-types)
-- [Configuration](#configuration)
+| Module | Role |
+|---|---|
+| `controller.py` | The `StreamsController`: HTTP endpoints and the public streaming API |
+| `audio.py` | `StreamsAudio`: stream acquisition, queue and flow streaming, format selection, output plans |
+| `audio_buffer.py` | `AudioBuffer`: in-memory PCM buffering with seek support |
+| `audio_processing.py` | `AudioProcessingManager`: the per-queue processing chain reported to clients |
+| `audio_analysis.py` | `AudioAnalysisController`: distributes buffered PCM to the analysis providers |
+| `live_announcements.py` | Announcement audio pushed into the server and served back out |
+| `ogg_handler.py` | Chained OGG stitching for radio streams with in-band metadata |
+| `smart_fades/` | Crossfade planning, rendering and mixing. See [smart fades execution](#smart-fades-execution) |
+| `constants.py` | Buffer sizes, pacing profiles and config keys |
+| `strings.json` | Translatable labels for this module's config entries |
 
-## Overview
+Generic audio utilities that need no controller access live in
+[helpers/audio.py](../../helpers/audio.py), and FFmpeg process management lives in
+[helpers/ffmpeg.py](../../helpers/ffmpeg.py).
 
-The Streams Controller is a core controller that manages all audio streaming to players. It provides:
-- HTTP streaming endpoints for players on the local network
-- Audio buffering with configurable memory usage
-- Volume normalization (dynamic, measurement-based, and fixed gain)
-- Smart crossfading between tracks
-- Flow mode for continuous queue playback
-- Audio overlay: a looping sound effect (e.g. rain) mixed into queue playback
-- Announcement and plugin source streaming
-- Ahead-of-time audio analysis (loudness, beat detection, key detection) by passive readers on the playback buffer
+## A separate HTTP server
 
-## Network Architecture
+Streams are served by a dedicated HTTP-only server on its own port, independent of the main
+webserver. This is deliberate on three counts. There is no TLS, because many embedded players
+struggle with handshakes and the stream server only serves the local network. There is no
+authentication, because players cannot hold credentials; instead a stream URL carries a session id
+that is validated per request, which is what rejects a stale stream attempt. And the separate port
+keeps audio delivery isolated from the API.
 
-The streams controller runs its own dedicated HTTP-only webserver on a separate port (default 8097), independent of the main webserver/API. This design is intentional:
+### Audio travelling inwards
 
-- **No SSL/TLS**: Many audio players (especially embedded devices) have limited resources and struggle with SSL handshakes. Since the stream server only runs on the internal network, encryption is unnecessary.
-- **No authentication**: Players need to access streams without credentials. Instead, stream URLs include a **session ID** that is validated on each request to prevent stale or invalid stream attempts.
-- **Separate port**: Keeps audio streaming isolated from the API, allowing independent scaling and configuration.
+Live announcements are the one path where audio travels into the stream server rather than out of
+it. A client pushes raw PCM while a user speaks and it plays on a player as an ordinary
+announcement. The two halves live on different servers because neither can do the job alone. The
+inbound half is a WebSocket on the main webserver, because pushing audio is a privileged action
+that needs authentication and TLS, and because browsers require a secure context to reach a
+microphone at all. The outbound half is an ordinary stream server route serving the buffered speech
+as a WAV, because the announcement renderer only ever pulls from a URL, which keeps live
+announcements on the same path as every other announcement.
 
-## Inbound Audio
+The announcement is dispatched only once the clip is complete. Players that announce natively need
+the whole clip up front: AirPlay renders it to a file and schedules one synchronized instant across
+every group member from its exact duration, and Sonos needs the duration to know how long the clip
+runs. A still-growing clip gives one player type a head start and truncates another, so every player
+gets the same finished clip.
 
-Live announcements (`live_announcements.py`) are the one path where audio travels *into* the stream server rather than out of it: a client pushes raw PCM while a user speaks, and it is played on a player as an ordinary announcement.
+## The audio buffer
 
-This splits across both webservers, because neither can do the job alone:
+The buffer is the single source of truth for audio data, and it stores raw decoded PCM with no
+filters applied. Filters are applied on the way out, which is what lets several consumers read the
+same buffered audio and apply different processing.
 
-- The **inbound** half is a WebSocket on the main webserver. Audio from a client is a privileged action, so it needs the authentication and the SSL support that the stream server deliberately does not have. Browsers additionally require a secure context to reach a microphone at all, which only the main webserver can offer.
-- The **outbound** half is an ordinary stream server route serving the buffered speech as a WAV. The announcement renderer only ever pulls its audio from a URL, so exposing the clip as one keeps live announcements on exactly the same path as every other announcement.
+Every queue stream goes through a buffer, tracks and radio alike. Buffers are created and start
+filling before the player requests the stream, so playback starts immediately. An existing valid
+buffer is reused for seeks and reconnections. A forward seek within the buffered window waits for
+the producer; a larger one re-fetches at the seek position.
 
-The announcement is dispatched only once the clip is complete, not while it is still being spoken. Players that announce natively need the whole clip up front: AirPlay renders it to a file and schedules a single synchronized instant across every group member from its exact duration, and Sonos needs the duration to know how long the clip runs. Handing them a clip that is still growing gives one player type a head start and truncates another, so every player gets the same finished clip instead.
+Two modes. A seekable buffer keeps a deque of one-second chunks and discards the oldest once it
+reaches its size limit. A rolling buffer is a short FIFO for non-seekable sources such as radio,
+where the consumer pops chunks sequentially. A realtime source is considered ready after about a
+second rather than waiting for the usual fill, and a seek on one always restarts at the source.
 
-A session is identified by an unguessable id that appears only in the stream URL, and it is dropped as soon as the announcement has been played.
+Producer errors are captured and surfaced when a consumer reads, so a consumer can drain what was
+already buffered before the error appears at the end of the stream.
 
-## Core Components
+## The pipeline
 
-```
-controllers/streams/
-  __init__.py          - Package init, exports StreamsController
-  controller.py        - StreamsController: HTTP endpoints, public streaming API
-  audio.py             - StreamsAudio: audio processing, stream acquisition, DSP/filters
-  audio_analysis.py    - AudioAnalysisController: distributes buffered PCM to audio analysis providers
-  audio_buffer.py      - AudioBuffer: in-memory PCM audio buffering with seek support
-  audio_processing.py  - AudioProcessingManager: runtime processing chain per queue stream
-  constants.py         - Shared constants (buffer sizes, config keys)
-  ogg_handler.py       - Chained OGG stream stitching for radio
-  strings.json         - Translatable labels for the controller's config entries
-  icon.svg             - Controller icon (icon_dark.svg for dark mode)
-  smart_fades/         - Smart crossfade planning, rendering and mixing
-    planner/           - Candidate/policy transition planner
-    bands.py           - Band-power signals over the transition window
-    fades.py           - SmartFade ABC plus SmartCrossFade / StandardCrossFade
-    filters.py         - FFmpeg filter toolset
-    helpers.py         - Shared helpers
-    mixer.py           - Crossfade mixing logic
-    models.py          - Smart fade data models
-    renderer.py        - Renders a planned transition
-    structure.py       - Bar-level musical structure detection
-    vocal.py           - Vocal-activity contract and collision math
-```
-
-Supporting modules in `helpers/`:
-- `helpers/audio.py` - Generic audio utilities (PCM helpers, format conversions, silence stripping)
-- `helpers/ffmpeg.py` - FFmpeg process management
-
-## AudioBuffer
-
-`AudioBuffer` is the primary interface for all buffered audio streaming. It stores **raw decoded PCM audio** (no filters applied) and serves as the single source of truth for audio data.
-
-### Design Principles
-
-1. **Always-on buffering**: Every queue stream (tracks and radio) goes through an AudioBuffer
-2. **Raw PCM only**: The buffer stores decoded audio in original sample rate and bit depth. Filters (volume normalization, playback speed, etc.) are applied when reading via `get_stream()`
-3. **Pre-initialization**: Buffers are created and start filling before the player requests the stream, ensuring immediate playback start
-4. **Buffer reuse**: Existing valid buffers are reused for seek operations and reconnections
-5. **Smart seeking**: Forward seeks within 20 seconds of buffered data wait for the producer; larger seeks trigger a re-fetch at the seek position
-
-### Buffer Modes
-
-- **SEEKABLE** (tracks): Maintains a deque of 1-second PCM chunks with seek support. Old chunks are discarded when the buffer reaches max size
-- **ROLLING** (radio/non-seekable): Short FIFO buffer (~15 seconds) where the consumer pops chunks sequentially
-
-### Key Methods
-
-- `AudioBuffer.get_buffer()` - Static factory that creates or reuses a buffer. Reads config, determines mode, starts the analysis reader, starts filling
-- `AudioBuffer.get_stream()` - Get processed audio with optional filters/resampling applied
-- `AudioBuffer.get_raw_stream()` - Get unprocessed raw PCM audio (playback consumer)
-- `AudioBuffer.read_chunk_for_analysis()` - Read one chunk for a passive analysis reader without mutating the buffer; raises when the chunk has been evicted (reader fell behind)
-- `AudioBuffer.fill()` - Start filling from an async generator of PCM chunks
-- `AudioBuffer.ready` - Event set when enough chunks are buffered past the seek point (threshold-based)
-
-### Buffer Lifecycle
-
-```
-1. _load_item() fetches stream details, creates buffer with wait_ready=True
-2. Buffer starts filling from get_media_stream() in background
-3. Analysis (loudness, smart fades) reads the same buffer in parallel, at lower priority
-4. Player requests stream -> get_queue_item_stream() calls buffer.get_stream()
-5. 60s before the end of the source stream: prepare_next_audio_buffer() pre-fills next track
-6. _cleanup_stale_queue_buffers() clears old buffers to free memory
+```mermaid
+flowchart TD
+    provider[Music provider] --> decode[FFmpeg decode to raw PCM]
+    decode --> buffer[AudioBuffer: raw PCM]
+    buffer -.->|"passive reader"| analysis[Audio analysis providers]
+    buffer --> read[Read with filters:<br/>normalization, speed, fade-in]
+    read --> fades[Crossfade or smart fade mixing]
+    fades --> encode[FFmpeg encode with per-player DSP]
+    encode --> http[HTTP response]
+    encode --> pcm[Direct PCM to the provider]
 ```
 
-### Error Handling
+Players that consume HTTP streams are served from the stream server's endpoints. Player providers
+that consume raw PCM directly, such as AirPlay and Sendspin, take the stream in process.
 
-- Producer errors are captured and surfaced when consumers try to read
-- Consumers can drain remaining buffered data before the error surfaces at EOF
-- Errors bubble up as `AudioError` through the streaming chain
+### Output pacing, and why it stays
 
-## StreamsAudio
+Audio handed to a player is rate-limited a little above playback speed, after an opening burst.
+Music Assistant serves audio for listening, not for collecting. Barely above playback speed the
+player's buffer still grows, while pulling an entire catalogue takes about as long as listening to
+it would.
 
-`StreamsAudio` is the audio processing sub-controller, initialized as `self.audio` on the StreamsController. It handles all audio-related logic that needs access to the MusicAssistant instance:
+The profile follows what is being served rather than the player receiving it. A track handed over on
+its own gets the largest burst, because the opening chunk is what a gapless player holds before it
+starts and the head start rides out a hiccup later in the track. The flow stream and sources that
+deliver just in time, meaning radio and a Spotify track on its Soloist backend, get a near-realtime
+profile, because such a source delivers barely above playback pace and what it banks ahead is all
+its end-of-track crossfade has. Live audio sources get the smallest burst, because whatever the
+burst hands over sits in the player's buffer as listening delay.
 
-- **Stream acquisition**: `get_stream_details`, `get_media_stream`, and `_resolve_media_stream_source` (the per-stream-type resolution that replaced the separate radio/HTTP/file helpers)
-- **Queue streaming**: `get_queue_item_stream`, `get_queue_item_stream_with_smartfade`, `get_queue_flow_stream`
-- **Format selection**: `get_output_format`, `select_pcm_format`, `select_flow_pcm_format`
-- **DSP and output plans**: `get_player_output_plan` (returns the executable filters plus the client-facing `AudioOutputDetails`)
-- **Crossfade management**: `crossfade_allowed`, `clear_crossfade_handover`
+This pacing is load-bearing and intentional. Do not remove it to make buffering look faster; the
+constant carries the same warning. The live decode side is separate and stricter.
 
-`AudioProcessingManager`, initialized as `self.audio_processing` on the
-StreamsController, combines queue processing and per-player output plans into complete
-`AudioProcessingChain` snapshots attached to `StreamDetails`.
+## Volume normalization
 
-`AudioAnalysisController`, initialized as `self.audio_analysis` on the StreamsController,
-owns the analysis side: it starts analysis sessions on the registered audio analysis
-providers, feeds them PCM read from the playback buffer, and persists their results.
+Normalization levels perceived loudness across tracks from different sources. The configured mode
+is per queue, and the target loudness is a global setting on this controller. The fallback modes
+resolve down to a concrete one depending on whether a stored loudness measurement exists, with
+separate preferences for radio and for tracks.
 
-## Streaming Pipeline
+Dynamic mode levels in real time. Measurement mode applies a static gain from the stored
+measurement. Fixed gain applies a constant adjustment. The mode is resolved twice, once when stream
+details are built and again after loudness hydration, because a measurement may land in between.
 
-```
-Music Provider -> get_media_stream() -> FFmpeg (decode to raw PCM)
-    -> AudioBuffer (raw PCM storage; audio analysis reads from here in parallel)
-    -> buffer.get_stream() -> Optional: FFmpeg (volume normalization, speed, fade-in)
-    -> Optional: Smart Fades (crossfade mixing between tracks)
-    -> FFmpeg (encode to output format with player-specific DSP)
-    -> HTTP Response / Direct PCM stream
-```
+One mode is an outcome rather than a choice: when a provider reports that it already delivers
+normalized audio, applying normalization on top would level already-levelled audio, so the chain
+stays empty and the mode records why. Crossfade has the same counterpart for providers handing over
+already-crossfaded audio, such as a DJ mix. Both add no filter, so neither defeats bit-perfect
+detection the way an active stage would.
 
-### Stream Entry Points
+Measurement itself is produced by the builtin loudness analysis provider. Loudness supplied
+externally, by file tags, ReplayGain or a provider's own figure, is written under a virtual provider
+domain that wins the priority walk.
 
-1. **HTTP endpoints** (`serve_queue_item_stream`, `serve_queue_flow_stream`): Used by players that consume HTTP streams (Chromecast, DLNA, Sonos, etc.)
-2. **Direct PCM** (`get_stream`): Used by player providers that consume raw PCM directly (AirPlay, Sendspin, etc.)
+## Crossfade
 
-## Audio Analysis
+Crossfade is queue-scoped: the toggle and the mode are per queue with a global default, while the
+duration is global only, because a numeric range cannot carry the tri-state option. The effective
+mode is resolved in one place. Smart crossfade is the default when it is available, and is only
+honoured when available, so anything else lands on the standard crossfade.
 
-Analysis is a **passive observer** of the playback buffer: nothing is pushed to it and the audio path is not modified. The analysis reader keeps its own cursor over the buffer's retained chunks, so a slow analyzer falls behind and loses its session rather than holding up the playback stream.
+Availability requires both a buffer preset with room for the analysis window and the smart fades
+analysis provider to be loaded.
 
-```
-AudioBuffer.get_buffer()
-    -> mass.streams.audio_analysis.start_analysis(buffer, streamdetails)   [fire-and-forget task]
-        -> provider.start_analysis() on every available audio analysis provider
-        -> AudioAnalysisController._buffer_reader_worker()
-            -> buffer.read_chunk_for_analysis(cursor)     [1-second chunks, non-mutating]
-            -> provider.process_pcm_chunk() fanned out to all accepted providers
-            -> provider.finalize() at clean EOF, provider.cancel() otherwise
-```
+A transition is vetoed when either side is not a track, when there is no next item, when both
+tracks belong to the same album unless the user opted in, and, outside flow mode, when the two
+tracks have different sample rates and the player has not opted in. There is no reliable way to
+detect a gapless album, so album-internal transitions are left alone by default. Pending crossfade
+data is also discarded when the user seeks into a track or the next item changed while the crossfade
+was being prepared.
 
-- A session is only started for a **freshly created** buffer at seek position 0, and never for `AUDIO_SOURCE` or `SOUND_EFFECT` media
-- Providers **decline** a session when the track already has analysis at the provider's current `analysis_version`, or when the track exceeds the provider's `max_analysis_duration`; a session with no accepting provider is never started
-- The buffer's only hook is `register_cancel_callback()`, used to drop the session when the buffer is torn down (track skipped, buffer cleaned up)
-- If the reader falls a full window behind and the chunk it needs has already been evicted, the session is dropped rather than allowed to slow the producer
-- A stream that ends short of 90% of the expected duration is discarded instead of finalized, so a died-mid-track source can't persist truncated analysis
-- At most 2 realtime sessions run per queue (the playing track and its preloaded successor); a provider that exceeds the per-chunk hang guard is evicted from the session
+### Smart fades execution
 
-The same provider interface is reused by the nightly **background scan**, which streams local files through FFmpeg for tracks that have no (current) analysis yet.
+Analysis and execution are separate. The optional smart fades provider produces the signals; this
+package consumes them. See
+[providers/smart_fades](../../providers/smart_fades/README.md) for the planner, the filters and the
+rendering model.
 
-### Analysis Providers
+The mixer builds before it mixes. Building picks the implementation and primes its filters without
+touching a byte of audio, walking a degradation chain that ends at the standard crossfade, which
+never fails. The smart path needs beats on both tracks and falls back immediately without them.
 
-| Provider | Produces | Notes |
-|----------|----------|-------|
-| `loudness_analysis` | EBU R128 integrated loudness | Feeds PCM into an FFmpeg `ebur128` process, capped at 600 seconds of audio. Result is stored so future playback can use measurement-based normalization instead of dynamic mode |
-| `smart_fades` | Beats, downbeats, musical key, RMS energy, spectral centroid, vocal activity | Beat This! neural beat tracker plus S-KEY and FireRed AED; see the [Smart Fades provider README](../../providers/smart_fades/README.md) |
-| `sonic_analysis` | librosa scalars and CLAP embeddings | Describes how a track sounds, powering similarity and mood-based features |
-| `acoustid_lookup` | MusicBrainz recording ID and ISRC | Computes a Chromaprint fingerprint and resolves it via AcoustID; produces no signal analysis of its own |
+The fallback deliberately keeps the outgoing track's analysis: the standard crossfade uses it to
+work out how much of the tail to retain so an audible vocal is not clipped, instead of blindly
+stripping trailing silence. The buffered tail is capped at half the track duration and abandoned
+below a few seconds, where it would not be musically meaningful.
 
-Results are persisted by `AudioAnalysisController` and read back via `get_audio_analysis()`, so a track is analyzed once and reused on later playback.
+## DSP and output plans
 
-## Smart Fades
+Per-player DSP is applied in the final encoding stage. The output plan returns the executable filter
+list wrapped alongside a client-facing description of the same processing. The chain runs input
+gain, then the user's enabled filters, then output gain, then channel selection.
 
-The smart fades system provides intelligent crossfading between tracks:
+There is no unconditional limiter at the end. Clipping protection is a filter the user opts into
+rather than a fixed cost on every stream. Only filters that actually emit parameters count as
+active, so a neutral filter is not reported as a stage and does not defeat bit-perfect detection.
 
-- **Smart Crossfade**: Analyzes audio beats to detect natural fade points
-- **Standard Crossfade**: Fixed-duration overlap crossfade with silence stripping
-- Operates in both flow mode (continuous stream) and per-item mode (gapless playback)
+Most filters render to a plain FFmpeg audio filter string. Convolution is the exception, because the
+impulse response is a second input, which is why the filter graph builder switches to a complex
+filter as soon as one is present. The sound effect overlay uses the same path.
 
-## Audio Overlay
+Some FFmpeg flag choices in the filter catalog carry non-obvious reasoning, so read the existing
+comments before changing them. Pitch shifting preserves formants so voices do not sound like
+chipmunks. The limiter runs without auto make-up so it stays a transparent ceiling. Stereo widening
+disables the filter's internal hard clipping, which would otherwise clamp a widened signal before
+the output gain could bring it back down. Crossfeed overrides a default that would attenuate every
+stream.
 
-The audio overlay is a per-queue feature (configured via `player_queues/overlay`) that mixes a
-looping sound effect — any `sound_effect` media item offered by a provider — into the queue's
-audio stream:
+**Grouping can suppress DSP.** A player in a multi-device group whose members do not support
+per-device DSP has its DSP reported as disabled by the group rather than as off, because per-device
+filters would produce different audio on each member and break synchronization. That distinction
+matters to the UI: a config that is enabled but suppressed reads differently from one the user
+turned off.
 
-- Mixing happens once per queue stream (ffmpeg `amix`, overlay looped via `-stream_loop -1`),
-  so all (synced) players consuming the stream hear the identical mix.
-- An active overlay forces flow mode: the overlay must play continuously across track
-  boundaries, which is impossible with per-item stream requests. Radio is the exception —
-  it always plays as a single long-lived stream and is wrapped per-request instead.
-- The internal PCM format is upgraded to F32 (like crossfade/DSP) for clipping-free headroom.
-- Failures degrade gracefully: when the overlay source can not be resolved, playback simply
-  continues without overlay; when the overlay input dies mid-stream, ffmpeg keeps passing
-  the main audio. Music playback is never interrupted by the overlay.
-- Note: audio already sitting in a player's (pre)buffer is unaffected by overlay changes,
-  which is why the queue controller restarts playback on an audible change. For the same
-  reason a seek can momentarily shift the overlay position — acceptable for ambient content.
+One output path can serve several players, so a plan resolves its shared destinations, mapping
+protocol players onto their user-facing parent, and reports the plan for every one. Passing an empty
+set rather than nothing marks a path that can gain destinations later, which is what lets a stored
+template fan out to players that join mid-stream.
 
-## Stream Types
+## What is happening to this audio
 
-| Type | AudioBuffer | Description |
-|------|-------------|-------------|
-| Queue tracks | Yes (SEEKABLE) | Regular track playback with full buffering |
-| Radio streams | Yes (ROLLING) | Short rolling buffer, non-seekable |
-| Announcements | Yes (SEEKABLE) | Short one-off audio (TTS), rendered once and shared by all consumers |
-| `AUDIO_SOURCE` items | No | Real-time audio from a plugin provider (Spotify Connect, an AirPlay/AriaCast/VBAN receiver), streamed directly. Queue-item sources are served from `/single/`; a source attached to a player is served from `/source/`. The old `PluginSource` model and its dedicated endpoint are gone |
-| Sound effects | No | Overlay sources, mixed in as an extra FFmpeg input |
+The processing manager answers that question for clients. It tracks processing per queue session and
+publishes a complete chain onto each queue item's stream details.
+
+The chain splits the way the work does. Queue processing is what happens once for the whole queue
+stream: the internal PCM format, normalization, playback speed, crossfade mode and overlay. Outputs
+are what happens per destination on the way out, and players whose effective output is identical
+collapse into one entry listing several player ids.
+
+State is keyed by queue and gated on the queue's session, so a superseded producer silently stops
+publishing. Housekeeping drops state for items before the current index and reconciles the output
+set against the players actually attached, which is how a player joining or leaving a group updates
+the chain. Chains are republished only when they changed.
+
+**Fidelity and bit-perfect.** Quality is classified from codec semantics, and an output's quality is
+the minimum of the input and output quality, because fidelity cannot be gained downstream.
+Bit-perfect answers whether the decoded source samples reach the player untouched. It is unknown
+until the formats are resolved, and otherwise false unless the output is lossless, the sample rate,
+bit depth and channel count are identical at every stage including any intermediate handoff format,
+and there is no normalization, speed change, crossfade, overlay, effective DSP or channel mapping.
+Stages that apply an intentionally invisible transform, such as a fade-in, mark the audio as
+altered.
+
+## Format selection
+
+The final output format comes from the requested extension and the player's capabilities. The
+content sample rate is used when the player supports it, otherwise its highest supported rate, and
+bit depth is then capped by the depths actually paired with that rate rather than by the player's
+global maximum, so a player that only does 24-bit at 48 kHz is described correctly. Lossy formats
+cap lower. Non-track media such as radio and announcements is capped by the source's declared depth
+rather than the internal PCM depth, which normalization or DSP widens.
+
+The internal PCM format never upsamples: it picks the highest supported rate at or below the source
+rate, falling back to the lowest supported rate when the source is below every one of them. Bit
+depth follows the source unless crossfade, normalization, overlay or DSP is active, where a wider
+format gives processing headroom. Crossfade and overlay force stereo, because mixing needs a
+consistent channel count. Live audio sources short-circuit to a passthrough at the source's own rate
+and depth where the player allows it.
+
+Flow mode takes its rate from the player's own flow mode setting rather than a fixed ladder, and
+because a flow stream can feed several players it intersects their supported rates and fails when
+they share none.
+
+## Audio analysis
+
+Analysis is a passive observer of the playback buffer. Nothing is pushed to it and the audio path is
+not modified. The reader keeps its own cursor over the buffer's retained chunks, so a slow analyzer
+falls behind and loses its session rather than holding up playback.
+
+A session starts only for a freshly created buffer at the start of a track, and never for live audio
+sources or sound effects. Providers decline a session when the track already has analysis at the
+provider's current version or exceeds the provider's duration ceiling, and a session with no
+accepting provider is never started. The buffer's only hook is a cancel callback, used to drop the
+session when the buffer is torn down. If the reader falls a full window behind and the chunk it needs
+has been evicted, the session is dropped rather than allowed to slow the producer. A stream that
+ends well short of its expected duration is discarded rather than finalized, so a source that died
+mid-track cannot persist truncated analysis. At most two realtime sessions run per queue, the
+playing track and its preloaded successor, and a provider that exceeds the per-chunk hang guard is
+evicted.
+
+| Provider | Produces |
+|---|---|
+| `loudness_analysis` | Integrated loudness, so later playback can use measurement-based normalization |
+| `smart_fades` | Beats, downbeats, key, energy, spectral centroid and vocal activity |
+| `sonic_analysis` | Descriptor scalars and embeddings, powering similarity and mood features |
+| `acoustid_lookup` | A recording id and ISRC from a fingerprint, with no signal analysis of its own |
+
+Results are persisted per item and provider, so a track is analyzed once and reused later.
+
+The same provider interface backs the nightly background scan, which analyzes tracks that have no
+current analysis yet. **The scan is restricted to filesystem providers on purpose.** Pulling audio
+from a streaming provider to analyze it is not what the user's subscription is for, so keep that
+restriction in place.
+
+## Audio overlay
+
+A per-queue overlay mixes a looping sound effect into the queue's audio. Mixing happens once per
+queue stream, so every synced player consuming that stream hears the identical mix.
+
+An active overlay forces flow mode, because the overlay has to play continuously across track
+boundaries and that is impossible with per-item stream requests. Radio is the exception, since it is
+already one long-lived stream and is wrapped per request instead. The internal format widens for
+clipping-free headroom.
+
+Failures degrade rather than interrupt. An overlay source that cannot be resolved means playback
+continues without it, and an overlay input that dies mid-stream leaves FFmpeg passing the main audio
+through. Audio already in a player's buffer is unaffected by an overlay change, which is why the
+queue controller restarts playback on an audible change, and for the same reason a seek can shift
+the overlay position.
 
 ## Configuration
 
-Key configuration entries (in streams controller config):
+Config entries cover the buffer size preset, which defaults by host memory, the normalization modes
+and gains for radio and tracks separately, the global target loudness, whether consecutive album
+tracks may crossfade, the bind address and port and the IP published to players in stream URLs, and
+the concurrency of the nightly analysis scan.
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `buffer_size` | String | Memory-dependent (`maximum` >=8GB, `balanced` >=4GB, `minimal` <4GB) | Audio buffer size preset |
-| `volume_normalization_radio` | String | `fallback_dynamic` | Normalization mode for radio |
-| `volume_normalization_tracks` | String | `fallback_dynamic` | Normalization mode for tracks |
-| `volume_normalization_fixed_gain_radio` | Float | `-6` | Fixed/fallback gain (dB) for radio |
-| `volume_normalization_fixed_gain_tracks` | Float | `-6` | Fixed/fallback gain (dB) for tracks |
-| `volume_normalization_target` | Integer | `-14` | Target loudness in LUFS (advanced) |
-| `allow_crossfade_same_album` | Boolean | `false` | Whether to crossfade consecutive album tracks |
-| `publish_ip` | String | `auto` | IP address communicated to players in stream URLs (advanced) |
-| `bind_port` | Integer | `8097` | Port the streams webserver binds to (advanced) |
-| `bind_ip` | String | `0.0.0.0` | Interface the streams webserver binds to (advanced) |
-| `smart_fades_log_level` | String | `GLOBAL` | Log level for the Smart Fades mixer and analyzer (advanced) |
-| `background_scan_concurrency` | Integer | `2` (`1` below 4 cores) | Tracks analyzed concurrently during the nightly background scan |
+## Related architecture docs
+
+- [Playback](../../../docs/architecture/playback.md) for the end-to-end flow from a play request to audio.
+- [Player model](../../../docs/architecture/player-model.md) for how a player declares its supported formats.
+- [Grouping and volume](../../../docs/architecture/grouping-and-volume.md) for group streams and shared outputs.
+- [Plugins](../../../docs/architecture/plugins.md) for live audio sources that bypass this pipeline.

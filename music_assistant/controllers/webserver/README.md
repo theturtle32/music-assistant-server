@@ -1,562 +1,166 @@
-# Webserver and Authentication Architecture
-
-This document provides a comprehensive overview of the Music Assistant webserver architecture, authentication system, and remote access capabilities.
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Core Components](#core-components)
-- [Authentication System](#authentication-system)
-- [Remote Access (WebRTC)](#remote-access-webrtc)
-- [Request Flow](#request-flow)
-- [Security Considerations](#security-considerations)
-- [Development Guide](#development-guide)
-
-## Overview
-
-The Music Assistant webserver is a core controller that provides:
-- WebSocket-based real-time API for bidirectional communication
-- HTTP/JSON-RPC API for simple request-response interactions
-- User authentication and authorization system
-- Frontend hosting (Vue-based PWA)
-- Remote access via WebRTC for external connectivity
-- Home Assistant integration via Ingress
-
-The webserver runs on port `8095` by default and can be configured via the webserver controller settings.
-
-## Core Components
-
-### 1. WebserverController ([controller.py](controller.py))
-
-The main orchestrator that manages:
-- HTTP server setup and lifecycle
-- Route registration (static files, API endpoints, auth endpoints)
-- WebSocket client management
-- Authentication manager initialization
-- Remote access manager initialization
-- Home Assistant Supervisor announcement (when running as add-on)
-
-**Key responsibilities:**
-- Serves the frontend application (PWA)
-- Hosts the WebSocket API endpoint (`/ws`)
-- Provides HTTP/JSON-RPC API endpoint (`/api`)
-- Manages authentication routes (`/login`, `/auth/*`, `/setup`)
-- Serves API documentation (`/api-docs`)
-- Handles image proxy and audio preview endpoints
-- Proxies authenticated Sendspin WebSocket clients (`/sendspin`) to the internal Sendspin server
-
-### 2. AuthenticationManager ([auth.py](auth.py))
-
-Handles all authentication and user management:
-
-**Database Schema:**
-- `users` - User accounts with roles
-- `user_auth_providers` - Links users to authentication providers (many-to-many)
-- `auth_tokens` - Token metadata (token hash, expiration, last used) for revocation checking
-- `join_codes` - Short codes (QR/link login) that a client exchanges for a token
-- `settings` - Schema version and configuration
-
-**Authentication Providers:**
-- **Built-in Provider** - Username/password authentication, hashed with PBKDF2-HMAC-SHA256
-- **Home Assistant OAuth** - OAuth2 flow for Home Assistant users (auto-enabled when HA provider is configured)
-
-**Token Types:**
-
-Tokens are **JWTs** signed with a server-side secret (`JWTHelper`). The database only holds a SHA-256 hash of each issued token, so a token can be revoked without ever storing it.
-
-- **Short-lived tokens**: Auto-renewing on use, 30-day sliding expiration window, capped by an absolute 90-day lifetime from creation (`TOKEN_ABSOLUTE_MAX_EXPIRATION`) after which the user must re-authenticate
-- **Long-lived tokens**: No auto-renewal, 365-day expiration (`TOKEN_LONG_LIVED_EXPIRATION`) for integrations/API access
-- **Guest tokens**: Fixed 1-day lifetime, never renewed
-
-**Security Features:**
-- Rate limiting on login attempts (progressive delays)
-- Password hashing with PBKDF2-HMAC-SHA256 (100,000 iterations) and a user- and server-specific salt
-- Signed JWTs; only their hash is persisted, and revocation deletes the row
-- WebSocket disconnect on token revocation
-- Session management and cleanup
-
-**User Roles:**
-- `ADMIN` - Full access (granted `Scope.ALL`)
-- `USER` - Standard access (configurable via player/provider filters)
-- `GUEST` - Read-only library access plus player/queue control
-- `SERVICE` - Standard access plus player config, reading user accounts and impersonation
-  (used by the Home Assistant integration)
-
-Roles map to scopes via `ROLE_SCOPES` in [helpers/auth_middleware.py](helpers/auth_middleware.py); the API itself gates on **scopes**, not on roles.
-
-### 3. RemoteAccessManager ([remote_access/](remote_access/))
-
-Manages WebRTC-based remote access for external connectivity:
-
-**Architecture:**
-- **Signaling Server**: Cloud-based WebSocket server for WebRTC signaling (hosted at `wss://signaling.music-assistant.io/ws`)
-- **WebRTC Gateway**: Local component that bridges WebRTC data channels to the WebSocket API
-- **Remote ID**: Unique identifier derived from the instance's WebRTC DTLS certificate, used to connect to a specific instance
-
-**How it works:**
-1. Remote access can be enabled regardless of Home Assistant Cloud subscription
-2. The Remote ID is derived from the persisted WebRTC DTLS certificate
-3. The gateway connects to the signaling server and registers with the Remote ID
-4. Remote clients (PWA or mobile apps) connect via WebRTC using the Remote ID
-5. Data channel messages are bridged to/from the local WebSocket API
-
-**Connection Modes:**
-
-- **Basic Mode** (default, no HA Cloud required):
-  - Uses public STUN servers (Home Assistant, Google, Cloudflare)
-  - Works in most network configurations
-  - May not work behind complex NAT setups or corporate firewalls
-  - Free for all users
-
-- **Optimized Mode** (with HA Cloud subscription):
-  - Uses Home Assistant Cloud STUN/TURN servers
-  - Reliable connections in all network configurations
-  - TURN relay servers ensure connectivity even in restrictive networks
-  - Requires active Home Assistant Cloud subscription
-
-**Key features:**
-- Automatic reconnection on signaling server disconnect
-- Multiple concurrent WebRTC sessions supported
-- No port forwarding required
-- End-to-end encryption via WebRTC (DTLS-SRTP)
-- Automatic mode switching when HA Cloud status changes
-
-### 4. WebSocket Client Handler ([websocket_client.py](websocket_client.py))
-
-Manages individual WebSocket connections:
-- Authentication enforcement (auth or login command must be first)
-- Command routing and response handling
-- Event subscription and broadcasting
-- Connection lifecycle management
-- Token validation and user context
-
-### 5. Authentication Helpers
-
-**Helpers ([helpers/auth_middleware.py](helpers/auth_middleware.py)):**
-- Request authentication for HTTP endpoints, called per handler (there is no aiohttp middleware)
-- User context management (thread-local storage)
-- Ingress detection (Home Assistant add-on)
-- Token extraction from Authorization header
-
-**Providers ([helpers/auth_providers.py](helpers/auth_providers.py)):**
-- Base classes for authentication providers
-- Built-in username/password provider
-- Home Assistant OAuth provider
-- Rate limiting implementation
-
-## Authentication System
-
-### First-Time Setup Flow
-
-1. **Initial State**: No users exist
-2. **Setup Required**: User is redirected to `/setup`
-3. **Admin Creation**: User creates the first admin account with username/password
-4. **Setup completes** User gets redirected to the frontend
-5. **Onboarding wizard** The frontend shows the onboarding wizard if it detects 'onboard_done' is False
-4. **Onboarding Complete**: User completes onboarding and the `onboard_done` flag is set to `true`
-
-### First-Time Setup Flow when HA Ingress is used
-
-1. **Initial State**: No users exist
-2. **Auto user creation**: User is auto created based on HA user
-4. **Setup completes** User gets redirected to the frontend
-5. **Onboarding wizard** The frontend shows the onboarding wizard if it detects 'onboard_done' is False
-4. **Onboarding Complete**: User completes onboarding and the `onboard_done` flag is set to `true`
-
-### Login Flow (Standard)
-
-1. **Client Request**: POST to `/auth/login` with credentials
-2. **Provider Authentication**: Credentials validated by authentication provider
-3. **Token Generation**: Short-lived token created for the user
-4. **Response**: Token and user info returned to frontend
-5. **Subsequent Requests**: Token included in Authorization header or WebSocket auth command
-
-### Login Flow (Home Assistant OAuth)
-
-1. **Initiate OAuth**: GET `/auth/authorize?provider_id=homeassistant&return_url=...`
-2. **Redirect to HA**: User is redirected to Home Assistant OAuth consent page
-3. **OAuth Callback**: HA redirects back to `/auth/callback` with code and state
-4. **Token Exchange**: Code exchanged for HA access token
-5. **User Lookup/Creation**: User found or created with HA provider link
-6. **Token Generation**: MA token created and returned via redirect with `code` parameter
-7. **Client Handling**: Client extracts token from URL and stores it
-
-### Remote Clients
-
-Remote clients (the PWA over WebRTC) use the same `/auth/authorize` → `/auth/callback` flow
-as any other client — there is no separate remote-client OAuth path. The `return_url` a
-client supplies is classified as trusted, external or blocked by
-[helpers/redirect_validation.py](../../helpers/redirect_validation.py) before the token is
-appended to it, which is what makes the redirect safe across origins.
-
-### Ingress Authentication (Home Assistant Add-on)
-
-When running as a Home Assistant add-on:
-- A dedicated webserver TCP site is hosted (on port 8094) bound to the internal HA docker network only
-- Ingress requests include HA user headers (`X-Remote-User-ID`, `X-Remote-User-Name`)
-- Users are auto-created on first access
-- No password required (authentication handled by HA)
-- System user created for HA integration communication
-
-### WebSocket Authentication
-
-1. **Connection Established**: Client connects to `/ws`
-2. **Auth Command Required**: First command must be `auth` with token
-3. **Token Validation**: Token validated and user context set
-4. **Authenticated Session**: All subsequent commands executed in user context
-5. **Auto-Disconnect**: Connection closed on token revocation or user disable
-
-## Remote Access (WebRTC)
-
-### Architecture Overview
-
-Remote access enables users to connect to their Music Assistant instance from anywhere without port forwarding or VPN:
-
-```
-[Remote Client (PWA or app)]
-       |
-       | WebRTC Data Channel
-       v
-[Signaling Server] ←→ [WebRTC Gateway]
-                              |
-                              | WebSocket
-                              v
-                      [Local WebSocket API]
-```
-
-### Components
-
-**Signaling Server** (`wss://signaling.music-assistant.io/ws`):
-- Cloud-based WebSocket server for WebRTC signaling
-- Handles SDP offer/answer exchange
-- Routes ICE candidates between peers
-- Maintains Remote ID registry
-
-**WebRTC Gateway** ([remote_access/gateway.py](remote_access/gateway.py)):
-- Runs locally as part of the webserver controller
-- Connects to signaling server and registers Remote ID
-- Accepts incoming WebRTC connections from remote clients
-- Bridges WebRTC data channel messages to local WebSocket API
-- Handles multiple concurrent sessions
-
-**Remote ID**:
-- A 26-character uppercase base32 string (a custom alphabet using `9` in place of `2`) derived from the first 128 bits of the SHA-256 fingerprint of the instance's WebRTC DTLS certificate — see `music_assistant/helpers/webrtc_certificate.py`
-- Uniquely and deterministically identifies a Music Assistant instance: it is stable for as long as the certificate is, and no separate value is stored
-- Derived at setup without loading the native WebRTC library, so `remote_access/info` can report it even while remote access is disabled
-- Used by remote clients to connect to a specific instance
-
-### Connection Flow
-
-1. **Initialization**:
-   - Remote access is enabled by user in settings
-   - Remote ID derived from the persisted WebRTC DTLS certificate
-   - HA Cloud status checked (determines mode)
-   - Gateway connects to signaling server with appropriate ICE servers
-   - Remote ID registered with signaling server
-
-2. **Remote Client Connection**:
-   - User opens PWA (https://app.music-assistant.io) and enters Remote ID
-   - PWA creates WebRTC peer connection
-   - PWA sends SDP offer via signaling server
-   - Gateway receives offer and creates peer connection
-   - Gateway sends SDP answer via signaling server
-   - ICE candidates exchanged for NAT traversal
-   - WebRTC data channel established
-
-3. **Message Bridging**:
-   - Remote client sends WebSocket-format messages over data channel
-   - Gateway forwards messages to local WebSocket API
-   - Responses and events sent back through data channel
-   - Authentication and authorization work identically to local WebSocket
-
-### Data Channels
-
-A single remote session multiplexes several WebRTC data channels over one peer connection.
-The gateway routes each incoming channel by its label through a label -> handler table, with
-two kinds of handlers:
-
-- **Bridged**: the channel is pumped both ways to a local WebSocket
-  - `sendspin`: the built-in Sendspin server (web player)
-  - `live_announcement`: the live announcement route on the local webserver
-- **Served in-process**: handled by the gateway itself, without a local WebSocket
-  - `http_proxy`: proxied HTTP requests (album art and other assets)
-
-When one of these channels or its local WebSocket closes, only that channel is torn down and
-the session stays up.
-
-The client's own API channel has no fixed label: the **first** channel with a label the server
-does not recognise becomes the API channel (the frontend labels it `ma-api`) and is bridged to
-`/ws`. Any **later** unrecognised label is refused, since taking it for a second API channel
-would replace the live bridge and break the session. The API channel shares its lifetime with
-the session: when it or its local WebSocket closes, the whole session is torn down.
-
-Proxied HTTP requests are answered on the channel they arrived on. That is what keeps older
-clients working: they send `http-proxy-request` over `ma-api` and get the response back there,
-so the gateway needs no version negotiation of its own.
-
-The reply is framed to suit that channel. On `ma-api` it is one JSON message with the body
-hex-encoded, which costs about 2.7x the image once the oversized-message chunking below is
-applied on top. `http_proxy` carries nothing else, so there the reply is a JSON header
-(`type`, `id`, `status`, `headers`, `size`) followed by the body as raw binary messages — the
-image costs its own size and no more. Those binary messages carry no request id, so the
-gateway holds the channel for a whole reply: replies go out one at a time rather than
-interleaving, which a channel that sends one message at a time would do anyway. A client that
-stops draining is given a bounded time per frame, after which the reply is abandoned where it
-stands — so a reply can end short of its announced `size`, and the next header is what follows.
-
-`ma-api` and `http_proxy` size their bulk frames to the channel's `max_message_size`, the lower of
-our own 256 KiB ceiling and what the peer advertises in its SDP — and libdatachannel assumes
-only 64 KiB when it advertises nothing. On `http_proxy` that bounds the binary body frames. On
-`ma-api` any message over 64 KiB — or over the cap, whichever is lower — is split into
-`__chunk__` frames (`id`, `seq`, `count`, `b64`) the client reassembles by group id. A client
-therefore has to expect chunking well before the cap: pieces are 64 KiB by preference, sized
-down only when the cap cannot fit that much base64 plus the frame's JSON envelope.
-
-**Adding a new label** is not backwards compatible by itself: servers from before the routing
-table mistake an unknown label for the API channel, which breaks the entire remote session
-instead of just the new feature. A client must therefore feature-detect on `schema_version`
-from `server_info` before opening one: `http_proxy` requires `API_SCHEMA_VERSION >= 49`. Bump
-`API_SCHEMA_VERSION` ([constants.py](../../constants.py)) when adding a label and gate the
+# Webserver controller
+
+Hosts the API, the frontend, and the authentication system, and owns remote access. It runs on
+port 8095 by default. Audio is deliberately not served from here; see
+[controllers/streams](../streams/README.md) for why that is a separate server.
+
+## Module layout
+
+| Module | Role |
+|---|---|
+| `controller.py` | The `WebserverController`: HTTP server lifecycle, route registration, WebSocket client management |
+| `auth.py` | `AuthenticationManager`: users, roles, tokens, join codes, and the auth database |
+| `websocket_client.py` | One connection's lifecycle: authentication, command routing, event subscription |
+| `sendspin_proxy.py` | Authenticated WebSocket proxy to the internal Sendspin server |
+| `api_docs.py` | Generates the API documentation from command docstrings and type hints |
+| `helpers/auth_middleware.py` | Per-handler request authentication, user context, ingress detection, role to scope mapping |
+| `helpers/auth_providers.py` | Login provider base classes, the builtin provider, the Home Assistant OAuth provider, rate limiting |
+| `helpers/ssl.py` | SSL context creation and certificate verification |
+| `remote_access/` | The WebRTC gateway and its signaling client |
+
+What it serves: the frontend app, the WebSocket API, the HTTP JSON-RPC API, the login and OAuth
+routes, the setup route, the generated API documentation, the image proxy and audio preview
+endpoints, and the Sendspin proxy. Plugins can add their own paths as dynamic routes, which is how
+the MCP server mounts without standing up a second server.
+
+## The command model
+
+Every API command is a method decorated as such anywhere in the codebase, which registers it in one
+registry under a dotted name. Both transports dispatch through that same registry, so a command
+behaves identically over the WebSocket and over HTTP, including its authentication and scope
+requirements. The generated API documentation is built from the same registry, which is why a new
+command documents itself from its docstring and type hints.
+
+The WebSocket carries events as well as commands, so a client that needs to react to state changes
+uses it; the HTTP endpoint exists for simple request and response callers. See
+[events and commands](../../../docs/architecture/events-and-commands.md).
+
+Some subsystems expose commands but no routes of their own. The dashboard controller is one, and
+its registration is deliberately WebSocket-only: a registration is owned by a connection, so a
+display that drops off the network takes its registration and session with it instead of lingering
+as a phantom endpoint.
+
+## Authentication
+
+### Users, roles and scopes
+
+The API gates on scopes, never on roles. A role grants a set of scopes, and each command declares
+the scope it requires. Four roles exist: an administrator with everything, a standard user whose
+reach can be narrowed further by player and provider filters, a guest limited to reading the
+library and controlling playback, and a service account used by the Home Assistant integration,
+which adds player configuration, reading user accounts and impersonation.
+
+A command may allow impersonation, which lets a sufficiently privileged caller execute it on behalf
+of another user.
+
+### Tokens
+
+Tokens are signed JWTs. The database stores only a hash of each issued token, so a token can be
+revoked without ever being stored. Revocation disconnects the holder's WebSocket immediately, as
+does disabling a user.
+
+Short-lived tokens renew on use against a sliding window, capped by an absolute lifetime after
+which the user must authenticate again. Long-lived tokens do not renew and exist for integrations.
+Guest tokens are short and never renew.
+
+### Ways in
+
+First run with no users redirects to the setup route, where the first administrator is created.
+Under Home Assistant ingress there is no setup step at all: the request carries HA user headers, the
+user is created on first access, and no password is involved. Ingress is served by a dedicated site
+bound to the internal Docker network.
+
+Standard login posts credentials and receives a token. The Home Assistant OAuth flow redirects to
+HA for consent and returns through the callback route, where the code is exchanged, the user is
+found or created, and a token comes back on the redirect. Remote clients use that same flow rather
+than a separate path; the return URL a client supplies is classified as trusted, external or
+blocked before a token is appended to it, which is what makes the redirect safe across origins.
+
+On the WebSocket, the first command must authenticate. Everything after that runs in the
+authenticated user's context.
+
+Passwords are hashed with a salt combining the random user id and the server id. Failed logins back
+off progressively.
+
+## Remote access
+
+Remote access reaches an instance from anywhere without port forwarding or a VPN. A cloud signaling
+server exchanges the WebRTC handshake, and a local gateway bridges data channel messages to the
+local WebSocket API, so authentication and authorization work exactly as they do locally. Traffic
+is encrypted end to end and the signaling server only routes handshake messages.
+
+The remote id identifies an instance. It is derived from the fingerprint of the instance's
+persisted WebRTC certificate rather than stored separately, so it is stable for as long as the
+certificate is, and it can be derived without loading the native WebRTC library, which is what lets
+it be reported while remote access is off.
+
+Two modes. The basic mode uses public STUN servers, needs no subscription, and works in most
+networks, though it can fail behind symmetric NAT or a firewall that blocks UDP. The optimized mode
+uses Home Assistant Cloud STUN and TURN servers, which relay when a direct connection is impossible.
+The mode switches automatically when the cloud subscription status changes.
+
+### Data channels
+
+One remote session multiplexes several data channels over one peer connection, routed by label. A
+bridged channel is pumped both ways to a local WebSocket, which is how the Sendspin player and live
+announcements work. A channel served in the gateway itself handles proxied HTTP requests for album
+art and other assets. Closing one of those tears down only that channel.
+
+The client's API channel has no fixed label. The first channel with an unrecognised label becomes
+the API channel and is bridged to the WebSocket API; any later unrecognised label is refused,
+because taking it for a second API channel would replace the live bridge and break the session. The
+API channel shares the session's lifetime.
+
+Proxied HTTP replies go back on the channel they arrived on, which is what keeps older clients
+working without version negotiation. The framing differs by channel: on the API channel the body is
+hex-encoded into one JSON message, which costs several times the image's size once chunking is
+applied, while the dedicated proxy channel sends a JSON header followed by the body as raw binary
+messages, costing the image's own size and no more. Those binary messages carry no request id, so
+the gateway holds the channel for a whole reply rather than interleaving. A client that stops
+draining gets a bounded time per frame, after which the reply is abandoned where it stands, so a
+reply can end short of its announced size and the next header is what follows.
+
+Bulk frames are sized to the channel's maximum message size, which is the lower of our own ceiling
+and what the peer advertises, and one library assumes a small default when nothing is advertised. A
+client therefore has to expect chunking well below the ceiling.
+
+**Adding a new channel label is not backwards compatible on its own.** A server from before the
+routing table existed mistakes an unknown label for the API channel, which breaks the whole remote
+session rather than just the new feature. A client must feature-detect on the schema version from
+the server info before opening one, and adding a label means bumping that version and gating the
 client on the new value.
 
-### ICE Servers (STUN/TURN)
+## Security posture
 
-NAT traversal is critical for WebRTC connections. Music Assistant uses:
+All API access requires authentication except under ingress, where Home Assistant has already done
+it. Enforcement is identical on both transports because both dispatch through the same registry.
+Users can be restricted to specific players and providers on top of their scopes.
 
-- **STUN servers**: Servers for discovering public IP addresses and port mappings
-- **TURN servers**: Relay servers for cases where direct peer-to-peer connection fails
+The server speaks plain HTTP by default because it runs on the local network; TLS can be enabled by
+supplying a certificate and key. It should not be exposed directly to the internet. Use remote
+access, a reverse proxy, or a VPN.
 
-**Basic Mode (Public STUN):**
-- `stun:stun.home-assistant.io:3478` (Home Assistant public STUN)
-- `stun:stun.l.google.com:19302` (Google public STUN)
-- `stun:stun1.l.google.com:19302` (Google public STUN backup)
-- `stun:stun.cloudflare.com:3478` (Cloudflare public STUN)
+## Adding to the API
 
-Most connections succeed with public STUN servers alone, but they may fail in:
-- Symmetric NAT configurations
-- Corporate firewalls that block UDP
-- Networks with restrictive firewall policies
+A new command is a decorated method on the owning controller or provider, declaring whether it
+requires authentication and which scope it needs. It appears in the generated documentation
+automatically. A new HTTP route is registered on the controller, or as a dynamic route by a
+provider.
 
-**Optimized Mode (HA Cloud):**
-- STUN/TURN servers provided by Home Assistant Cloud
-- Includes TURN relay servers for guaranteed connectivity
+A new login provider subclasses the base in `helpers/auth_providers.py`, implements authentication
+and, if it is an OAuth provider, the authorization URL and callback, and is registered with the
+authentication manager.
 
-### Availability
+Changing the auth database schema means bumping its version and adding a migration step. A
+migration runs once against data written by a version you cannot inspect, so keep it idempotent and
+never let it raise.
 
-Remote access is available to all users:
-- **Basic Mode**: Always available, no subscription required
-- **Optimized Mode**: Requires active Home Assistant Cloud subscription
+The running server publishes its own docs at `/api-docs`, including a command reference, the
+schemas and an interactive explorer.
 
-### API Endpoints
+## Related architecture docs
 
-**`remote_access/info`** (WebSocket command):
-Returns remote access status:
-```json
-{
-  "enabled": true,
-  "running": true,
-  "connected": true,
-  "remote_id": "K7G3P4M6QRSTUVWX3Y5Z6A7BCD",
-  "using_ha_cloud": false,
-  "signaling_url": "wss://signaling.music-assistant.io/ws"
-}
-```
-
-**`remote_access/configure`** (WebSocket command, admin only):
-Enable or disable remote access:
-```json
-{
-  "enabled": true
-}
-```
-
-## Request Flow
-
-### HTTP Request Flow
-
-```
-HTTP Request → Webserver → Command Handler → Response
-                                |
-                                └─ get_authenticated_user()
-                                   ├─ Ingress? → Auto-authenticate with HA headers
-                                   └─ Regular? → Validate Bearer token
-```
-
-### WebSocket Request Flow
-
-```
-WebSocket Connect → WebsocketClientHandler
-                           |
-                           ├─ First command: auth → Validate token → Set user context
-                           └─ Subsequent commands → Check auth + required_scope → Execute → Respond
-```
-
-### Remote WebRTC Request Flow
-
-```
-Remote Client → WebRTC Data Channel → Gateway → Local WebSocket API
-                                         |
-                                         └─ Message forwarding (bidirectional)
-```
-
-## Security Considerations
-
-### Authentication
-
-- **Mandatory authentication**: All API access requires authentication (except Ingress)
-- **Signed tokens**: JWTs signed (HS256) with a per-installation secret; the token id carried in the `jti` claim is generated with `secrets.token_urlsafe(32)`
-- **Password hashing**: PBKDF2-HMAC-SHA256 (100,000 iterations) with a salt combining the (random) user ID and the server ID
-- **Rate limiting**: Progressive delays on failed login attempts
-- **Token expiration**: Short-lived (30 days sliding, 90-day absolute cap), long-lived (365 days) and guest (1 day) tokens
-
-### Authorization
-
-- **Scope-based access**: Each API command declares `required_scope=Scope.…`; the caller's role grants a set of scopes through `ROLE_SCOPES`
-- **Command-level enforcement**: Enforced identically for WebSocket commands and HTTP requests
-- **Player/Provider filtering**: Users can be restricted to specific players/providers
-- **Token revocation**: Immediate WebSocket disconnect on token revocation
-
-### Network Security
-
-**Local Network:**
-- The webserver serves plain HTTP by default (it runs on the local network); SSL can optionally be enabled by supplying a certificate and private key in the webserver config
-- Users should use reverse proxy or VPN for external access
-- Never expose webserver directly to internet
-
-**Remote Access:**
-- End-to-end encryption via WebRTC (DTLS/SRTP)
-- Authentication required (same as local access)
-- Signaling server only routes encrypted signaling messages
-- Cannot decrypt or inspect user data
-
-### Data Protection
-
-- **Token storage**: Only the SHA-256 hash of each token is stored in the database
-- **Password storage**: PBKDF2-HMAC-SHA256 with a user- and server-specific salt
-- **Session cleanup**: Expired tokens automatically deleted
-- **User disable**: Immediate disconnect of all user sessions
-
-## Development Guide
-
-### Adding New Authentication Providers
-
-1. Create provider class inheriting from `LoginProvider` in [helpers/auth_providers.py](helpers/auth_providers.py)
-2. Implement required methods: `authenticate()`, `get_authorization_url()` (if OAuth), `handle_oauth_callback()` (if OAuth)
-3. Register provider in `AuthenticationManager._setup_login_providers()`
-4. Add provider configuration to webserver config entries if needed
-
-### Adding New API Endpoints
-
-1. Define route handler in [controller.py](controller.py) (for HTTP endpoints)
-2. Use `@api_command()` decorator for WebSocket commands (in respective controllers)
-3. Specify authentication requirements: `authenticated=True` and/or `required_scope=Scope.<SCOPE>`
-4. Optionally set `allow_impersonation=True` to let callers execute the command on behalf of
-   another user via the injected `user` argument (requires the `users.impersonate` scope
-   when targeting another user)
-
-### Testing Authentication
-
-1. **Local Testing**: Use `/setup` to create admin user, then `/auth/login` to get token
-2. **HTTP API Testing**: Use curl with `Authorization: Bearer <token>` header
-3. **WebSocket Testing**: Connect to `/ws` and send auth command with token
-4. **Role Testing**: Create users with different roles and test access restrictions
-
-### Common Patterns
-
-**Getting current user in command handler:**
-```python
-from music_assistant.controllers.webserver.helpers.auth_middleware import get_current_user
-
-
-@api_command("my_command")
-async def my_command():
-    user = get_current_user()
-    if not user:
-        raise AuthenticationRequired("Not authenticated")
-    # ... use user ...
-```
-
-**Getting current token (for revocation):**
-```python
-from music_assistant.controllers.webserver.helpers.auth_middleware import get_current_token
-
-
-@api_command("my_command")
-async def my_command():
-    token = get_current_token()
-    # ... use token ...
-```
-
-**Requiring a scope:**
-```python
-from music_assistant_models.auth import Scope
-
-
-@api_command("admin_only_command", required_scope=Scope.CONFIG_CORE_WRITE)
-async def admin_command():
-    # Only users whose role grants the config.core.write scope can call this
-    pass
-```
-
-Scopes are granted to users through their role, see `ROLE_SCOPES` in
-[helpers/auth_middleware.py](helpers/auth_middleware.py) for the builtin role definitions.
-
-### Database Migrations
-
-When modifying the auth database schema:
-1. Increment `DB_SCHEMA_VERSION` in [auth.py](auth.py)
-2. Add migration logic to `_migrate_database()` method
-3. Test migration from previous version
-4. Consider backwards compatibility
-
-### Testing Remote Access
-
-1. **Enable Remote Access**: Toggle remote access in settings UI or via API
-2. **Verify Remote ID**: Call `remote_access/info` to read the certificate-derived Remote ID
-3. **Test Gateway**: Check logs for "Starting remote access in basic/optimized mode" message
-4. **Test Connection**: Use PWA with Remote ID to connect externally
-5. **Monitor Sessions**: Check `remote_access/info` command for status and mode
-6. **Test Mode Switching**: Enable/disable HA Cloud and verify automatic mode switching
-
-## File Structure
-
-```
-webserver/
-├── __init__.py                         # Module exports
-├── controller.py                       # Main webserver controller
-├── auth.py                             # Authentication manager
-├── websocket_client.py                 # WebSocket client handler
-├── sendspin_proxy.py                   # Authenticated WebSocket proxy to the internal Sendspin server
-├── api_docs.py                         # API documentation generator
-├── strings.json                        # Translatable labels for the controller's config entries
-├── icon.svg                            # Controller icon (icon_dark.svg for dark mode)
-├── README.md                           # This file
-├── helpers/
-│   ├── auth_middleware.py              # HTTP/WebSocket auth helpers, role/scope mapping
-│   ├── auth_providers.py               # Authentication providers
-│   └── ssl.py                          # SSL context creation and certificate verification
-└── remote_access/
-    ├── __init__.py                     # Remote access manager
-    └── gateway.py                      # WebRTC gateway implementation
-```
-
-## Additional Resources
-
-- [API Documentation](http://localhost:8095/api-docs) - Auto-generated API docs
-- [Commands Reference](http://localhost:8095/api-docs/commands) - List of all API commands
-- [Schemas Reference](http://localhost:8095/api-docs/schemas) - Data model documentation
-- [Swagger UI](http://localhost:8095/api-docs/swagger) - Interactive API explorer
-
-## Contributing
-
-When contributing to the webserver/auth system:
-1. Follow the existing patterns for consistency
-2. Add comprehensive docstrings with Sphinx-style parameter documentation
-3. Update this README if adding significant new features
-4. Test authentication flows thoroughly
-5. Consider security implications of all changes
-6. The API documentation will be auto updated if adding new commands (based on docstrings and type hints)
-
----
-
-*This architecture document is maintained alongside the code and should be updated when significant changes are made to the provider's design or functionality.*
+- [API and auth](../../../docs/architecture/api-and-auth.md) for the big picture of the API surface, scopes and users.
+- [Events and commands](../../../docs/architecture/events-and-commands.md) for the event bus and the command registry.
+- [AI and MCP](../../../docs/architecture/ai-and-mcp.md) for the MCP server that mounts here.
+- [Overview](../../../docs/architecture/overview.md) for where the webserver sits in startup.

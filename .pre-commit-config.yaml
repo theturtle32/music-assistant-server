@@ -105,7 +105,7 @@ repos:
         pass_filenames: false
         language: system
         types: [text]
-        files: ^(docs/.+\.md|music_assistant/.+/README\.md|scripts/check_doc_references\.py)$
+        files: ^(.+\.md|scripts/check_doc_references\.py)$
 
       # report (never fail) which docs describe the source files being committed
       - id: report_doc_references

@@ -16,12 +16,19 @@ from scripts.check_doc_references import (
 
 @pytest.fixture(name="repo")
 def repo_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the check at a throwaway repository layout and return its root."""
+    """
+    Point the check at a throwaway repository layout and return its root.
+
+    Collection is forced down the filesystem fallback, since the layout is not a git checkout.
+    """
     (tmp_path / "docs" / "architecture").mkdir(parents=True)
     (tmp_path / "music_assistant" / "controllers" / "players").mkdir(parents=True)
+
+    def _no_git(*_args: object, **_kwargs: object) -> None:
+        raise OSError("no git here")
+
     monkeypatch.setattr(check_doc_references, "REPO_ROOT", tmp_path)
-    monkeypatch.setattr(check_doc_references, "DOCS_ROOT", tmp_path / "docs")
-    monkeypatch.setattr(check_doc_references, "PACKAGE_ROOT", tmp_path / "music_assistant")
+    monkeypatch.setattr(check_doc_references.subprocess, "run", _no_git)
     return tmp_path
 
 
@@ -96,11 +103,42 @@ def test_image_and_reference_links_are_checked(repo: Path) -> None:
     assert len(messages) == 2
 
 
-def test_readmes_are_scanned_as_documents(repo: Path) -> None:
-    """In-tree README files are part of the document set the check owns."""
-    _write(repo, "music_assistant/controllers/players/README.md", "[gone](./missing.py)")
-    assert [path.name for path in iter_doc_files()] == ["README.md"]
-    assert list(find_broken_links()) == ["music_assistant/controllers/players/README.md"]
+def test_every_markdown_file_is_scanned(repo: Path) -> None:
+    """Collection is repo-wide, so deep dives and root documents are checked too."""
+    _write(repo, "music_assistant/controllers/players/README.md", "# Players")
+    _write(repo, "music_assistant/controllers/players/grouping.md", "[gone](./missing.py)")
+    _write(repo, "AGENTS.md", "# Agents")
+    collected = {path.relative_to(repo).as_posix() for path in iter_doc_files()}
+    assert collected == {
+        "AGENTS.md",
+        "music_assistant/controllers/players/README.md",
+        "music_assistant/controllers/players/grouping.md",
+    }
+    assert list(find_broken_links()) == ["music_assistant/controllers/players/grouping.md"]
+
+
+def test_ignored_directories_are_not_walked(repo: Path) -> None:
+    """A markdown file inside a virtualenv or node_modules is not ours to check."""
+    _write(repo, ".venv/lib/whatever/README.md", "[gone](./missing.py)")
+    _write(repo, "node_modules/pkg/README.md", "[gone](./missing.py)")
+    assert iter_doc_files() == []
+    assert find_broken_links() == {}
+
+
+def test_links_inside_inline_code_are_ignored(repo: Path) -> None:
+    """A generic in prose is not a link; `def f[T](...)` must not resolve to a path."""
+    _write(
+        repo,
+        "docs/architecture/overview.md",
+        "PEP 695 gives `def f[T](...)` type parameters, and ``[x](../nope.md)`` is also code.\n",
+    )
+    assert find_broken_links() == {}
+
+
+def test_real_links_beside_inline_code_still_resolve(repo: Path) -> None:
+    """Stripping code spans must not swallow a genuine link on the same line."""
+    _write(repo, "docs/architecture/overview.md", "`f[T](...)` and [gone](./missing.md)\n")
+    assert list(find_broken_links()) == ["docs/architecture/overview.md"]
 
 
 def test_index_maps_linked_package_paths_to_docs(repo: Path) -> None:
@@ -129,22 +167,32 @@ def test_directory_link_covers_files_below_it(repo: Path) -> None:
     assert docs == ["docs/architecture/grouping.md"]
 
 
-def test_nearest_readme_comes_first(repo: Path) -> None:
-    """The co-located README leads the report, ahead of the linked architecture docs."""
+def test_colocated_docs_lead_the_report(repo: Path) -> None:
+    """The README leads, then its sibling deep dives, then the linked architecture docs."""
     _write(repo, "music_assistant/controllers/players/controller.py")
     _write(repo, "music_assistant/controllers/players/README.md", "# Players")
+    _write(repo, "music_assistant/controllers/players/volume.md", "# Volume")
     _write(
         repo,
         "docs/architecture/grouping.md",
         "[dir](../../music_assistant/controllers/players/)",
     )
     docs = docs_for_source(
-        "music_assistant/controllers/players/controller.py", index=build_reference_index()
+        "music_assistant/controllers/players/controller.py", build_reference_index()
     )
     assert docs == [
         "music_assistant/controllers/players/README.md",
+        "music_assistant/controllers/players/volume.md",
         "docs/architecture/grouping.md",
     ]
+
+
+def test_a_doc_does_not_describe_itself(repo: Path) -> None:
+    """A markdown file is not reported as documentation for itself."""
+    _write(repo, "music_assistant/controllers/players/README.md", "# Players")
+    _write(repo, "music_assistant/controllers/players/volume.md", "# Volume")
+    docs = docs_for_source("music_assistant/controllers/players/volume.md", {})
+    assert docs == ["music_assistant/controllers/players/README.md"]
 
 
 def test_report_mode_never_fails(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:

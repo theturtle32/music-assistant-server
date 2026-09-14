@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -25,8 +26,12 @@ from pathlib import Path
 
 # repo paths (this file lives at <repo>/scripts/check_doc_references.py)
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_ROOT = REPO_ROOT / "music_assistant"
-DOCS_ROOT = REPO_ROOT / "docs"
+
+# only paths below this are indexed and reported on; the shipped package is what docs describe
+PACKAGE_PREFIX = "music_assistant/"
+
+# directories a filesystem walk must never descend into; the git listing excludes them already
+UNTRACKED_DIRS = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", "site"})
 
 # Links to the canonical repository resolve to a path inside this checkout.
 GITHUB_BLOB_PATTERN = re.compile(
@@ -35,6 +40,8 @@ GITHUB_BLOB_PATTERN = re.compile(
 INLINE_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 REFERENCE_LINK_PATTERN = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+)>?", re.MULTILINE)
 CODE_FENCE_PATTERN = re.compile(r"^\s*(```|~~~)")
+# a backtick run and everything up to its matching run; `def f[T](...)` is not a link
+INLINE_CODE_PATTERN = re.compile(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)")
 
 # Schemes and targets that are not repository paths.
 EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "//")
@@ -71,7 +78,7 @@ def build_reference_index() -> dict[str, set[str]]:
             if resolved is None or not resolved.exists():
                 continue
             rel_target = resolved.relative_to(REPO_ROOT).as_posix()
-            if not rel_target.startswith("music_assistant/"):
+            if not rel_target.startswith(PACKAGE_PREFIX):
                 continue
             index.setdefault(rel_target, set()).add(rel_doc)
     return index
@@ -79,7 +86,10 @@ def build_reference_index() -> dict[str, set[str]]:
 
 def docs_for_source(source: str, index: dict[str, set[str]]) -> list[str]:
     """
-    Return the documents that describe a source file, nearest README first.
+    Return the documents that describe a source file, co-located ones first.
+
+    Every markdown file sitting beside the source counts as describing it, which is what makes a
+    deep dive discoverable without it having to link the module by name.
 
     :param source: Repo-relative path of the source file.
     :param index: The mapping returned by :func:`build_reference_index`.
@@ -87,17 +97,28 @@ def docs_for_source(source: str, index: dict[str, set[str]]) -> list[str]:
     linked: set[str] = set()
     for candidate in [source, *_ancestors(source)]:
         linked |= index.get(candidate, set())
-    nearest = _nearest_readme(source)
-    if nearest is None:
-        return sorted(linked)
-    return [nearest, *sorted(linked - {nearest})]
+    colocated = _colocated_docs(source)
+    return [*colocated, *sorted(linked.difference(colocated))]
 
 
 def iter_doc_files() -> list[Path]:
-    """Return every markdown file the check owns: the docs tree and the in-tree READMEs."""
-    docs = sorted(DOCS_ROOT.rglob("*.md")) if DOCS_ROOT.is_dir() else []
-    readmes = sorted(PACKAGE_ROOT.rglob("README.md")) if PACKAGE_ROOT.is_dir() else []
-    return docs + readmes
+    """
+    Return every markdown file in the repository.
+
+    Uses the git index so ignored trees such as ``.venv`` are skipped, and falls back to a
+    filtered walk when git is unavailable.
+    """
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "*.md"],  # noqa: S607
+            capture_output=True,
+            check=True,
+            cwd=REPO_ROOT,
+            text=True,
+        ).stdout
+    except OSError, subprocess.CalledProcessError:
+        return sorted(_walk_markdown(REPO_ROOT))
+    return sorted(REPO_ROOT / name for name in listed.split("\0") if name)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,7 +147,7 @@ def _report(sources: list[str]) -> int:
 
     :param sources: Repo-relative paths of the source files being committed.
     """
-    interesting = [src for src in sources if src.startswith("music_assistant/")]
+    interesting = [src for src in sources if src.startswith(PACKAGE_PREFIX)]
     if not interesting:
         return 0
     index = build_reference_index()
@@ -154,12 +175,13 @@ def _iter_links(doc: Path) -> list[tuple[int, str]]:
         return []
     links: list[tuple[int, str]] = []
     in_fence = False
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        if CODE_FENCE_PATTERN.match(line):
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        if CODE_FENCE_PATTERN.match(raw_line):
             in_fence = not in_fence
             continue
         if in_fence:
             continue
+        line = INLINE_CODE_PATTERN.sub("", raw_line)
         for match in INLINE_LINK_PATTERN.finditer(line):
             links.append((lineno, match.group(1)))
         for match in REFERENCE_LINK_PATTERN.finditer(line):
@@ -195,13 +217,34 @@ def _resolve_target(doc: Path, target: str) -> Path | None:
     return resolved
 
 
-def _nearest_readme(source: str) -> str | None:
-    """Return the closest README above a source file, or ``None`` when there is none."""
-    for ancestor in _ancestors(source):
-        candidate = f"{ancestor}/README.md"
-        if candidate != source and (REPO_ROOT / candidate).is_file():
-            return candidate
-    return None
+def _walk_markdown(root: Path) -> list[Path]:
+    """Return the markdown files under a directory, skipping trees git would ignore."""
+    found: list[Path] = []
+    for path in root.iterdir():
+        if path.is_dir():
+            if path.name not in UNTRACKED_DIRS:
+                found.extend(_walk_markdown(path))
+        elif path.suffix == ".md":
+            found.append(path)
+    return found
+
+
+def _colocated_docs(source: str) -> list[str]:
+    """
+    Return the markdown files sitting in a source file's own directory, README first.
+
+    :param source: Repo-relative path of the source file.
+    """
+    directory = REPO_ROOT / source
+    parent = directory.parent
+    if not parent.is_dir():
+        return []
+    names = sorted(path.name for path in parent.glob("*.md"))
+    if "README.md" in names:
+        names.remove("README.md")
+        names.insert(0, "README.md")
+    rel_parent = parent.relative_to(REPO_ROOT).as_posix()
+    return [f"{rel_parent}/{name}" for name in names if f"{rel_parent}/{name}" != source]
 
 
 def _ancestors(source: str) -> list[str]:
