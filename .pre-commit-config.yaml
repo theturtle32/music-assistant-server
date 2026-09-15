@@ -98,6 +98,28 @@ repos:
         types: [text]
         files: ^(music_assistant/.+\.py|scripts/check_method_order\.py|scripts/lint_baseline(s/private_methods_not_last\.txt|\.py))$
 
+      # fail when a doc or README links to a repo path that no longer exists.
+      # always_run, not a files filter: the case worth catching is deleting or renaming a
+      # source file a doc links, touching no markdown at all, and pre-commit leaves deleted
+      # paths out of the file list, so any filtered hook is skipped on exactly that commit.
+      # The check reads the whole tree in well under a second, so running it always is cheap.
+      - id: check_doc_links
+        name: check_doc_links
+        entry: scripts/run-in-env.sh -m scripts.check_doc_references
+        pass_filenames: false
+        always_run: true
+        language: system
+
+      # report (never fail) which docs describe the source files being committed
+      - id: report_doc_references
+        name: report_doc_references
+        entry: scripts/run-in-env.sh -m scripts.check_doc_references --report
+        pass_filenames: true
+        language: system
+        types: [python]
+        files: ^music_assistant/.+\.py$
+        verbose: true  # the report is informational, so print it on success too
+
       - id: ruff-check
         name: 🐶 Ruff Linter
         language: system

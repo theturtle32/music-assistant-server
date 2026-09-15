@@ -37,7 +37,7 @@ provider authors.
 - `pytest tests/specific_test.py` - Run a specific test file
 - `pre-commit run --all-files` - Run all pre-commit hooks
 - `python -m music_assistant --log-level debug` - Run server locally (localhost:8095)
-- Requires ffmpeg v7.1+ and Python 3.14+ (see `.python-version` for the pinned runtime)
+- Requires ffmpeg v7+ and Python 3.14+ (see `.python-version` for the pinned runtime)
 
 Always run `pre-commit run --all-files` after a code change to ensure the new code adheres to the project standards.
 
@@ -75,6 +75,22 @@ Do **not** use Google-style (`Args:`) or bullet-style (`- param:`) docstrings.
 
 ### File structure
 Private methods should be at the bottom of the file, public at the top.
+
+## Keeping documentation current
+
+Architecture lives in two places, and the split is deliberate. `docs/architecture/` holds the big
+picture for each reading path and never names a method, a constant or a line number, because those
+go stale within a few PRs. The `README.md` beside each controller and provider holds that package's
+detail, with sibling markdown files for subsystems that need more than one screen.
+
+When you change a controller or provider, read its `README.md`, any markdown file beside it, and any
+architecture doc that links to it, then update whichever of them describes behaviour you changed.
+The `report_doc_references` pre-commit hook prints the relevant documents for every source file you
+touch, so you do not have to guess. `check_doc_links` fails the commit when a document points at a
+path that no longer exists.
+
+Prefer explaining *why* over restating *what*. If a sentence would read the same in any other
+project's docs, it is not telling the reader anything about this one.
 
 ## Data changes need migrations
 

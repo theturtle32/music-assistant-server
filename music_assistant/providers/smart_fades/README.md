@@ -2,9 +2,13 @@
 
 Audio analysis provider that detects **beats**, **downbeats**, **musical key**, **RMS energy**, **spectral centroid**, and **vocal activity** in real time using the [Beat This!](https://github.com/CPJKU/beat_this) neural network (CPJKU, ISMIR 2024), the S-KEY key detection model, and [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD). The detected timing, tonal, and vocal information drives smart crossfade positioning in Music Assistant's playback queue.
 
+The transition planning and rendering that consumes this analysis lives in
+[controllers/streams/smart_fades](../../controllers/streams/smart_fades/README.md). This provider
+only produces the signals.
+
 ## How it works
 
-Beat This! is a transformer-based beat tracker that operates on log-mel spectrograms at 50 fps (frames per second). It was designed for offline use — process the entire audio file at once. This provider adapts it for **streaming** use inside Music Assistant's audio pipeline, where PCM arrives in 1-second chunks from the stream controller.
+Beat This! is a transformer-based beat tracker that operates on log-mel spectrograms at 50 fps (frames per second). It was designed for offline use, processing an entire audio file at once. This provider adapts it for **streaming** use inside Music Assistant's audio pipeline, where PCM arrives in 1-second chunks from the stream controller.
 
 ### Pipeline overview
 
@@ -60,13 +64,13 @@ The feature extractor aligns the start of each audio segment to a `hop_length` (
 
 #### 4. Windowed model inference at finalize
 
-Unlike the feature extraction (which runs incrementally per block), model inference runs on the concatenated features when the track ends. The Beat This! transformer (`small0` checkpoint, dynamically quantized to qint8) predicts a long track as fixed 30-second windows — the length it was trained on — overlapping by the 6 frames its predictions are unreliable on, which are then stitched back into one sequence. That windowing is Beat This!'s own (`split_piece` / `aggregate_prediction`); running the windows here rather than inside `Spect2Frames` gives identical results while keeping each offload short, so a finalize never holds the shared analysis slot for a whole track's inference. While a player is streaming, the provider also idles between windows for as long as the previous one took, so beat inference does not occupy a core continuously.
+Unlike the feature extraction (which runs incrementally per block), model inference runs on the concatenated features when the track ends. The Beat This! transformer (`small0` checkpoint, dynamically quantized to qint8) predicts a long track as fixed 30-second windows, the length it was trained on, overlapping by the 6 frames its predictions are unreliable on, which are then stitched back into one sequence. That windowing is Beat This!'s own (`split_piece` / `aggregate_prediction`); running the windows here rather than inside `Spect2Frames` gives identical results while keeping each offload short, so a finalize never holds the shared analysis slot for a whole track's inference. While a player is streaming, the provider also idles between windows for as long as the previous one took, so beat inference does not occupy a core continuously.
 
-The DBN postprocessor — a pure-numpy reimplementation of madmom's `DBNDownBeatTrackingProcessor` using Viterbi decoding over a bar-pointer HMM — then converts the stitched frame-level logits to beat/downbeat timestamps in a single offload; its Viterbi decoding needs the whole sequence and cannot be windowed.
+The DBN postprocessor, a pure-numpy reimplementation of madmom's `DBNDownBeatTrackingProcessor` using Viterbi decoding over a bar-pointer HMM, then converts the stitched frame-level logits to beat/downbeat timestamps in a single offload; its Viterbi decoding needs the whole sequence and cannot be windowed.
 
 #### 5. Musical key detection (S-KEY)
 
-Key detection runs in parallel with beat tracking. Each 1-second PCM chunk is independently resampled to 22050 Hz and passed through a Variable-Q Transform (VQT) to extract tonal features. At finalization, the accumulated VQT features are concatenated and fed into ChromaNet, which classifies the track into one of 24 keys (12 pitch classes x major/minor). Per-chunk VQT extraction uses stateless one-shot resampling because each chunk is processed independently — this cannot share the streaming resampler's session state.
+Key detection runs in parallel with beat tracking. Each 1-second PCM chunk is independently resampled to 22050 Hz and passed through a Variable-Q Transform (VQT) to extract tonal features. At finalization, the accumulated VQT features are concatenated and fed into ChromaNet, which classifies the track into one of 24 keys (12 pitch classes x major/minor). Per-chunk VQT extraction uses stateless one-shot resampling because each chunk is processed independently, so it cannot share the streaming resampler's session state.
 
 #### 6. RMS energy and spectral centroid
 
@@ -77,3 +81,8 @@ Per-block RMS energy (100ms windows) and spectral centroid (per-hop-frame via to
 A dedicated stateful soxr stream resamples source PCM to 16kHz for FireRed AED. Online Kaldi fbank extraction uses the reference 80-bin, 25ms frame, 10ms shift configuration with fixed CMVN. The bundled model has 588,931 parameters and is about 2.3MB. FireRed inference runs concurrently with the sequential beat-then-key branch through the shared analysis worker limits. Long inputs are processed in bounded chunks with model context.
 
 FireRed's `max(speech, singing)` probabilities are averaged at 100ms resolution, then resampled to 1800 fixed bins spanning the track duration for `extra_data["vocal_activity"]`. FireRedVAD source and AED model weights are Apache-2.0 licensed; attribution is recorded in the project `NOTICE`.
+
+## Related architecture docs
+
+- [Playback](../../../docs/architecture/playback.md) for where analysis sits in the pipeline.
+- [Providers](../../../docs/architecture/providers.md) for the audio analysis provider type.
